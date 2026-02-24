@@ -8,7 +8,7 @@ gw() {
 
     if [ "$1" = "go" ]; then
         local output
-        output="$(command gw "$@" 2>&1)"
+        output="$(command gw "$@")"
         local rc=$?
         if [ $rc -eq 0 ] && [ -n "$output" ] && [ -d "$output" ]; then
             cd "$output" || return 1

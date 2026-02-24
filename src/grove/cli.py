@@ -102,9 +102,9 @@ def _pick_one(prompt_text: str, choices: list[str]) -> str:
     """Arrow-key single selection."""
     from simple_term_menu import TerminalMenu
 
-    console.print(f"\n[bold]{prompt_text}[/]")
     menu = TerminalMenu(
         choices,
+        title=f"\n{prompt_text}",
         menu_cursor="❯ ",
         menu_cursor_style=("fg_cyan", "bold"),
         menu_highlight_style=("fg_cyan", "bold"),
@@ -120,10 +120,9 @@ def _pick_many(prompt_text: str, choices: list[str]) -> list[str]:
     from simple_term_menu import TerminalMenu
 
     display = ["(all)", *choices]
-    console.print(f"\n[bold]{prompt_text}[/]")
-    console.print("[dim]  ↑/↓ navigate · space select · enter confirm[/]")
     menu = TerminalMenu(
         display,
+        title=f"\n{prompt_text}\n  ↑/↓ navigate · space select · enter confirm",
         multi_select=True,
         multi_select_select_on_accept=False,
         menu_cursor="❯ ",
@@ -400,6 +399,9 @@ def status(
                 console.print(r["status"])
 
 
+_BACK_TO_REPOS = "← back to repos dir"
+
+
 @app.command()
 def go(
     name: str | None = typer.Argument(
@@ -415,7 +417,26 @@ def go(
         if not workspaces:
             error("No workspaces. Create one first: gw create ...")
             raise typer.Exit(1)
-        name = _pick_one("Select workspace", [ws.name for ws in workspaces])
+
+        current_ws = state.find_workspace_by_path(Path.cwd())
+        choices = [
+            f"{ws.name}  (current)" if current_ws and ws.name == current_ws.name else ws.name
+            for ws in workspaces
+        ]
+
+        # Offer "back to repos dir" when inside a workspace
+        if current_ws:
+            choices.append(_BACK_TO_REPOS)
+
+        picked = _pick_one("Select workspace", choices)
+
+        if picked == _BACK_TO_REPOS:
+            cfg = config.require_config()
+            print(cfg.repos_dir)
+            return
+
+        # Strip the "(current)" suffix if present
+        name = picked.split("  (current)")[0]
 
     ws = state.get_workspace(name)
     if ws is None:
@@ -538,7 +559,7 @@ _SHELL_FUNCTION = """\
 gw() {
     if [ "$1" = "go" ]; then
         local output
-        output="$(command gw "$@" 2>&1)"
+        output="$(command gw "$@")"
         local rc=$?
         if [ $rc -eq 0 ] && [ -n "$output" ] && [ -d "$output" ]; then
             cd "$output" || return 1

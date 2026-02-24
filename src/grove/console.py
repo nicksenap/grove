@@ -6,22 +6,23 @@ from rich.console import Console
 from rich.table import Table
 
 console = Console()
+_err_console = Console(stderr=True)
 
 
 def error(msg: str) -> None:
-    console.print(f"[bold red]error:[/] {msg}")
+    _err_console.print(f"[bold red]error:[/] {msg}")
 
 
 def success(msg: str) -> None:
-    console.print(f"[bold green]ok:[/] {msg}")
+    _err_console.print(f"[bold green]ok:[/] {msg}")
 
 
 def info(msg: str) -> None:
-    console.print(f"[dim]{msg}[/]")
+    _err_console.print(f"[dim]{msg}[/]")
 
 
 def warning(msg: str) -> None:
-    console.print(f"[bold yellow]warn:[/] {msg}")
+    _err_console.print(f"[bold yellow]warn:[/] {msg}")
 
 
 def make_table(*columns: str) -> Table:
