@@ -135,10 +135,12 @@ class TestSetupHook:
             patch(
                 "grove.workspace.git.read_grove_config",
                 return_value={"setup": "pnpm install"},
-            ),
+            ) as mock_cfg,
         ):
             ws = workspace.create_workspace("test", {"svc-api": repo_path}, "feat/x", cfg)
             assert ws is not None
+            # Config should be read from the source repo, not the worktree
+            mock_cfg.assert_called_once_with(repo_path)
             mock_sub.assert_called_once_with(
                 "pnpm install",
                 cwd=ws.path / "svc-api",
