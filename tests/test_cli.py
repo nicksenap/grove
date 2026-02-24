@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 from typer.testing import CliRunner
 
-from grove.cli import _sanitize_name, app
+from grove.cli import _format_drift, _format_pr, _sanitize_name, app
 from grove.models import Config, Workspace
 
 runner = CliRunner()
@@ -42,6 +42,53 @@ class TestSanitizeName:
 
     def test_leading_slash(self):
         assert _sanitize_name("/feat") == "feat"
+
+
+class TestFormatDrift:
+    def test_with_numbers(self):
+        result = _format_drift("3", "1")
+        assert "3↑" in result
+        assert "1↓" in result
+
+    def test_zero(self):
+        result = _format_drift("0", "0")
+        assert "0↑" in result
+        assert "0↓" in result
+
+    def test_unknown(self):
+        result = _format_drift("-", "-")
+        assert "-" in result
+
+    def test_partial_unknown(self):
+        # If either is unknown, show dash
+        result = _format_drift("3", "-")
+        assert "-" in result
+
+
+class TestFormatPr:
+    def test_none(self):
+        result = _format_pr(None)
+        assert "—" in result
+
+    def test_open_approved(self):
+        result = _format_pr({"number": 42, "state": "OPEN", "reviewDecision": "APPROVED"})
+        assert "#42" in result
+        assert "approved" in result
+
+    def test_changes_requested(self):
+        result = _format_pr({"number": 10, "state": "OPEN", "reviewDecision": "CHANGES_REQUESTED"})
+        assert "#10" in result
+        assert "changes requested" in result
+
+    def test_merged(self):
+        result = _format_pr({"number": 99, "state": "MERGED", "reviewDecision": ""})
+        assert "#99" in result
+        assert "merged" in result
+
+    def test_open_no_review(self):
+        result = _format_pr({"number": 5, "state": "OPEN", "reviewDecision": ""})
+        assert "#5" in result
+        assert "open" in result
 
 
 class TestInit:
@@ -213,11 +260,61 @@ class TestStatus:
             patch("grove.cli.workspace.workspace_status") as mock_status,
         ):
             mock_status.return_value = [
-                {"repo": "svc-auth", "branch": "feat/test", "status": "clean"},
+                {
+                    "repo": "svc-auth",
+                    "branch": "feat/test",
+                    "status": "clean",
+                    "ahead": "0",
+                    "behind": "0",
+                },
             ]
             result = runner.invoke(app, ["status", "test-ws"])
         assert result.exit_code == 0
         assert "clean" in result.output
+        assert "0↑" in result.output
+        assert "0↓" in result.output
+
+    def test_ahead_behind_display(self, tmp_grove, sample_workspace):
+        from grove import state
+
+        state.add_workspace(sample_workspace)
+        with (
+            patch("grove.cli.workspace.workspace_status") as mock_status,
+        ):
+            mock_status.return_value = [
+                {
+                    "repo": "svc-auth",
+                    "branch": "feat/test",
+                    "status": "clean",
+                    "ahead": "3",
+                    "behind": "1",
+                },
+            ]
+            result = runner.invoke(app, ["status", "test-ws"])
+        assert result.exit_code == 0
+        assert "3↑" in result.output
+        assert "1↓" in result.output
+
+    def test_ahead_behind_unknown(self, tmp_grove, sample_workspace):
+        from grove import state
+
+        state.add_workspace(sample_workspace)
+        with (
+            patch("grove.cli.workspace.workspace_status") as mock_status,
+        ):
+            mock_status.return_value = [
+                {
+                    "repo": "svc-auth",
+                    "branch": "feat/test",
+                    "status": "clean",
+                    "ahead": "-",
+                    "behind": "-",
+                },
+            ]
+            result = runner.invoke(app, ["status", "test-ws"])
+        assert result.exit_code == 0
+        # Should show dash, not crash
+        assert "-" in result.output
 
     def test_verbose_shows_details(self, tmp_grove, sample_workspace):
         from grove import state
@@ -227,7 +324,13 @@ class TestStatus:
             patch("grove.cli.workspace.workspace_status") as mock_status,
         ):
             mock_status.return_value = [
-                {"repo": "svc-auth", "branch": "feat/test", "status": " M file.py\n?? new.txt"},
+                {
+                    "repo": "svc-auth",
+                    "branch": "feat/test",
+                    "status": " M file.py\n?? new.txt",
+                    "ahead": "1",
+                    "behind": "0",
+                },
             ]
             result = runner.invoke(app, ["status", "test-ws", "-V"])
         assert result.exit_code == 0
@@ -236,6 +339,119 @@ class TestStatus:
 
     def test_not_found(self, tmp_grove):
         result = runner.invoke(app, ["status", "nope"])
+        assert result.exit_code == 1
+        assert "not found" in result.output
+
+    def test_pr_flag(self, tmp_grove, sample_workspace):
+        from grove import state
+
+        state.add_workspace(sample_workspace)
+        with (
+            patch("grove.cli.workspace.workspace_status") as mock_status,
+            patch("grove.cli.git_pr_status") as mock_pr,
+        ):
+            mock_status.return_value = [
+                {
+                    "repo": "svc-auth",
+                    "branch": "feat/test",
+                    "status": "clean",
+                    "ahead": "1",
+                    "behind": "0",
+                },
+            ]
+            mock_pr.return_value = {
+                "number": 42,
+                "state": "OPEN",
+                "reviewDecision": "APPROVED",
+            }
+            result = runner.invoke(app, ["status", "test-ws", "--pr"])
+        assert result.exit_code == 0
+        assert "#42" in result.output
+        assert "approved" in result.output
+
+    def test_pr_flag_no_pr(self, tmp_grove, sample_workspace):
+        from grove import state
+
+        state.add_workspace(sample_workspace)
+        with (
+            patch("grove.cli.workspace.workspace_status") as mock_status,
+            patch("grove.cli.git_pr_status", return_value=None),
+        ):
+            mock_status.return_value = [
+                {
+                    "repo": "svc-auth",
+                    "branch": "feat/test",
+                    "status": "clean",
+                    "ahead": "0",
+                    "behind": "0",
+                },
+            ]
+            result = runner.invoke(app, ["status", "test-ws", "--pr"])
+        assert result.exit_code == 0
+
+
+class TestSync:
+    def test_success_up_to_date(self, tmp_grove, sample_workspace):
+        from grove import state
+
+        state.add_workspace(sample_workspace)
+        with patch("grove.cli.workspace.sync_workspace") as mock_sync:
+            mock_sync.return_value = [
+                {"repo": "svc-auth", "base": "origin/main", "result": "up to date"},
+            ]
+            result = runner.invoke(app, ["sync", "test-ws"])
+        assert result.exit_code == 0
+        assert "up to date" in result.output
+
+    def test_success_rebased(self, tmp_grove, sample_workspace):
+        from grove import state
+
+        state.add_workspace(sample_workspace)
+        with patch("grove.cli.workspace.sync_workspace") as mock_sync:
+            mock_sync.return_value = [
+                {
+                    "repo": "svc-auth",
+                    "base": "origin/main",
+                    "result": "rebased (3 new commits)",
+                },
+            ]
+            result = runner.invoke(app, ["sync", "test-ws"])
+        assert result.exit_code == 0
+        assert "rebased" in result.output
+
+    def test_conflict_shows_instructions(self, tmp_grove, sample_workspace):
+        from grove import state
+
+        state.add_workspace(sample_workspace)
+        with patch("grove.cli.workspace.sync_workspace") as mock_sync:
+            mock_sync.return_value = [
+                {"repo": "svc-auth", "base": "origin/main", "result": "conflict"},
+            ]
+            result = runner.invoke(app, ["sync", "test-ws"])
+        assert result.exit_code == 0
+        assert "conflict" in result.output
+        # Rich may wrap the long path across lines, so check key parts separately
+        assert "rebase" in result.output
+        assert "origin/main" in result.output
+
+    def test_skipped_dirty(self, tmp_grove, sample_workspace):
+        from grove import state
+
+        state.add_workspace(sample_workspace)
+        with patch("grove.cli.workspace.sync_workspace") as mock_sync:
+            mock_sync.return_value = [
+                {
+                    "repo": "svc-auth",
+                    "base": "origin/main",
+                    "result": "skipped: uncommitted changes",
+                },
+            ]
+            result = runner.invoke(app, ["sync", "test-ws"])
+        assert result.exit_code == 0
+        assert "uncommitted" in result.output
+
+    def test_not_found(self, tmp_grove):
+        result = runner.invoke(app, ["sync", "nope"])
         assert result.exit_code == 1
         assert "not found" in result.output
 

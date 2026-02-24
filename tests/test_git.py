@@ -119,6 +119,76 @@ class TestRepoBaseBranch:
         assert git.repo_base_branch(tmp_path) is None
 
 
+class TestRebaseOnto:
+    def test_success(self, mock_run):
+        git.rebase_onto(Path("/ws/repo"), "origin/main")
+        mock_run.assert_called_once_with(["rebase", "origin/main"], cwd=Path("/ws/repo"))
+
+    def test_failure(self, mock_run):
+        mock_run.side_effect = GitError("conflict")
+        with pytest.raises(GitError):
+            git.rebase_onto(Path("/ws/repo"), "origin/main")
+
+
+class TestRebaseAbort:
+    def test_success(self, mock_run):
+        git.rebase_abort(Path("/ws/repo"))
+        mock_run.assert_called_once_with(["rebase", "--abort"], cwd=Path("/ws/repo"))
+
+
+class TestCommitsAheadBehind:
+    def test_parses_output(self, mock_run):
+        # left=2 (behind), right=3 (ahead)
+        mock_run.return_value = MagicMock(stdout="2\t3\n")
+        ahead, behind = git.commits_ahead_behind(Path("/ws"), "origin/main")
+        assert ahead == 3
+        assert behind == 2
+        mock_run.assert_called_once_with(
+            ["rev-list", "--left-right", "--count", "origin/main...HEAD"],
+            cwd=Path("/ws"),
+        )
+
+    def test_zero_drift(self, mock_run):
+        mock_run.return_value = MagicMock(stdout="0\t0\n")
+        ahead, behind = git.commits_ahead_behind(Path("/ws"), "origin/main")
+        assert ahead == 0
+        assert behind == 0
+
+    def test_git_failure(self, mock_run):
+        mock_run.side_effect = GitError("bad ref")
+        with pytest.raises(GitError):
+            git.commits_ahead_behind(Path("/ws"), "origin/nope")
+
+    def test_bad_output_raises(self, mock_run):
+        mock_run.return_value = MagicMock(stdout="garbage\n")
+        with pytest.raises(GitError, match="Unexpected rev-list output"):
+            git.commits_ahead_behind(Path("/ws"), "origin/main")
+
+
+class TestPrStatus:
+    def test_returns_none_when_gh_missing(self):
+        with patch("shutil.which", return_value=None):
+            assert git.pr_status(Path("/ws")) is None
+
+    def test_returns_pr_data(self):
+        pr_json = '{"number": 42, "state": "OPEN", "reviewDecision": "APPROVED"}'
+        with (
+            patch("shutil.which", return_value="/usr/bin/gh"),
+            patch("subprocess.run") as mock_sub,
+        ):
+            mock_sub.return_value = MagicMock(stdout=pr_json, returncode=0)
+            result = git.pr_status(Path("/ws"))
+        assert result == {"number": 42, "state": "OPEN", "reviewDecision": "APPROVED"}
+
+    def test_returns_none_on_no_pr(self):
+        with (
+            patch("shutil.which", return_value="/usr/bin/gh"),
+            patch("subprocess.run") as mock_sub,
+        ):
+            mock_sub.side_effect = subprocess.CalledProcessError(1, "gh", stderr="no PR")
+            assert git.pr_status(Path("/ws")) is None
+
+
 class TestRunIntegration:
     """Test the actual _run function with subprocess mocking."""
 
