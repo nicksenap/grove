@@ -22,6 +22,11 @@ Git Worktree Workspace Orchestrator — CLI tool (`gw`).
    - Workflow uses `release_notes.md` if present, otherwise auto-generates
    - Workflow auto-generates Homebrew formula with all Python resources
 
+## Per-repo config
+
+Repos can have a `.grove.toml` at their root with `base_branch` to override the
+default branch used when creating new worktree branches (e.g. `stage` instead of `main`).
+
 ## Architecture
 
 - `cli.py` — Typer commands and interactive pickers

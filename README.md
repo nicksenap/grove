@@ -38,6 +38,15 @@ gw delete my-feature                                   # clean up
 
 All commands with selection use arrow-key navigation (single-select) or arrow + space (multi-select), with an `(all)` shortcut.
 
+## Per-repo config
+
+Drop a `.grove.toml` in any repo to override defaults:
+
+```toml
+# merchant-portal/.grove.toml
+base_branch = "stage"    # branch new worktrees from origin/stage instead of origin/main
+```
+
 ## What it does
 
 - Fetches latest from remotes before creating worktrees

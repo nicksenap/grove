@@ -1,10 +1,17 @@
 ## What's New
 
+### Per-repo `.grove.toml` config
+Repos can now have a `.grove.toml` at their root to override defaults. Currently supports `base_branch` — useful when a repo's working branch isn't `main`:
+
+```toml
+# merchant-portal/.grove.toml
+base_branch = "stage"
+```
+
+When `gw create` makes a new branch in this repo, it will branch from `origin/stage` instead of auto-detecting the default branch.
+
 ### `gw go` workspace switcher with back-to-source
-The interactive picker now shows the current workspace labeled `(current)` and adds a `← back to repos dir` option when you're inside a workspace.
+The interactive picker now labels the current workspace `(current)` and adds a `← back to repos dir` option when invoked from inside a workspace.
 
-### Fix: `gw go` interactive mode now works
-Fixed stdout pollution that prevented the shell function from capturing the workspace path. Diagnostic output (errors, warnings, prompts) now goes to stderr; only the path goes to stdout. The `simple-term-menu` title renders directly to the terminal, bypassing stdout entirely.
-
-### All previous 0.4.x features
-Arrow-key selection, preset picker in `gw create`, fetch & branch from default branch, CLAUDE.md workspace copy, version update check, and auto-generated Homebrew formula.
+### Fix: `gw go` interactive mode
+Fixed stdout pollution that prevented the shell function from doing `cd`. Diagnostic output now goes to stderr; only the workspace path goes to stdout.

@@ -106,6 +106,19 @@ class TestCurrentBranch:
         assert git.current_branch(Path("/ws")) == "feat/login"
 
 
+class TestRepoBaseBranch:
+    def test_returns_configured_branch(self, tmp_path):
+        (tmp_path / ".grove.toml").write_text('base_branch = "stage"\n')
+        assert git.repo_base_branch(tmp_path) == "origin/stage"
+
+    def test_returns_none_when_no_file(self, tmp_path):
+        assert git.repo_base_branch(tmp_path) is None
+
+    def test_returns_none_when_no_key(self, tmp_path):
+        (tmp_path / ".grove.toml").write_text("[other]\nfoo = 1\n")
+        assert git.repo_base_branch(tmp_path) is None
+
+
 class TestRunIntegration:
     """Test the actual _run function with subprocess mocking."""
 

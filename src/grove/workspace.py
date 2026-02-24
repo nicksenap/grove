@@ -56,10 +56,13 @@ def create_workspace(
 
         # Auto-create branch from the default branch if it doesn't exist
         if not git.branch_exists(repo_path, branch):
-            try:
-                base = git.default_branch(repo_path)
-            except GitError:
-                base = None
+            # Per-repo .grove.toml > auto-detect
+            base = git.repo_base_branch(repo_path)
+            if base is None:
+                try:
+                    base = git.default_branch(repo_path)
+                except GitError:
+                    base = None
             info(
                 f"Creating branch [bold]{branch}[/] in {repo_name}"
                 + (f" from {base}" if base else "")
