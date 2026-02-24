@@ -131,3 +131,49 @@ def current_branch(path: Path) -> str:
     """Get the current branch name."""
     result = _run(["branch", "--show-current"], cwd=path)
     return result.stdout.strip()
+
+
+def rebase_onto(path: Path, base: str) -> None:
+    """Rebase the current branch onto *base*."""
+    _run(["rebase", base], cwd=path)
+
+
+def rebase_abort(path: Path) -> None:
+    """Abort an in-progress rebase."""
+    _run(["rebase", "--abort"], cwd=path)
+
+
+def commits_ahead_behind(path: Path, upstream: str) -> tuple[int, int]:
+    """Return ``(ahead, behind)`` commit counts relative to *upstream*.
+
+    Uses ``git rev-list --left-right --count upstream...HEAD``.
+    """
+    result = _run(["rev-list", "--left-right", "--count", f"{upstream}...HEAD"], cwd=path)
+    parts = result.stdout.strip().split()
+    if len(parts) != 2:
+        raise GitError(f"Unexpected rev-list output: {result.stdout.strip()}")
+    try:
+        # left = upstream-only (behind), right = HEAD-only (ahead)
+        return int(parts[1]), int(parts[0])
+    except ValueError as e:
+        raise GitError(f"Could not parse rev-list output: {result.stdout.strip()}") from e
+
+
+def pr_status(path: Path) -> dict | None:
+    """Get PR info via GitHub CLI. Returns ``None`` if unavailable."""
+    import json
+    import shutil
+
+    if not shutil.which("gh"):
+        return None
+    try:
+        result = subprocess.run(
+            ["gh", "pr", "view", "--json", "number,state,reviewDecision"],
+            cwd=path,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        return json.loads(result.stdout)
+    except (subprocess.CalledProcessError, json.JSONDecodeError, OSError):
+        return None

@@ -203,6 +203,96 @@ class TestDeleteWorkspace:
         assert result is False
 
 
+class TestSyncWorkspace:
+    def test_up_to_date(self, tmp_grove, sample_workspace):
+        with (
+            patch("grove.workspace.git.fetch"),
+            patch("grove.workspace.git.repo_base_branch", return_value=None),
+            patch("grove.workspace.git.default_branch", return_value="origin/main"),
+            patch("grove.workspace.git.repo_status", return_value=""),
+            patch("grove.workspace.git.commits_ahead_behind", return_value=(1, 0)),
+        ):
+            results = workspace.sync_workspace(sample_workspace)
+            assert len(results) == 1
+            assert results[0]["result"] == "up to date"
+
+    def test_successful_rebase(self, tmp_grove, sample_workspace):
+        with (
+            patch("grove.workspace.git.fetch"),
+            patch("grove.workspace.git.repo_base_branch", return_value="origin/stage"),
+            patch("grove.workspace.git.repo_status", return_value=""),
+            patch("grove.workspace.git.commits_ahead_behind", return_value=(2, 3)),
+            patch("grove.workspace.git.rebase_onto") as mock_rebase,
+        ):
+            results = workspace.sync_workspace(sample_workspace)
+            assert len(results) == 1
+            assert results[0]["result"] == "rebased (3 new commits)"
+            assert results[0]["base"] == "origin/stage"
+            mock_rebase.assert_called_once()
+
+    def test_conflict_aborts_rebase(self, tmp_grove, sample_workspace):
+        with (
+            patch("grove.workspace.git.fetch"),
+            patch("grove.workspace.git.repo_base_branch", return_value=None),
+            patch("grove.workspace.git.default_branch", return_value="origin/main"),
+            patch("grove.workspace.git.repo_status", return_value=""),
+            patch("grove.workspace.git.commits_ahead_behind", return_value=(1, 2)),
+            patch("grove.workspace.git.rebase_onto", side_effect=GitError("conflict")),
+            patch("grove.workspace.git.rebase_abort") as mock_abort,
+        ):
+            results = workspace.sync_workspace(sample_workspace)
+            assert results[0]["result"] == "conflict"
+            mock_abort.assert_called_once()
+
+    def test_skips_dirty_worktree(self, tmp_grove, sample_workspace):
+        with (
+            patch("grove.workspace.git.fetch"),
+            patch("grove.workspace.git.repo_base_branch", return_value=None),
+            patch("grove.workspace.git.default_branch", return_value="origin/main"),
+            patch("grove.workspace.git.repo_status", return_value=" M dirty.py"),
+        ):
+            results = workspace.sync_workspace(sample_workspace)
+            assert results[0]["result"] == "skipped: uncommitted changes"
+
+    def test_unknown_base_branch(self, tmp_grove, sample_workspace):
+        with (
+            patch("grove.workspace.git.fetch"),
+            patch("grove.workspace.git.repo_base_branch", return_value=None),
+            patch("grove.workspace.git.default_branch", side_effect=GitError("no HEAD")),
+        ):
+            results = workspace.sync_workspace(sample_workspace)
+            assert results[0]["base"] == "?"
+            assert "could not determine" in results[0]["result"]
+
+    def test_fetch_failure_continues(self, tmp_grove, sample_workspace):
+        """Sync should continue even if fetch fails (offline, etc)."""
+        with (
+            patch("grove.workspace.git.fetch", side_effect=GitError("network error")),
+            patch("grove.workspace.git.repo_base_branch", return_value=None),
+            patch("grove.workspace.git.default_branch", return_value="origin/main"),
+            patch("grove.workspace.git.repo_status", return_value=""),
+            patch("grove.workspace.git.commits_ahead_behind", return_value=(0, 0)),
+        ):
+            results = workspace.sync_workspace(sample_workspace)
+            # Should still produce a result (up to date based on cached refs)
+            assert len(results) == 1
+            assert results[0]["result"] == "up to date"
+
+    def test_rebase_when_behind_unknown(self, tmp_grove, sample_workspace):
+        """When ahead/behind fails, still attempt rebase."""
+        with (
+            patch("grove.workspace.git.fetch"),
+            patch("grove.workspace.git.repo_base_branch", return_value=None),
+            patch("grove.workspace.git.default_branch", return_value="origin/main"),
+            patch("grove.workspace.git.repo_status", return_value=""),
+            patch("grove.workspace.git.commits_ahead_behind", side_effect=GitError("bad ref")),
+            patch("grove.workspace.git.rebase_onto") as mock_rebase,
+        ):
+            results = workspace.sync_workspace(sample_workspace)
+            assert results[0]["result"] == "rebased"
+            mock_rebase.assert_called_once()
+
+
 class TestWorkspaceStatus:
     def test_clean_repos(self, tmp_grove, sample_workspace):
         with (
@@ -213,6 +303,9 @@ class TestWorkspaceStatus:
             assert len(results) == 1
             assert results[0]["status"] == "clean"
             assert results[0]["branch"] == "feat/test"
+            # Ahead/behind should be present (may be "-" if git calls fail)
+            assert "ahead" in results[0]
+            assert "behind" in results[0]
 
     def test_modified_repo(self, tmp_grove, sample_workspace):
         with (
@@ -229,3 +322,29 @@ class TestWorkspaceStatus:
             results = workspace.workspace_status(sample_workspace)
             assert results[0]["branch"] == "?"
             assert "error" in results[0]["status"]
+            assert results[0]["ahead"] == "-"
+            assert results[0]["behind"] == "-"
+
+    def test_ahead_behind_populated(self, tmp_grove, sample_workspace):
+        with (
+            patch("grove.workspace.git.current_branch", return_value="feat/test"),
+            patch("grove.workspace.git.repo_status", return_value=""),
+            patch("grove.workspace.git.repo_base_branch", return_value="origin/main"),
+            patch("grove.workspace.git.commits_ahead_behind", return_value=(5, 2)),
+        ):
+            results = workspace.workspace_status(sample_workspace)
+            assert results[0]["ahead"] == "5"
+            assert results[0]["behind"] == "2"
+
+    def test_ahead_behind_fallback_on_failure(self, tmp_grove, sample_workspace):
+        with (
+            patch("grove.workspace.git.current_branch", return_value="feat/test"),
+            patch("grove.workspace.git.repo_status", return_value=""),
+            patch("grove.workspace.git.repo_base_branch", return_value=None),
+            patch("grove.workspace.git.default_branch", side_effect=GitError("no remote")),
+        ):
+            results = workspace.workspace_status(sample_workspace)
+            assert results[0]["ahead"] == "-"
+            assert results[0]["behind"] == "-"
+            # Status should still work fine
+            assert results[0]["status"] == "clean"

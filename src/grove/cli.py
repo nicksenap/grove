@@ -10,6 +10,8 @@ import typer
 
 from grove import __version__, config, discover, state, workspace
 from grove.console import console, error, info, make_table, success, warning
+from grove.git import pr_status as git_pr_status
+from grove.models import Workspace
 from grove.update import get_newer_version
 
 
@@ -353,20 +355,11 @@ def delete(
         raise typer.Exit(1)
 
 
-@app.command()
-def status(
-    name: str | None = typer.Argument(
-        None,
-        help="Workspace name (auto-detects from cwd)",
-        autocompletion=complete_workspace_name,
-    ),
-    verbose: bool = typer.Option(False, "--verbose", "-V", help="Show full git status output"),
-) -> None:
-    """Show git status across a workspace's repos."""
+def _resolve_workspace(name: str | None) -> Workspace:
+    """Resolve a workspace by name, cwd auto-detection, or interactive picker."""
     if name is None:
         ws = state.find_workspace_by_path(Path.cwd())
         if ws is None:
-            # Interactive fallback
             workspaces = state.load_workspaces()
             if not workspaces:
                 error("Not inside a workspace and no workspaces exist")
@@ -381,12 +374,61 @@ def status(
         if ws is None:
             error(f"Workspace [bold]{name}[/] not found")
             raise typer.Exit(1)
+    return ws
+
+
+def _format_drift(ahead: str, behind: str) -> str:
+    """Format ahead/behind counts for table display."""
+    if ahead == "-" or behind == "-":
+        return "[dim]-[/]"
+    return f"[green]{ahead}↑[/] [yellow]{behind}↓[/]"
+
+
+def _format_pr(pr_data: dict | None) -> str:
+    """Format PR info for table display."""
+    if pr_data is None:
+        return "[dim]—[/]"
+    number = pr_data.get("number", "?")
+    pr_state = pr_data.get("state", "OPEN")
+    review = pr_data.get("reviewDecision", "")
+
+    if pr_state == "MERGED":
+        return f"[magenta]#{number} (merged)[/]"
+    if pr_state == "CLOSED":
+        return f"[dim]#{number} (closed)[/]"
+
+    review_map = {
+        "APPROVED": "[green]approved[/]",
+        "CHANGES_REQUESTED": "[yellow]changes requested[/]",
+        "REVIEW_REQUIRED": "[dim]review required[/]",
+    }
+    review_text = review_map.get(review, "[dim]open[/]")
+    return f"#{number} ({review_text})"
+
+
+@app.command()
+def status(
+    name: str | None = typer.Argument(
+        None,
+        help="Workspace name (auto-detects from cwd)",
+        autocompletion=complete_workspace_name,
+    ),
+    verbose: bool = typer.Option(False, "--verbose", "-V", help="Show full git status output"),
+    show_pr: bool = typer.Option(False, "--pr", "-P", help="Show GitHub PR status (requires gh)"),
+) -> None:
+    """Show git status across a workspace's repos."""
+    ws = _resolve_workspace(name)
 
     console.print(f"[bold]Workspace:[/] {ws.name}  [dim]({ws.path})[/]")
     console.print()
 
     results = workspace.workspace_status(ws)
-    table = make_table("Repo", "Branch", "Status")
+
+    columns = ["Repo", "Branch", "↑↓", "Status"]
+    if show_pr:
+        columns.append("PR")
+    table = make_table(*columns)
+
     for r in results:
         raw_status = r["status"]
         if raw_status == "clean":
@@ -394,11 +436,17 @@ def status(
         elif raw_status.startswith("error:"):
             display = f"[red]{raw_status}[/]"
         else:
-            # Count changed files
             changed_count = len(raw_status.splitlines())
             display = f"[yellow]{changed_count} changed[/]"
 
-        table.add_row(r["repo"], r["branch"], display)
+        drift = _format_drift(r.get("ahead", "-"), r.get("behind", "-"))
+
+        row = [r["repo"], r["branch"], drift, display]
+        if show_pr:
+            pr_info = git_pr_status(ws.path / r["repo"])
+            row.append(_format_pr(pr_info))
+
+        table.add_row(*row)
     console.print(table)
 
     # Show full status when verbose
@@ -407,6 +455,39 @@ def status(
             if r["status"] not in ("clean", "") and not r["status"].startswith("error:"):
                 console.print(f"\n[bold cyan]{r['repo']}[/]")
                 console.print(r["status"])
+
+
+@app.command()
+def sync(
+    name: str | None = typer.Argument(
+        None,
+        help="Workspace name (auto-detects from cwd)",
+        autocompletion=complete_workspace_name,
+    ),
+) -> None:
+    """Sync workspace repos by rebasing onto their base branches."""
+    ws = _resolve_workspace(name)
+
+    console.print(f"[bold]Syncing:[/] {ws.name}")
+    console.print()
+
+    results = workspace.sync_workspace(ws)
+    for r in results:
+        result_text = r["result"]
+        base = r.get("base", "?")
+        if result_text == "up to date":
+            console.print(f"  [green]✓[/] {r['repo']}  [dim]already up to date[/]")
+        elif result_text.startswith("rebased"):
+            success(f"{r['repo']}  {result_text}")
+        elif result_text == "conflict":
+            error(
+                f"{r['repo']}  conflict — rebase aborted. "
+                f"To retry: cd {ws.path / r['repo']} && git rebase {base}"
+            )
+        elif result_text.startswith("skipped"):
+            warning(f"{r['repo']}  {result_text}")
+        else:
+            error(f"{r['repo']}  {result_text}")
 
 
 _BACK_TO_REPOS = "← back to repos dir"

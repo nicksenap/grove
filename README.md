@@ -40,6 +40,7 @@ gw init ~/dev                                          # register repos director
 gw create my-feature -r svc-a,svc-b -b feat/login     # create workspace
 gw list                                                # list workspaces
 gw status my-feature                                   # git status across repos
+gw sync my-feature                                     # rebase all repos onto base branch
 gw go my-feature                                       # cd into workspace
 gw delete my-feature                                   # clean up
 ```
@@ -61,6 +62,18 @@ setup = "pnpm install"             # run after worktree creation
 ```toml
 setup = ["uv sync", "uv run pre-commit install"]
 ```
+
+## Works great with AI coding tools
+
+Worktrees mean isolation. That makes Grove a natural fit for tools like [Claude Code](https://docs.anthropic.com/en/docs/claude-code) — spin up a workspace, let your AI agent work across repos without touching anything else, clean up when done:
+
+```bash
+gw create -p backend -b fix/auth-bug
+claude "fix the auth token expiry bug across svc-auth and api-gateway"
+gw delete fix-auth-bug
+```
+
+Grove copies your `CLAUDE.md` into new workspaces, so your agent gets project context from the start.
 
 ## What it does
 

@@ -164,21 +164,121 @@ def delete_workspace(name: str) -> bool:
     return True
 
 
+def sync_workspace(workspace: Workspace) -> list[dict[str, str]]:
+    """Sync all repos by rebasing onto their base branches.
+
+    Returns list of ``{repo, base, result}`` dicts.
+    """
+    results: list[dict[str, str]] = []
+    for repo_wt in workspace.repos:
+        # Fetch latest
+        with console.status(f"Fetching [bold]{repo_wt.repo_name}[/]…"):
+            try:
+                git.fetch(repo_wt.worktree_path)
+            except GitError as e:
+                warning(f"Could not fetch {repo_wt.repo_name}: {e}")
+
+        # Determine base branch
+        base = git.repo_base_branch(repo_wt.source_repo)
+        if base is None:
+            try:
+                base = git.default_branch(repo_wt.source_repo)
+            except GitError:
+                results.append(
+                    {
+                        "repo": repo_wt.repo_name,
+                        "base": "?",
+                        "result": "error: could not determine base branch",
+                    }
+                )
+                continue
+
+        # Skip dirty worktrees — rebase on uncommitted changes is dangerous
+        status_text = git.repo_status(repo_wt.worktree_path)
+        if status_text:
+            results.append(
+                {
+                    "repo": repo_wt.repo_name,
+                    "base": base,
+                    "result": "skipped: uncommitted changes",
+                }
+            )
+            continue
+
+        # Check if rebase is needed
+        try:
+            _ahead, behind = git.commits_ahead_behind(repo_wt.worktree_path, base)
+        except GitError:
+            behind = -1  # unknown, attempt rebase anyway
+
+        if behind == 0:
+            results.append(
+                {
+                    "repo": repo_wt.repo_name,
+                    "base": base,
+                    "result": "up to date",
+                }
+            )
+            continue
+
+        # Rebase
+        with console.status(f"Rebasing [bold]{repo_wt.repo_name}[/] onto {base}…"):
+            try:
+                git.rebase_onto(repo_wt.worktree_path, base)
+                msg = f"rebased ({behind} new commits)" if behind > 0 else "rebased"
+                results.append(
+                    {
+                        "repo": repo_wt.repo_name,
+                        "base": base,
+                        "result": msg,
+                    }
+                )
+            except GitError:
+                # Abort failed rebase to leave worktree in a clean state
+                with contextlib.suppress(GitError):
+                    git.rebase_abort(repo_wt.worktree_path)
+                results.append(
+                    {
+                        "repo": repo_wt.repo_name,
+                        "base": base,
+                        "result": "conflict",
+                    }
+                )
+
+    return results
+
+
 def workspace_status(workspace: Workspace) -> list[dict[str, str]]:
     """Get status of all repos in a workspace.
 
-    Returns list of {repo, branch, status} dicts.
+    Returns list of ``{repo, branch, status, ahead, behind}`` dicts.
     """
     results: list[dict[str, str]] = []
     for repo_wt in workspace.repos:
         try:
             branch = git.current_branch(repo_wt.worktree_path)
             status_text = git.repo_status(repo_wt.worktree_path)
+
+            # Ahead/behind (best-effort — never crash status for this)
+            ahead_str = "-"
+            behind_str = "-"
+            try:
+                base = git.repo_base_branch(repo_wt.source_repo)
+                if base is None:
+                    base = git.default_branch(repo_wt.source_repo)
+                ahead, behind = git.commits_ahead_behind(repo_wt.worktree_path, base)
+                ahead_str = str(ahead)
+                behind_str = str(behind)
+            except Exception:
+                pass
+
             results.append(
                 {
                     "repo": repo_wt.repo_name,
                     "branch": branch,
                     "status": status_text or "clean",
+                    "ahead": ahead_str,
+                    "behind": behind_str,
                 }
             )
         except GitError as e:
@@ -187,6 +287,8 @@ def workspace_status(workspace: Workspace) -> list[dict[str, str]]:
                     "repo": repo_wt.repo_name,
                     "branch": "?",
                     "status": f"error: {e}",
+                    "ahead": "-",
+                    "behind": "-",
                 }
             )
     return results
