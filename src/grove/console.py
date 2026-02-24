@@ -18,7 +18,7 @@ def success(msg: str) -> None:
 
 
 def info(msg: str) -> None:
-    _err_console.print(f"[dim]{msg}[/]")
+    _err_console.print(msg, style="dim")
 
 
 def warning(msg: str) -> None:

@@ -18,13 +18,7 @@ gw() {
         return $rc
     fi
 
-    # For create --go, use a temp file so stdout stays connected to the tty
-    local has_go=false
-    for arg in "$@"; do
-        [ "$arg" = "--go" ] && has_go=true
-    done
-
-    if [ "$has_go" = true ]; then
+    if [ "$1" = "create" ]; then
         local tmpfile
         tmpfile="$(mktemp)"
         command gw "$@" | tee "$tmpfile"
