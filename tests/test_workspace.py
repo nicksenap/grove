@@ -114,9 +114,7 @@ class TestCreateWorkspace:
         ):
             ws = workspace.create_workspace("test", {"svc-api": repo_path}, "feat/new", cfg)
             assert ws is not None
-            mock_create.assert_called_once_with(
-                repo_path, "feat/new", start_point="origin/main"
-            )
+            mock_create.assert_called_once_with(repo_path, "feat/new", start_point="origin/main")
 
 
 class TestSetupHook:
