@@ -268,9 +268,7 @@ class TestPreset:
         ):
             cfg = self._make_config(tmp_grove)
             mock_cfg.return_value = cfg
-            result = runner.invoke(
-                app, ["preset", "add", "backend", "-r", "svc-auth,svc-api"]
-            )
+            result = runner.invoke(app, ["preset", "add", "backend", "-r", "svc-auth,svc-api"])
             assert result.exit_code == 0
             assert "backend" in result.output
             mock_save.assert_called_once()
@@ -282,9 +280,7 @@ class TestPreset:
             patch("grove.cli.discover.find_repos", return_value=fake_repos),
         ):
             mock_cfg.return_value = self._make_config(tmp_grove)
-            result = runner.invoke(
-                app, ["preset", "add", "bad", "-r", "nonexistent"]
-            )
+            result = runner.invoke(app, ["preset", "add", "bad", "-r", "nonexistent"])
             assert result.exit_code == 1
             assert "not found" in result.output
 

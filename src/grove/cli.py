@@ -246,13 +246,13 @@ def create(
             and len(repo_names) < len(available)
             and typer.confirm("Save this selection as a preset?", default=False)
         ):
-                from rich.prompt import Prompt
+            from rich.prompt import Prompt
 
-                preset_name = Prompt.ask("[bold]Preset name[/]", console=console)
-                if preset_name:
-                    cfg.presets[preset_name] = repo_names
-                    config.save_config(cfg)
-                    success(f"Preset [bold]{preset_name}[/] saved")
+            preset_name = Prompt.ask("[bold]Preset name[/]", console=console)
+            if preset_name:
+                cfg.presets[preset_name] = repo_names
+                config.save_config(cfg)
+                success(f"Preset [bold]{preset_name}[/] saved")
 
     # Validate selected repos
     selected: dict[str, Path] = {}
