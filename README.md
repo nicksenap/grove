@@ -44,7 +44,14 @@ Drop a `.grove.toml` in any repo to override defaults:
 
 ```toml
 # merchant-portal/.grove.toml
-base_branch = "stage"    # branch new worktrees from origin/stage instead of origin/main
+base_branch = "stage"              # branch from origin/stage instead of origin/main
+setup = "pnpm install"             # run after worktree creation
+```
+
+`setup` accepts a string or a list of commands:
+
+```toml
+setup = ["uv sync", "uv run pre-commit install"]
 ```
 
 ## What it does

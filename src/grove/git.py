@@ -63,22 +63,21 @@ def default_branch(repo: Path) -> str:
         raise GitError("Could not determine default branch") from None
 
 
-def repo_base_branch(repo: Path) -> str | None:
-    """Read ``.grove.toml`` from *repo* and return the configured base branch ref.
-
-    Returns ``origin/<base_branch>`` if set, else ``None``.
-    """
+def read_grove_config(path: Path) -> dict:
+    """Read ``.grove.toml`` from *path* and return the parsed dict (empty if absent)."""
     import tomllib
 
-    grove_toml = repo / ".grove.toml"
+    grove_toml = path / ".grove.toml"
     if not grove_toml.exists():
-        return None
+        return {}
     with open(grove_toml, "rb") as f:
-        cfg = tomllib.load(f)
-    base = cfg.get("base_branch")
-    if base:
-        return f"origin/{base}"
-    return None
+        return tomllib.load(f)
+
+
+def repo_base_branch(repo: Path) -> str | None:
+    """Return ``origin/<base_branch>`` from ``.grove.toml``, or ``None``."""
+    base = read_grove_config(repo).get("base_branch")
+    return f"origin/{base}" if base else None
 
 
 def create_branch(repo: Path, branch: str, start_point: str | None = None) -> None:

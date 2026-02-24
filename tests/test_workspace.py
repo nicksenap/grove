@@ -119,6 +119,77 @@ class TestCreateWorkspace:
             )
 
 
+class TestSetupHook:
+    def test_runs_setup_command(self, tmp_grove):
+        cfg = Config(
+            repos_dir=tmp_grove["repos_dir"],
+            workspace_dir=tmp_grove["workspace_dir"],
+        )
+        repo_path = tmp_grove["repos_dir"] / "svc-api"
+        repo_path.mkdir()
+
+        with (
+            patch("grove.workspace.git.fetch"),
+            patch("grove.workspace.git.worktree_has_branch", return_value=False),
+            patch("grove.workspace.git.branch_exists", return_value=True),
+            patch("grove.workspace.git.worktree_add"),
+            patch("grove.workspace.subprocess.run") as mock_sub,
+            patch(
+                "grove.workspace.git.read_grove_config",
+                return_value={"setup": "pnpm install"},
+            ),
+        ):
+            ws = workspace.create_workspace("test", {"svc-api": repo_path}, "feat/x", cfg)
+            assert ws is not None
+            mock_sub.assert_called_once_with(
+                "pnpm install",
+                cwd=ws.path / "svc-api",
+                shell=True,
+                check=True,
+            )
+
+    def test_runs_multiple_setup_commands(self, tmp_grove):
+        cfg = Config(
+            repos_dir=tmp_grove["repos_dir"],
+            workspace_dir=tmp_grove["workspace_dir"],
+        )
+        repo_path = tmp_grove["repos_dir"] / "web"
+        repo_path.mkdir()
+
+        with (
+            patch("grove.workspace.git.fetch"),
+            patch("grove.workspace.git.worktree_has_branch", return_value=False),
+            patch("grove.workspace.git.branch_exists", return_value=True),
+            patch("grove.workspace.git.worktree_add"),
+            patch("grove.workspace.subprocess.run") as mock_sub,
+            patch(
+                "grove.workspace.git.read_grove_config",
+                return_value={"setup": ["pnpm install", "pnpm build"]},
+            ),
+        ):
+            ws = workspace.create_workspace("test", {"web": repo_path}, "feat/x", cfg)
+            assert ws is not None
+            assert mock_sub.call_count == 2
+
+    def test_no_setup_no_crash(self, tmp_grove):
+        cfg = Config(
+            repos_dir=tmp_grove["repos_dir"],
+            workspace_dir=tmp_grove["workspace_dir"],
+        )
+        repo_path = tmp_grove["repos_dir"] / "svc"
+        repo_path.mkdir()
+
+        with (
+            patch("grove.workspace.git.fetch"),
+            patch("grove.workspace.git.worktree_has_branch", return_value=False),
+            patch("grove.workspace.git.branch_exists", return_value=True),
+            patch("grove.workspace.git.worktree_add"),
+            patch("grove.workspace.git.read_grove_config", return_value={}),
+        ):
+            ws = workspace.create_workspace("test", {"svc": repo_path}, "feat/x", cfg)
+            assert ws is not None
+
+
 class TestDeleteWorkspace:
     def test_success(self, tmp_grove, sample_workspace):
         state.add_workspace(sample_workspace)

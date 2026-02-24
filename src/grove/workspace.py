@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import contextlib
 import shutil
+import subprocess
 from pathlib import Path
 
 from grove import git, state
@@ -91,6 +92,10 @@ def create_workspace(
         created.append(repo_wt)
         success(f"{repo_name} -> {worktree_path}")
 
+    # --- Run per-repo setup hooks ---
+    for repo_wt in created:
+        _run_setup(repo_wt.repo_name, repo_wt.worktree_path)
+
     workspace = Workspace(
         name=name,
         path=workspace_path,
@@ -99,6 +104,27 @@ def create_workspace(
     )
     state.add_workspace(workspace)
     return workspace
+
+
+def _run_setup(repo_name: str, worktree_path: Path) -> None:
+    """Run setup commands from ``.grove.toml`` in the worktree."""
+    cfg = git.read_grove_config(worktree_path)
+    setup = cfg.get("setup")
+    if not setup:
+        return
+
+    commands = [setup] if isinstance(setup, str) else setup
+    for cmd in commands:
+        info(f"[{repo_name}] running: {cmd}")
+        try:
+            subprocess.run(
+                cmd,
+                cwd=worktree_path,
+                shell=True,
+                check=True,
+            )
+        except subprocess.CalledProcessError as e:
+            warning(f"[{repo_name}] setup command failed (exit {e.returncode}): {cmd}")
 
 
 def _rollback(created: list[RepoWorktree], workspace_path: Path) -> None:

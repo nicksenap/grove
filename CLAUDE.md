@@ -24,8 +24,9 @@ Git Worktree Workspace Orchestrator — CLI tool (`gw`).
 
 ## Per-repo config
 
-Repos can have a `.grove.toml` at their root with `base_branch` to override the
-default branch used when creating new worktree branches (e.g. `stage` instead of `main`).
+Repos can have a `.grove.toml` at their root:
+- `base_branch` — override the default branch for new worktrees (e.g. `stage`)
+- `setup` — command(s) to run after worktree creation (string or list of strings)
 
 ## Architecture
 
