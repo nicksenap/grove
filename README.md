@@ -4,10 +4,26 @@ Git worktree workspace orchestrator. One command creates a workspace folder with
 
 ## Install
 
+### Homebrew
+
+```bash
+brew tap nicksenap/grove
+brew install grove
+```
+
+### From source
+
 ```bash
 uv tool install .
-eval "$(gw shell-init)"  # add to .zshrc
 ```
+
+Then add shell integration to your `.zshrc` (or `.bashrc`):
+
+```bash
+eval "$(gw shell-init)"
+```
+
+This enables `gw go` to change your working directory.
 
 ## Usage
 
@@ -29,4 +45,4 @@ gw delete my-feature                                   # clean up
 
 ## Requirements
 
-Python 3.12+
+Python 3.12+ (installed automatically by Homebrew)
