@@ -13,18 +13,26 @@ class Config:
 
     repos_dir: Path
     workspace_dir: Path
+    presets: dict[str, list[str]] = field(default_factory=dict)
 
-    def to_dict(self) -> dict[str, str]:
-        return {
+    def to_dict(self) -> dict:
+        d: dict = {
             "repos_dir": str(self.repos_dir),
             "workspace_dir": str(self.workspace_dir),
         }
+        if self.presets:
+            d["presets"] = {name: {"repos": list(repos)} for name, repos in self.presets.items()}
+        return d
 
     @classmethod
-    def from_dict(cls, data: dict[str, str]) -> Config:
+    def from_dict(cls, data: dict) -> Config:
+        presets_raw = data.get("presets", {})
+        # Each preset is a TOML table: [presets.name] with repos = [...]
+        presets = {name: list(val["repos"]) for name, val in presets_raw.items()}
         return cls(
             repos_dir=Path(data["repos_dir"]),
             workspace_dir=Path(data["workspace_dir"]),
+            presets=presets,
         )
 
 
