@@ -5,7 +5,7 @@ default:
     @just --list
 
 # Run all checks (lint + format + tests)
-check: lint test
+check: lint fmt-check test
 
 # Run ruff linter
 lint:
@@ -42,3 +42,16 @@ install:
 # Reinstall and reload shell integration
 reload: install
     @echo 'Run: eval "$(gw shell-init)"'
+
+# Tag a new release (usage: just release 0.4.0)
+release version:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    current=$(python3 -c "import re; f=open('pyproject.toml').read(); print(re.search(r'version\s*=\s*\"(.+?)\"', f).group(1))")
+    if [ "$current" != "{{ version }}" ]; then
+        echo "Error: pyproject.toml version ($current) does not match {{ version }}"
+        echo "Update pyproject.toml first, then run this again."
+        exit 1
+    fi
+    git tag -a "v{{ version }}" -m "Release {{ version }}"
+    git push origin "v{{ version }}"
