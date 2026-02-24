@@ -318,28 +318,37 @@ def delete(
     force: bool = typer.Option(False, "--force", "-f", help="Skip confirmation"),
 ) -> None:
     """Delete a workspace and its worktrees."""
-    # Interactive fallback
+    # Interactive fallback — multi-select
     if name is None:
         workspaces = state.load_workspaces()
         if not workspaces:
             error("No workspaces to delete")
             raise typer.Exit(1)
-        name = _pick_one("Select workspace to delete", [ws.name for ws in workspaces])
+        names = _pick_many("Select workspace(s) to delete", [ws.name for ws in workspaces])
+    else:
+        names = [name]
 
-    ws = state.get_workspace(name)
-    if ws is None:
-        error(f"Workspace [bold]{name}[/] not found")
-        raise typer.Exit(1)
+    # Validate all names upfront
+    for n in names:
+        if state.get_workspace(n) is None:
+            error(f"Workspace [bold]{n}[/] not found")
+            raise typer.Exit(1)
 
     if not force:
-        confirm = typer.confirm(f"Delete workspace '{name}' and all its worktrees?")
+        label = ", ".join(names)
+        msg = f"Delete {len(names)} workspace(s) ({label}) and all their worktrees?"
+        confirm = typer.confirm(msg)
         if not confirm:
             info("Cancelled")
             return
 
-    if workspace.delete_workspace(name):
-        success(f"Workspace [bold]{name}[/] deleted")
-    else:
+    failed = False
+    for n in names:
+        if workspace.delete_workspace(n):
+            success(f"Workspace [bold]{n}[/] deleted")
+        else:
+            failed = True
+    if failed:
         raise typer.Exit(1)
 
 
