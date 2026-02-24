@@ -30,8 +30,17 @@ def save_config(config: Config) -> None:
     """Save config to TOML."""
     ensure_grove_dir()
     # Hand-write TOML to avoid extra dependency
-    content = f'repos_dir = "{config.repos_dir}"\nworkspace_dir = "{config.workspace_dir}"\n'
-    CONFIG_PATH.write_text(content)
+    lines = [
+        f'repos_dir = "{config.repos_dir}"',
+        f'workspace_dir = "{config.workspace_dir}"',
+    ]
+    for preset_name, repos in config.presets.items():
+        lines.append("")
+        quoted = ", ".join(f'"{r}"' for r in repos)
+        lines.append(f"[presets.{preset_name}]")
+        lines.append(f"repos = [{quoted}]")
+    lines.append("")
+    CONFIG_PATH.write_text("\n".join(lines))
 
 
 def require_config() -> Config:
