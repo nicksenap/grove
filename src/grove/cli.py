@@ -8,7 +8,8 @@ from pathlib import Path
 import typer
 
 from grove import __version__, config, discover, state, workspace
-from grove.console import console, error, info, make_table, success
+from grove.console import console, error, info, make_table, success, warning
+from grove.update import get_newer_version
 
 
 def _version_callback(value: bool) -> None:
@@ -37,6 +38,11 @@ def main(
     ),
 ) -> None:
     """Grove — Git Worktree Workspace Orchestrator."""
+    # Non-blocking update check (reads cache, refreshes in background)
+    newer = get_newer_version(__version__)
+    if newer:
+        warning(f"New version available: {__version__} → {newer} — run: brew upgrade grove")
+
     if ctx.invoked_subcommand is None and not version:
         # No subcommand and no --version: show help
         console.print(ctx.get_help())
@@ -93,61 +99,46 @@ def _sanitize_name(branch: str) -> str:
 
 
 def _pick_one(prompt_text: str, choices: list[str]) -> str:
-    """Show a numbered list and let the user pick one."""
-    from rich.prompt import Prompt
+    """Arrow-key single selection."""
+    from simple_term_menu import TerminalMenu
 
     console.print(f"\n[bold]{prompt_text}[/]")
-    for i, choice in enumerate(choices, 1):
-        console.print(f"  [cyan]{i}[/]) {choice}")
-
-    while True:
-        answer = Prompt.ask("Choice", console=console)
-        # Accept the name directly
-        if answer in choices:
-            return answer
-        # Accept a number
-        try:
-            idx = int(answer) - 1
-            if 0 <= idx < len(choices):
-                return choices[idx]
-        except ValueError:
-            pass
-        console.print("[red]Invalid choice, try again[/]")
+    menu = TerminalMenu(
+        choices,
+        menu_cursor="❯ ",
+        menu_cursor_style=("fg_cyan", "bold"),
+        menu_highlight_style=("fg_cyan", "bold"),
+    )
+    idx = menu.show()
+    if idx is None:
+        raise typer.Abort()
+    return choices[idx]
 
 
 def _pick_many(prompt_text: str, choices: list[str]) -> list[str]:
-    """Show a numbered list and let the user pick multiple (comma-separated)."""
-    from rich.prompt import Prompt
+    """Arrow-key + space multi-selection."""
+    from simple_term_menu import TerminalMenu
 
+    display = ["(all)", *choices]
     console.print(f"\n[bold]{prompt_text}[/]")
-    for i, choice in enumerate(choices, 1):
-        console.print(f"  [cyan]{i}[/]) {choice}")
-    console.print("  [cyan]a[/]) all")
-
-    while True:
-        answer = Prompt.ask("Choices (comma-separated numbers, or 'a' for all)", console=console)
-        if answer.strip().lower() == "a":
-            return list(choices)
-        parts = [p.strip() for p in answer.split(",")]
-        selected: list[str] = []
-        valid = True
-        for p in parts:
-            if p in choices:
-                selected.append(p)
-            else:
-                try:
-                    idx = int(p) - 1
-                    if 0 <= idx < len(choices):
-                        selected.append(choices[idx])
-                    else:
-                        valid = False
-                        break
-                except ValueError:
-                    valid = False
-                    break
-        if valid and selected:
-            return selected
-        console.print("[red]Invalid selection, try again[/]")
+    console.print("[dim]  ↑/↓ navigate · space select · enter confirm[/]")
+    menu = TerminalMenu(
+        display,
+        multi_select=True,
+        multi_select_select_on_accept=False,
+        menu_cursor="❯ ",
+        menu_cursor_style=("fg_cyan", "bold"),
+        menu_highlight_style=("fg_cyan", "bold"),
+    )
+    result = menu.show()
+    if result is None:
+        raise typer.Abort()
+    selected = menu.chosen_menu_entries
+    if not selected:
+        raise typer.Abort()
+    if "(all)" in selected:
+        return list(choices)
+    return list(selected)
 
 
 # ---------------------------------------------------------------------------
