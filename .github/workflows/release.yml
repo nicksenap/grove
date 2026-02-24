@@ -39,21 +39,29 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
       - name: Update Homebrew tap
         env:
           TAP_GITHUB_TOKEN: ${{ secrets.TAP_GITHUB_TOKEN }}
         run: |
+          # Install grove to resolve all dependencies
+          pip install .
+
           # Compute SHA256 of the release tarball
           tarball_url="https://github.com/${{ github.repository }}/archive/refs/tags/${GITHUB_REF_NAME}.tar.gz"
           sha256=$(curl -sL "$tarball_url" | sha256sum | awk '{print $1}')
 
-          # Clone the tap repo
+          # Generate the full formula from installed packages
+          python3 scripts/generate_formula.py "$tarball_url" "$sha256" > /tmp/grove.rb
+
+          # Clone the tap repo and update
           git clone "https://x-access-token:${TAP_GITHUB_TOKEN}@github.com/nicksenap/homebrew-grove.git" tap
           cd tap
-
-          # Update formula version URL and tarball SHA (first sha256 only)
-          sed -i "s|url \"https://github.com/.*/archive/refs/tags/v.*\.tar\.gz\"|url \"${tarball_url}\"|" Formula/grove.rb
-          sed -i "0,/sha256 \".*\"/s/sha256 \".*\"/sha256 \"${sha256}\"/" Formula/grove.rb
+          cp /tmp/grove.rb Formula/grove.rb
 
           # Commit and push
           git config user.name "github-actions[bot]"
