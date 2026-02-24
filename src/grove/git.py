@@ -42,9 +42,33 @@ def branch_exists(repo: Path, branch: str) -> bool:
         return False
 
 
-def create_branch(repo: Path, branch: str) -> None:
-    """Create a new branch from HEAD."""
-    _run(["branch", branch], cwd=repo)
+def fetch(repo: Path) -> None:
+    """Fetch latest from all remotes."""
+    _run(["fetch", "--all", "--quiet"], cwd=repo)
+
+
+def default_branch(repo: Path) -> str:
+    """Return the remote default branch ref (e.g. ``origin/main``)."""
+    try:
+        result = _run(["symbolic-ref", "refs/remotes/origin/HEAD", "--short"], cwd=repo)
+        return result.stdout.strip()
+    except GitError:
+        # origin/HEAD not set — probe common names
+        for name in ("main", "master"):
+            try:
+                _run(["rev-parse", "--verify", f"refs/remotes/origin/{name}"], cwd=repo)
+                return f"origin/{name}"
+            except GitError:
+                continue
+        raise GitError("Could not determine default branch") from None
+
+
+def create_branch(repo: Path, branch: str, start_point: str | None = None) -> None:
+    """Create a new branch, optionally from *start_point*."""
+    cmd = ["branch", branch]
+    if start_point:
+        cmd.append(start_point)
+    _run(cmd, cwd=repo)
 
 
 def worktree_add(repo: Path, worktree_path: Path, branch: str) -> None:

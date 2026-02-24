@@ -222,14 +222,29 @@ def create(
     elif all_repos:
         repo_names = list(available.keys())
     else:
-        # No flags at all — interactive if tty, else default to all
+        # No flags at all — interactive picker
         if not available:
             error("No repos found. Run: gw init <repos-dir>")
             raise typer.Exit(1)
-        repo_names = _pick_many(
-            "Select repos",
-            sorted(available.keys()),
-        )
+
+        # Offer presets when available
+        if cfg.presets:
+            preset_choices = [
+                f"{name}  [dim]({', '.join(repos_list)})[/]"
+                for name, repos_list in cfg.presets.items()
+            ]
+            source = _pick_one(
+                "Select repos from",
+                [*preset_choices, "Pick manually…"],
+            )
+            if source == "Pick manually…":
+                repo_names = _pick_many("Select repos", sorted(available.keys()))
+            else:
+                # Extract preset name from the display string
+                chosen_preset = source.split("  [dim]")[0]
+                repo_names = cfg.presets[chosen_preset]
+        else:
+            repo_names = _pick_many("Select repos", sorted(available.keys()))
 
         # Offer to save as preset if none exist
         if (
@@ -261,6 +276,15 @@ def create(
     ws = workspace.create_workspace(name, selected, branch, cfg)
     if ws is None:
         raise typer.Exit(1)
+
+    # --- Copy CLAUDE.md from repos dir if present ---
+    claude_md = cfg.repos_dir / "CLAUDE.md"
+    if claude_md.is_file():
+        import shutil
+
+        if typer.confirm("Copy CLAUDE.md into workspace?", default=True):
+            shutil.copy2(claude_md, ws.path / "CLAUDE.md")
+            success("CLAUDE.md copied")
 
     console.print()
     success(f"Workspace [bold]{name}[/] created at {ws.path}")

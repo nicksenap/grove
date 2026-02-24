@@ -13,11 +13,14 @@ Git Worktree Workspace Orchestrator — CLI tool (`gw`).
 
 1. Bump version in `pyproject.toml`
 2. Run `uv lock` to update the lockfile
-3. Commit: `git commit -m "Bump version to X.Y.Z"`
-4. Tag + push: `just release X.Y.Z`
+3. Optionally write release notes in `release_notes.md` (root of repo)
+4. Commit everything
+5. Tag + push: `just release X.Y.Z`
    - Validates version in pyproject.toml matches
    - Creates annotated tag `vX.Y.Z`
    - Pushes tag to origin (triggers release workflow)
+   - Workflow uses `release_notes.md` if present, otherwise auto-generates
+   - Workflow auto-generates Homebrew formula with all Python resources
 
 ## Architecture
 

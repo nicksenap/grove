@@ -38,6 +38,14 @@ def create_workspace(
             )
             return None
 
+    # --- Fetch latest from all repos ---
+    for repo_name, repo_path in repo_paths.items():
+        with console.status(f"Fetching [bold]{repo_name}[/]…"):
+            try:
+                git.fetch(repo_path)
+            except GitError as e:
+                warning(f"Could not fetch {repo_name}: {e}")
+
     # --- Create workspace directory ---
     workspace_path.mkdir(parents=True, exist_ok=True)
 
@@ -46,11 +54,18 @@ def create_workspace(
     for repo_name, repo_path in repo_paths.items():
         worktree_path = workspace_path / repo_name
 
-        # Auto-create branch if it doesn't exist
+        # Auto-create branch from the default branch if it doesn't exist
         if not git.branch_exists(repo_path, branch):
-            info(f"Creating branch [bold]{branch}[/] in {repo_name}")
             try:
-                git.create_branch(repo_path, branch)
+                base = git.default_branch(repo_path)
+            except GitError:
+                base = None
+            info(
+                f"Creating branch [bold]{branch}[/] in {repo_name}"
+                + (f" from {base}" if base else "")
+            )
+            try:
+                git.create_branch(repo_path, branch, start_point=base)
             except GitError as e:
                 error(f"Failed to create branch in {repo_name}: {e}")
                 _rollback(created, workspace_path)

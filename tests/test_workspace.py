@@ -105,14 +105,18 @@ class TestCreateWorkspace:
         repo_path.mkdir()
 
         with (
+            patch("grove.workspace.git.fetch"),
             patch("grove.workspace.git.worktree_has_branch", return_value=False),
             patch("grove.workspace.git.branch_exists", return_value=False),
+            patch("grove.workspace.git.default_branch", return_value="origin/main"),
             patch("grove.workspace.git.create_branch") as mock_create,
             patch("grove.workspace.git.worktree_add"),
         ):
             ws = workspace.create_workspace("test", {"svc-api": repo_path}, "feat/new", cfg)
             assert ws is not None
-            mock_create.assert_called_once_with(repo_path, "feat/new")
+            mock_create.assert_called_once_with(
+                repo_path, "feat/new", start_point="origin/main"
+            )
 
 
 class TestDeleteWorkspace:

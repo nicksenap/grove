@@ -36,12 +36,19 @@ gw go my-feature                                       # cd into workspace
 gw delete my-feature                                   # clean up
 ```
 
+All commands with selection use arrow-key navigation (single-select) or arrow + space (multi-select), with an `(all)` shortcut.
+
 ## What it does
 
+- Fetches latest from remotes before creating worktrees
+- Creates new branches from the default remote branch (`origin/main`)
 - Creates git worktrees from multiple repos into `~/.grove/workspaces/<name>/`
+- Offers saved presets during interactive workspace creation
+- Copies `CLAUDE.md` from your repos directory into new workspaces
 - Auto-creates branches if they don't exist
 - Rolls back on partial failure
 - Prevents duplicate worktrees for the same branch
+- Warns on startup when a newer version is available
 
 ## Requirements
 

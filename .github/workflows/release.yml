@@ -33,9 +33,15 @@ jobs:
 
       - name: Create GitHub Release
         run: |
-          gh release create "$GITHUB_REF_NAME" \
-            --title "Grove ${{ steps.version.outputs.version }}" \
-            --generate-notes
+          if [ -f release_notes.md ]; then
+            gh release create "$GITHUB_REF_NAME" \
+              --title "Grove ${{ steps.version.outputs.version }}" \
+              --notes-file release_notes.md
+          else
+            gh release create "$GITHUB_REF_NAME" \
+              --title "Grove ${{ steps.version.outputs.version }}" \
+              --generate-notes
+          fi
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
