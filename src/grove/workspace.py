@@ -94,7 +94,7 @@ def create_workspace(
 
     # --- Run per-repo setup hooks ---
     for repo_wt in created:
-        _run_setup(repo_wt.repo_name, repo_wt.worktree_path)
+        _run_setup(repo_wt.repo_name, repo_wt.source_repo, repo_wt.worktree_path)
 
     workspace = Workspace(
         name=name,
@@ -106,9 +106,9 @@ def create_workspace(
     return workspace
 
 
-def _run_setup(repo_name: str, worktree_path: Path) -> None:
-    """Run setup commands from ``.grove.toml`` in the worktree."""
-    cfg = git.read_grove_config(worktree_path)
+def _run_setup(repo_name: str, source_repo: Path, worktree_path: Path) -> None:
+    """Run setup commands from ``.grove.toml`` (read from source repo, run in worktree)."""
+    cfg = git.read_grove_config(source_repo)
     setup = cfg.get("setup")
     if not setup:
         return

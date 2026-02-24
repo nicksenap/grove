@@ -192,7 +192,6 @@ def create(
         autocompletion=complete_preset_name,
     ),
     all_repos: bool = typer.Option(False, "--all", help="Use all discovered repos"),
-    go: bool = typer.Option(False, "--go", help="Print cd sentinel after creation"),
 ) -> None:
     """Create a new workspace with worktrees from selected repos."""
     cfg = config.require_config()
@@ -288,9 +287,8 @@ def create(
     console.print()
     success(f"Workspace [bold]{name}[/] created at {ws.path}")
 
-    if go:
-        # Sentinel for shell function to intercept and cd
-        print(f"__grove_cd:{ws.path}")
+    # Sentinel for shell function to intercept and cd
+    print(f"__grove_cd:{ws.path}")
 
 
 @app.command("list")
@@ -578,12 +576,7 @@ gw() {
         return $rc
     fi
 
-    local has_go=false
-    for arg in "$@"; do
-        [ "$arg" = "--go" ] && has_go=true
-    done
-
-    if [ "$has_go" = true ]; then
+    if [ "$1" = "create" ]; then
         local tmpfile
         tmpfile="$(mktemp)"
         command gw "$@" | tee "$tmpfile"

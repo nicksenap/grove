@@ -133,7 +133,7 @@ class TestCreate:
             assert result.exit_code == 1
             assert "not found" in result.output
 
-    def test_go_flag_prints_sentinel(self, tmp_grove, fake_repos):
+    def test_create_prints_cd_sentinel(self, tmp_grove, fake_repos):
         ws_path = tmp_grove["workspace_dir"] / "feat-go"
         mock_ws = Workspace(name="feat-go", path=ws_path, branch="feat/go", repos=[])
 
@@ -144,7 +144,7 @@ class TestCreate:
         ):
             mock_cfg.return_value = self._make_config(tmp_grove)
             mock_find.return_value = fake_repos
-            result = runner.invoke(app, ["create", "-r", "svc-auth", "-b", "feat/go", "--go"])
+            result = runner.invoke(app, ["create", "-r", "svc-auth", "-b", "feat/go"])
             assert result.exit_code == 0
             assert f"__grove_cd:{ws_path}" in result.output
 
