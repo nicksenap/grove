@@ -1,6 +1,14 @@
 # Grove (`gw`)
 
-Git worktree workspace orchestrator. One command creates a workspace folder with worktrees from multiple repos on the same branch.
+**grove** /ɡrōv/ *noun* — a small group of trees growing together.
+
+## Why?
+
+Monorepos solve cross-project work, but not everyone has one. You've got separate repos, separate CI, separate deploys — and that's fine until you need to work across them.
+
+One feature across three services means `git worktree add` three times, tracking three branches, jumping between three directories, cleaning up three worktrees when you're done. It's annoying.
+
+Grove gives you the multi-repo worktree workflow that monorepos get for free. One command, one workspace, all repos on the same branch.
 
 ## Install
 
@@ -23,7 +31,7 @@ Then add shell integration to your `.zshrc` (or `.bashrc`):
 eval "$(gw shell-init)"
 ```
 
-This enables `gw go` to change your working directory.
+This enables `gw go` to change your working directory and auto-cds into new workspaces after `gw create`.
 
 ## Usage
 

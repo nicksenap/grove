@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import re
 from pathlib import Path
 
@@ -287,8 +288,10 @@ def create(
     console.print()
     success(f"Workspace [bold]{name}[/] created at {ws.path}")
 
-    # Sentinel for shell function to intercept and cd
-    print(f"__grove_cd:{ws.path}")
+    # Signal the shell wrapper to cd into the new workspace
+    cd_file = os.environ.get("GROVE_CD_FILE")
+    if cd_file:
+        Path(cd_file).write_text(str(ws.path))
 
 
 @app.command("list")
@@ -577,17 +580,16 @@ gw() {
     fi
 
     if [ "$1" = "create" ]; then
-        local tmpfile
-        tmpfile="$(mktemp)"
-        command gw "$@" | tee "$tmpfile"
-        local rc=${PIPESTATUS[0]}
-        local cd_line
-        cd_line="$(grep '^__grove_cd:' "$tmpfile")"
-        rm -f "$tmpfile"
-        if [ -n "$cd_line" ]; then
-            local dir="${cd_line#__grove_cd:}"
-            [ -d "$dir" ] && cd "$dir" || return 1
+        local cdfile
+        cdfile="$(mktemp "${TMPDIR:-/tmp}/.grove_cd.XXXXXX")"
+        GROVE_CD_FILE="$cdfile" command gw "$@"
+        local rc=$?
+        if [ $rc -eq 0 ] && [ -s "$cdfile" ]; then
+            local dir
+            dir="$(cat "$cdfile")"
+            [ -d "$dir" ] && cd "$dir"
         fi
+        rm -f "$cdfile"
         return $rc
     fi
 

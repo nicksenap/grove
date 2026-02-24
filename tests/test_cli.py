@@ -133,20 +133,22 @@ class TestCreate:
             assert result.exit_code == 1
             assert "not found" in result.output
 
-    def test_create_prints_cd_sentinel(self, tmp_grove, fake_repos):
+    def test_create_writes_cd_file(self, tmp_grove, fake_repos):
         ws_path = tmp_grove["workspace_dir"] / "feat-go"
         mock_ws = Workspace(name="feat-go", path=ws_path, branch="feat/go", repos=[])
+        cd_file = tmp_grove["workspace_dir"] / ".grove_cd_test"
 
         with (
             patch("grove.cli.config.require_config") as mock_cfg,
             patch("grove.cli.discover.find_repos") as mock_find,
             patch("grove.cli.workspace.create_workspace", return_value=mock_ws),
+            patch.dict("os.environ", {"GROVE_CD_FILE": str(cd_file)}),
         ):
             mock_cfg.return_value = self._make_config(tmp_grove)
             mock_find.return_value = fake_repos
             result = runner.invoke(app, ["create", "-r", "svc-auth", "-b", "feat/go"])
             assert result.exit_code == 0
-            assert f"__grove_cd:{ws_path}" in result.output
+            assert cd_file.read_text() == str(ws_path)
 
     def test_create_failure(self, tmp_grove, fake_repos):
         with (
@@ -330,4 +332,4 @@ class TestShellInit:
         result = runner.invoke(app, ["shell-init"])
         assert result.exit_code == 0
         assert "gw()" in result.output
-        assert "__grove_cd:" in result.output
+        assert "GROVE_CD_FILE" in result.output
