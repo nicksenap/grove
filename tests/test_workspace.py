@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
 
 from grove import state, workspace
 from grove.git import GitError
-from grove.models import Config
+from grove.models import Config, RepoWorktree, Workspace
 
 
 @pytest.fixture()
@@ -348,3 +349,129 @@ class TestWorkspaceStatus:
             assert results[0]["behind"] == "-"
             # Status should still work fine
             assert results[0]["status"] == "clean"
+
+
+def _multi_repo_workspace(tmp_grove: dict, count: int = 3) -> Workspace:
+    """Build a workspace with *count* repos for parallel tests."""
+    ws_path = tmp_grove["workspace_dir"] / "multi-ws"
+    ws_path.mkdir(exist_ok=True)
+    repos = []
+    for i in range(count):
+        name = f"repo-{i}"
+        src = tmp_grove["repos_dir"] / name
+        src.mkdir(exist_ok=True)
+        repos.append(
+            RepoWorktree(
+                repo_name=name,
+                source_repo=src,
+                worktree_path=ws_path / name,
+                branch="feat/parallel",
+            )
+        )
+    return Workspace(
+        name="multi-ws",
+        path=ws_path,
+        branch="feat/parallel",
+        repos=repos,
+        created_at="2025-01-01T00:00:00",
+    )
+
+
+class TestParallelExecution:
+    """Tests that verify parallel (multi-repo) behaviour."""
+
+    def test_multi_repo_fetch_all_called(self, tmp_grove):
+        """All repos are fetched in parallel during create."""
+        cfg = Config(
+            repos_dir=tmp_grove["repos_dir"],
+            workspace_dir=tmp_grove["workspace_dir"],
+        )
+        repos: dict[str, Path] = {}
+        for name in ("alpha", "beta", "gamma"):
+            p = tmp_grove["repos_dir"] / name
+            p.mkdir()
+            repos[name] = p
+
+        with (
+            patch("grove.workspace.git.worktree_has_branch", return_value=False),
+            patch("grove.workspace.git.branch_exists", return_value=True),
+            patch("grove.workspace.git.worktree_add"),
+            patch("grove.workspace.git.fetch") as mock_fetch,
+            patch("grove.workspace.git.read_grove_config", return_value={}),
+        ):
+            ws = workspace.create_workspace("par", repos, "feat/x", cfg)
+            assert ws is not None
+            assert mock_fetch.call_count == len(repos)
+
+    def test_multi_repo_status(self, tmp_grove):
+        """Status is collected for every repo in a multi-repo workspace."""
+        ws = _multi_repo_workspace(tmp_grove)
+        with (
+            patch("grove.workspace.git.current_branch", return_value="feat/parallel"),
+            patch("grove.workspace.git.repo_status", return_value=""),
+            patch("grove.workspace.git.repo_base_branch", return_value=None),
+            patch("grove.workspace.git.default_branch", return_value="origin/main"),
+            patch("grove.workspace.git.commits_ahead_behind", return_value=(0, 0)),
+        ):
+            results = workspace.workspace_status(ws)
+            assert len(results) == 3
+            repo_names = {r["repo"] for r in results}
+            assert repo_names == {"repo-0", "repo-1", "repo-2"}
+            for r in results:
+                assert r["status"] == "clean"
+
+    def test_error_in_one_repo_does_not_break_others(self, tmp_grove):
+        """A failure in one repo should not prevent results from other repos."""
+        ws = _multi_repo_workspace(tmp_grove)
+
+        fail_path = ws.repos[1].worktree_path  # repo-1 will fail
+
+        def branch_side_effect(path):
+            if path == fail_path:
+                raise GitError("corrupt repo")
+            return "feat/parallel"
+
+        with (
+            patch("grove.workspace.git.current_branch", side_effect=branch_side_effect),
+            patch("grove.workspace.git.repo_status", return_value=""),
+            patch("grove.workspace.git.repo_base_branch", return_value=None),
+            patch("grove.workspace.git.default_branch", return_value="origin/main"),
+            patch("grove.workspace.git.commits_ahead_behind", return_value=(0, 0)),
+        ):
+            results = workspace.workspace_status(ws)
+            assert len(results) == 3
+
+            # The failed repo should have an error status
+            failed = [r for r in results if r["repo"] == "repo-1"]
+            assert len(failed) == 1
+            assert "error" in failed[0]["status"]
+
+            # The other repos should be fine
+            ok = [r for r in results if r["repo"] != "repo-1"]
+            assert all(r["status"] == "clean" for r in ok)
+
+    def test_multi_repo_sync(self, tmp_grove):
+        """Sync runs in parallel across multiple repos."""
+        ws = _multi_repo_workspace(tmp_grove)
+        with (
+            patch("grove.workspace.git.fetch"),
+            patch("grove.workspace.git.repo_base_branch", return_value="origin/main"),
+            patch("grove.workspace.git.repo_status", return_value=""),
+            patch("grove.workspace.git.commits_ahead_behind", return_value=(0, 0)),
+        ):
+            results = workspace.sync_workspace(ws)
+            assert len(results) == 3
+            assert all(r["result"] == "up to date" for r in results)
+
+    def test_results_preserve_order(self, tmp_grove):
+        """Results should come back in the same order as workspace.repos."""
+        ws = _multi_repo_workspace(tmp_grove, count=5)
+        with (
+            patch("grove.workspace.git.current_branch", return_value="feat/parallel"),
+            patch("grove.workspace.git.repo_status", return_value=""),
+            patch("grove.workspace.git.repo_base_branch", return_value=None),
+            patch("grove.workspace.git.default_branch", return_value="origin/main"),
+            patch("grove.workspace.git.commits_ahead_behind", return_value=(0, 0)),
+        ):
+            results = workspace.workspace_status(ws)
+            assert [r["repo"] for r in results] == [f"repo-{i}" for i in range(5)]
