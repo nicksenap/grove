@@ -55,10 +55,15 @@ def remove_workspace(name: str) -> None:
     save_workspaces(workspaces)
 
 
-def update_workspace(workspace: Workspace) -> None:
-    """Replace an existing workspace in state (matched by name)."""
+def update_workspace(workspace: Workspace, *, match_name: str | None = None) -> None:
+    """Replace an existing workspace in state.
+
+    Matches by *match_name* if given, otherwise by ``workspace.name``.
+    This allows atomic renames (match old name, write new name) in one operation.
+    """
+    key = match_name or workspace.name
     workspaces = load_workspaces()
-    workspaces = [workspace if w.name == workspace.name else w for w in workspaces]
+    workspaces = [workspace if w.name == key else w for w in workspaces]
     save_workspaces(workspaces)
 
 

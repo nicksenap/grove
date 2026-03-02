@@ -16,6 +16,6 @@ def find_repos(repos_dir: Path) -> dict[str, Path]:
     if not repos_dir.is_dir():
         return repos
     for entry in sorted(repos_dir.iterdir()):
-        if entry.is_dir() and not entry.name.startswith(".") and (entry / ".git").exists():
+        if entry.is_dir() and not entry.name.startswith(".") and (entry / ".git").is_dir():
             repos[entry.name] = entry
     return repos

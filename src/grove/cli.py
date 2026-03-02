@@ -461,7 +461,12 @@ def add_repo(
         repo_names = _pick_many("Select repos to add", sorted(addable.keys()))
 
     selected = {rn: available[rn] for rn in repo_names}
-    added = workspace.add_repo_to_workspace(ws, selected, cfg)
+    # Filter out already-present repos before calling workspace function
+    actually_new = {rn: p for rn, p in selected.items() if rn not in existing_names}
+    if not actually_new:
+        info("All selected repos are already in the workspace")
+        return
+    added = workspace.add_repo_to_workspace(ws, actually_new, cfg)
     if added is None:
         raise typer.Exit(1)
     success(f"Added {len(added)} repo(s) to [bold]{name}[/]")

@@ -31,6 +31,8 @@ def _parallel(
         return []
 
     order = {name: idx for idx, (name, _) in enumerate(items)}
+    if len(order) != len(items):
+        raise ValueError(f"Duplicate names in parallel items: {[n for n, _ in items]}")
     results: list[tuple[str, Any, Exception | None]] = [("", None, None)] * len(items)
 
     with (
@@ -330,8 +332,10 @@ def run_workspace(ws: Workspace) -> int:
     On exit (Ctrl+C or natural), runs ``post_run`` hooks for cleanup.
     Returns the number of repos that had a ``run`` hook.
     """
-    # Filter to repos that have a run hook
-    runnable = [wt for wt in ws.repos if git.repo_hook_commands(wt.source_repo, "run")]
+    # Filter to repos that have a run hook, storing commands to avoid re-reading
+    runnable: list[tuple[RepoWorktree, list[str]]] = [
+        (wt, cmds) for wt in ws.repos if (cmds := git.repo_hook_commands(wt.source_repo, "run"))
+    ]
     if not runnable:
         return 0
 
@@ -339,12 +343,11 @@ def run_workspace(ws: Workspace) -> int:
     def _pre_run(_name: str, repo_wt: RepoWorktree) -> None:
         _run_hook(repo_wt.repo_name, repo_wt.source_repo, repo_wt.worktree_path, "pre_run")
 
-    _parallel(_pre_run, [(wt.repo_name, wt) for wt in runnable], "Pre-run")
+    _parallel(_pre_run, [(wt.repo_name, wt) for wt, _ in runnable], "Pre-run")
 
     # Start all run processes
     processes: list[tuple[str, subprocess.Popen]] = []
-    for repo_wt in runnable:
-        commands = git.repo_hook_commands(repo_wt.source_repo, "run")
+    for repo_wt, commands in runnable:
         # Join multiple commands with && so they run as one shell
         cmd = " && ".join(commands)
         info(f"[{repo_wt.repo_name}] run: {cmd}")
@@ -372,7 +375,7 @@ def run_workspace(ws: Workspace) -> int:
     def _post_run(_name: str, repo_wt: RepoWorktree) -> None:
         _run_hook(repo_wt.repo_name, repo_wt.source_repo, repo_wt.worktree_path, "post_run")
 
-    _parallel(_post_run, [(wt.repo_name, wt) for wt in runnable], "Post-run")
+    _parallel(_post_run, [(wt.repo_name, wt) for wt, _ in runnable], "Post-run")
 
     return len(runnable)
 
@@ -597,15 +600,13 @@ def rename_workspace(old_name: str, new_name: str, config: Config) -> bool:
         error(f"Failed to rename directory: {e}")
         return False
 
-    # Rebuild paths
+    # Rebuild paths and update state in one write
     ws.name = new_name
     ws.path = new_path
     for repo_wt in ws.repos:
         repo_wt.worktree_path = new_path / repo_wt.repo_name
 
-    # Atomic state swap: remove old, add new
-    state.remove_workspace(old_name)
-    state.add_workspace(ws)
+    state.update_workspace(ws, match_name=old_name)
 
     # Repair git worktree linkage (best-effort per repo)
     for repo_wt in ws.repos:
