@@ -55,6 +55,13 @@ def remove_workspace(name: str) -> None:
     save_workspaces(workspaces)
 
 
+def update_workspace(workspace: Workspace) -> None:
+    """Replace an existing workspace in state (matched by name)."""
+    workspaces = load_workspaces()
+    workspaces = [workspace if w.name == workspace.name else w for w in workspaces]
+    save_workspaces(workspaces)
+
+
 def find_workspace_by_path(path: Path) -> Workspace | None:
     """Find a workspace that contains the given path."""
     resolved = path.resolve()
