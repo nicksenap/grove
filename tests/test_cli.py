@@ -7,7 +7,7 @@ from unittest.mock import patch
 from typer.testing import CliRunner
 
 from grove.cli import _format_drift, _format_pr, _sanitize_name, app
-from grove.models import Config, Workspace
+from grove.models import Config, RepoWorktree, Workspace
 
 runner = CliRunner()
 
@@ -541,6 +541,244 @@ class TestPreset:
             result = runner.invoke(app, ["preset", "remove", "nope"])
             assert result.exit_code == 1
             assert "not found" in result.output
+
+
+class TestStatusAll:
+    def test_flag_works(self, tmp_grove, sample_workspace):
+        from grove import state
+
+        state.add_workspace(sample_workspace)
+        with patch("grove.cli.workspace.all_workspaces_summary") as mock_summary:
+            mock_summary.return_value = [
+                {
+                    "name": "test-ws",
+                    "branch": "feat/test",
+                    "repos": "1",
+                    "status": "1 clean",
+                    "path": str(sample_workspace.path),
+                },
+            ]
+            result = runner.invoke(app, ["status", "--all"])
+        assert result.exit_code == 0
+        assert "test-ws" in result.output
+        assert "1 clean" in result.output
+
+    def test_mutual_exclusivity(self, tmp_grove, sample_workspace):
+        from grove import state
+
+        state.add_workspace(sample_workspace)
+        result = runner.invoke(app, ["status", "test-ws", "--all"])
+        assert result.exit_code == 1
+        assert "Cannot combine" in result.output
+
+    def test_empty_state(self, tmp_grove):
+        with patch("grove.cli.workspace.all_workspaces_summary", return_value=[]):
+            result = runner.invoke(app, ["status", "--all"])
+        assert result.exit_code == 0
+        assert "No workspaces" in result.output
+
+
+class TestDoctor:
+    def test_healthy(self, tmp_grove):
+        with (
+            patch("grove.cli.config.require_config") as mock_cfg,
+            patch("grove.cli.workspace.diagnose_workspaces", return_value=[]),
+        ):
+            mock_cfg.return_value = Config(
+                repos_dir=tmp_grove["repos_dir"],
+                workspace_dir=tmp_grove["workspace_dir"],
+            )
+            result = runner.invoke(app, ["doctor"])
+        assert result.exit_code == 0
+        assert "healthy" in result.output
+
+    def test_issues_table(self, tmp_grove):
+        from grove.workspace import DoctorIssue
+
+        issues = [
+            DoctorIssue(
+                workspace_name="stale",
+                repo_name=None,
+                issue="workspace directory missing",
+                suggested_action="remove stale state entry",
+            )
+        ]
+        with (
+            patch("grove.cli.config.require_config") as mock_cfg,
+            patch("grove.cli.workspace.diagnose_workspaces", return_value=issues),
+        ):
+            mock_cfg.return_value = Config(
+                repos_dir=tmp_grove["repos_dir"],
+                workspace_dir=tmp_grove["workspace_dir"],
+            )
+            result = runner.invoke(app, ["doctor"])
+        assert result.exit_code == 0
+        assert "stale" in result.output
+        assert "missing" in result.output
+
+    def test_fix_flag(self, tmp_grove):
+        from grove.workspace import DoctorIssue
+
+        issues = [
+            DoctorIssue(
+                workspace_name="stale",
+                repo_name=None,
+                issue="workspace directory missing",
+                suggested_action="remove stale state entry",
+            )
+        ]
+        with (
+            patch("grove.cli.config.require_config") as mock_cfg,
+            patch("grove.cli.workspace.diagnose_workspaces", return_value=issues),
+            patch("grove.cli.workspace.fix_workspace_issues", return_value=1) as mock_fix,
+        ):
+            mock_cfg.return_value = Config(
+                repos_dir=tmp_grove["repos_dir"],
+                workspace_dir=tmp_grove["workspace_dir"],
+            )
+            result = runner.invoke(app, ["doctor", "--fix"])
+        assert result.exit_code == 0
+        assert "Fixed 1" in result.output
+        mock_fix.assert_called_once()
+
+
+class TestRename:
+    def test_success(self, tmp_grove, sample_workspace):
+        from grove import state
+
+        state.add_workspace(sample_workspace)
+        with (
+            patch("grove.cli.config.require_config") as mock_cfg,
+            patch("grove.cli.workspace.rename_workspace", return_value=True),
+        ):
+            mock_cfg.return_value = Config(
+                repos_dir=tmp_grove["repos_dir"],
+                workspace_dir=tmp_grove["workspace_dir"],
+            )
+            result = runner.invoke(app, ["rename", "test-ws", "--to", "new-name"])
+        assert result.exit_code == 0
+        assert "new-name" in result.output
+
+    def test_failure(self, tmp_grove):
+        with (
+            patch("grove.cli.config.require_config") as mock_cfg,
+            patch("grove.cli.workspace.rename_workspace", return_value=False),
+        ):
+            mock_cfg.return_value = Config(
+                repos_dir=tmp_grove["repos_dir"],
+                workspace_dir=tmp_grove["workspace_dir"],
+            )
+            result = runner.invoke(app, ["rename", "nope", "--to", "new"])
+        assert result.exit_code == 1
+
+
+class TestAddRepo:
+    def test_with_flags(self, tmp_grove, sample_workspace, fake_repos):
+        from grove import state
+
+        state.add_workspace(sample_workspace)
+        mock_added = [
+            RepoWorktree(
+                repo_name="svc-api",
+                source_repo=tmp_grove["repos_dir"] / "svc-api",
+                worktree_path=sample_workspace.path / "svc-api",
+                branch="feat/test",
+            )
+        ]
+        with (
+            patch("grove.cli.config.require_config") as mock_cfg,
+            patch("grove.cli.discover.find_repos", return_value=fake_repos),
+            patch("grove.cli.workspace.add_repo_to_workspace", return_value=mock_added),
+        ):
+            mock_cfg.return_value = Config(
+                repos_dir=tmp_grove["repos_dir"],
+                workspace_dir=tmp_grove["workspace_dir"],
+            )
+            result = runner.invoke(app, ["add-repo", "test-ws", "-r", "svc-api"])
+        assert result.exit_code == 0
+        assert "Added 1" in result.output
+
+    def test_not_found(self, tmp_grove, fake_repos):
+        with (
+            patch("grove.cli.config.require_config") as mock_cfg,
+            patch("grove.cli.discover.find_repos", return_value=fake_repos),
+        ):
+            mock_cfg.return_value = Config(
+                repos_dir=tmp_grove["repos_dir"],
+                workspace_dir=tmp_grove["workspace_dir"],
+            )
+            result = runner.invoke(app, ["add-repo", "nope", "-r", "svc-api"])
+        assert result.exit_code == 1
+        assert "not found" in result.output
+
+    def test_invalid_repo(self, tmp_grove, sample_workspace, fake_repos):
+        from grove import state
+
+        state.add_workspace(sample_workspace)
+        with (
+            patch("grove.cli.config.require_config") as mock_cfg,
+            patch("grove.cli.discover.find_repos", return_value=fake_repos),
+        ):
+            mock_cfg.return_value = Config(
+                repos_dir=tmp_grove["repos_dir"],
+                workspace_dir=tmp_grove["workspace_dir"],
+            )
+            result = runner.invoke(app, ["add-repo", "test-ws", "-r", "nonexistent"])
+        assert result.exit_code == 1
+        assert "not found" in result.output
+
+
+class TestRemoveRepo:
+    def test_with_flags(self, tmp_grove, sample_workspace):
+        from grove import state
+
+        state.add_workspace(sample_workspace)
+        with (
+            patch("grove.cli.workspace.remove_repo_from_workspace", return_value=True),
+        ):
+            result = runner.invoke(app, ["remove-repo", "test-ws", "-r", "svc-auth", "--force"])
+        assert result.exit_code == 0
+
+    def test_not_found(self, tmp_grove):
+        result = runner.invoke(app, ["remove-repo", "nope", "-r", "svc-auth", "--force"])
+        assert result.exit_code == 1
+        assert "not found" in result.output
+
+    def test_confirmation_required(self, tmp_grove, sample_workspace):
+        from grove import state
+
+        state.add_workspace(sample_workspace)
+        with (
+            patch("grove.cli.workspace.remove_repo_from_workspace", return_value=True),
+        ):
+            result = runner.invoke(app, ["remove-repo", "test-ws", "-r", "svc-auth"], input="n\n")
+        assert result.exit_code == 0
+        assert "Cancelled" in result.output
+
+
+class TestRun:
+    def test_success(self, tmp_grove, sample_workspace):
+        from grove import state
+
+        state.add_workspace(sample_workspace)
+        with patch("grove.cli.workspace.run_workspace", return_value=2):
+            result = runner.invoke(app, ["run", "test-ws"])
+        assert result.exit_code == 0
+        assert "Running" in result.output
+
+    def test_no_hooks(self, tmp_grove, sample_workspace):
+        from grove import state
+
+        state.add_workspace(sample_workspace)
+        with patch("grove.cli.workspace.run_workspace", return_value=0):
+            result = runner.invoke(app, ["run", "test-ws"])
+        assert result.exit_code == 0
+        assert "No repos" in result.output
+
+    def test_not_found(self, tmp_grove):
+        result = runner.invoke(app, ["run", "nope"])
+        assert result.exit_code == 1
+        assert "not found" in result.output
 
 
 class TestShellInit:

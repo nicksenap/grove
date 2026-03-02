@@ -355,6 +355,172 @@ def delete(
         raise typer.Exit(1)
 
 
+@app.command()
+def doctor(
+    fix: bool = typer.Option(False, "--fix", help="Auto-fix stale state entries"),
+) -> None:
+    """Diagnose workspace health issues."""
+    cfg = config.require_config()
+    issues = workspace.diagnose_workspaces(cfg)
+
+    if not issues:
+        success("All workspaces healthy")
+        return
+
+    table = make_table("Workspace", "Repo", "Issue", "Suggested Action")
+    for issue in issues:
+        table.add_row(
+            issue.workspace_name,
+            issue.repo_name or "[dim]—[/]",
+            issue.issue,
+            issue.suggested_action,
+        )
+    console.print(table)
+
+    if fix:
+        fixed = workspace.fix_workspace_issues(issues)
+        if fixed:
+            success(f"Fixed {fixed} issue(s)")
+        else:
+            info("No auto-fixable issues found")
+    else:
+        info(f"Found {len(issues)} issue(s). Run [bold]gw doctor --fix[/] to auto-fix")
+
+
+@app.command()
+def rename(
+    name: str | None = typer.Argument(
+        None,
+        help="Current workspace name",
+        autocompletion=complete_workspace_name,
+    ),
+    to: str = typer.Option(..., "--to", help="New workspace name"),
+) -> None:
+    """Rename a workspace."""
+    cfg = config.require_config()
+
+    if name is None:
+        workspaces = state.load_workspaces()
+        if not workspaces:
+            error("No workspaces exist")
+            raise typer.Exit(1)
+        name = _pick_one("Select workspace to rename", [w.name for w in workspaces])
+
+    if workspace.rename_workspace(name, to, cfg):
+        success(f"Renamed [bold]{name}[/] → [bold]{to}[/]")
+    else:
+        raise typer.Exit(1)
+
+
+@app.command("add-repo")
+def add_repo(
+    name: str | None = typer.Argument(
+        None,
+        help="Workspace name",
+        autocompletion=complete_workspace_name,
+    ),
+    repos: str | None = typer.Option(
+        None,
+        "--repos",
+        "-r",
+        help="Comma-separated repo names to add",
+        autocompletion=complete_repo_name,
+    ),
+) -> None:
+    """Add repos to an existing workspace."""
+    cfg = config.require_config()
+    available = discover.find_repos(cfg.repos_dir)
+
+    # Resolve workspace
+    if name is None:
+        workspaces = state.load_workspaces()
+        if not workspaces:
+            error("No workspaces exist")
+            raise typer.Exit(1)
+        name = _pick_one("Select workspace", [w.name for w in workspaces])
+
+    ws = state.get_workspace(name)
+    if ws is None:
+        error(f"Workspace [bold]{name}[/] not found")
+        raise typer.Exit(1)
+
+    existing_names = {r.repo_name for r in ws.repos}
+    addable = {n: p for n, p in available.items() if n not in existing_names}
+
+    if not addable:
+        info("All repos are already in this workspace")
+        return
+
+    if repos is not None:
+        repo_names = [r.strip() for r in repos.split(",")]
+        for rn in repo_names:
+            if rn not in available:
+                error(f"Repo [bold]{rn}[/] not found in {cfg.repos_dir}")
+                raise typer.Exit(1)
+    else:
+        repo_names = _pick_many("Select repos to add", sorted(addable.keys()))
+
+    selected = {rn: available[rn] for rn in repo_names}
+    # Filter out already-present repos before calling workspace function
+    actually_new = {rn: p for rn, p in selected.items() if rn not in existing_names}
+    if not actually_new:
+        info("All selected repos are already in the workspace")
+        return
+    added = workspace.add_repo_to_workspace(ws, actually_new, cfg)
+    if added is None:
+        raise typer.Exit(1)
+    success(f"Added {len(added)} repo(s) to [bold]{name}[/]")
+
+
+@app.command("remove-repo")
+def remove_repo(
+    name: str | None = typer.Argument(
+        None,
+        help="Workspace name",
+        autocompletion=complete_workspace_name,
+    ),
+    repos: str | None = typer.Option(
+        None,
+        "--repos",
+        "-r",
+        help="Comma-separated repo names to remove",
+    ),
+    force: bool = typer.Option(False, "--force", "-f", help="Skip confirmation"),
+) -> None:
+    """Remove repos from an existing workspace."""
+    # Resolve workspace
+    if name is None:
+        workspaces = state.load_workspaces()
+        if not workspaces:
+            error("No workspaces exist")
+            raise typer.Exit(1)
+        name = _pick_one("Select workspace", [w.name for w in workspaces])
+
+    ws = state.get_workspace(name)
+    if ws is None:
+        error(f"Workspace [bold]{name}[/] not found")
+        raise typer.Exit(1)
+
+    if not ws.repos:
+        error(f"Workspace [bold]{name}[/] has no repos")
+        raise typer.Exit(1)
+
+    if repos is not None:
+        repo_names = [r.strip() for r in repos.split(",")]
+    else:
+        repo_names = _pick_many("Select repos to remove", [r.repo_name for r in ws.repos])
+
+    if not force:
+        label = ", ".join(repo_names)
+        if not typer.confirm(f"Remove {label} from workspace {name}?"):
+            info("Cancelled")
+            return
+
+    ok = workspace.remove_repo_from_workspace(ws, repo_names, force=force)
+    if not ok:
+        raise typer.Exit(1)
+
+
 def _resolve_workspace(name: str | None) -> Workspace:
     """Resolve a workspace by name, cwd auto-detection, or interactive picker."""
     if name is None:
@@ -415,8 +581,23 @@ def status(
     ),
     verbose: bool = typer.Option(False, "--verbose", "-V", help="Show full git status output"),
     show_pr: bool = typer.Option(False, "--pr", "-P", help="Show GitHub PR status (requires gh)"),
+    show_all: bool = typer.Option(False, "--all", "-a", help="Show summary of all workspaces"),
 ) -> None:
     """Show git status across a workspace's repos."""
+    if show_all:
+        if name is not None:
+            error("Cannot combine workspace name with --all")
+            raise typer.Exit(1)
+        summaries = workspace.all_workspaces_summary()
+        if not summaries:
+            info("No workspaces. Create one with: gw create <name> -r repo1,repo2 -b branch")
+            return
+        table = make_table("Workspace", "Branch", "Repos", "Status")
+        for s in summaries:
+            table.add_row(s["name"], s["branch"], s["repos"], s["status"])
+        console.print(table)
+        return
+
     ws = _resolve_workspace(name)
 
     console.print(f"[bold]Workspace:[/] {ws.name}  [dim]({ws.path})[/]")
@@ -488,6 +669,25 @@ def sync(
             warning(f"{r['repo']}  {result_text}")
         else:
             error(f"{r['repo']}  {result_text}")
+
+
+@app.command()
+def run(
+    name: str | None = typer.Argument(
+        None,
+        help="Workspace name (auto-detects from cwd)",
+        autocompletion=complete_workspace_name,
+    ),
+) -> None:
+    """Run dev processes across workspace repos (Ctrl+C to stop)."""
+    ws = _resolve_workspace(name)
+
+    console.print(f"[bold]Running:[/] {ws.name}")
+    console.print()
+
+    count = workspace.run_workspace(ws)
+    if count == 0:
+        info("No repos have a [bold]run[/] hook in .grove.toml")
 
 
 _BACK_TO_REPOS = "← back to repos dir"

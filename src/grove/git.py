@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import functools
 import subprocess
 from pathlib import Path
 
@@ -63,8 +64,13 @@ def default_branch(repo: Path) -> str:
         raise GitError("Could not determine default branch") from None
 
 
+@functools.cache
 def read_grove_config(path: Path) -> dict:
-    """Read ``.grove.toml`` from *path* and return the parsed dict (empty if absent)."""
+    """Read ``.grove.toml`` from *path* and return the parsed dict (empty if absent).
+
+    Cached for the lifetime of the process — safe because ``.grove.toml``
+    doesn't change during a single CLI invocation.
+    """
     import tomllib
 
     grove_toml = path / ".grove.toml"
@@ -78,6 +84,25 @@ def repo_base_branch(repo: Path) -> str | None:
     """Return ``origin/<base_branch>`` from ``.grove.toml``, or ``None``."""
     base = read_grove_config(repo).get("base_branch")
     return f"origin/{base}" if base else None
+
+
+def resolve_base_branch(repo: Path) -> str | None:
+    """Return the base branch for *repo*: ``.grove.toml`` > auto-detect > ``None``."""
+    base = repo_base_branch(repo)
+    if base is not None:
+        return base
+    try:
+        return default_branch(repo)
+    except GitError:
+        return None
+
+
+def repo_hook_commands(source_repo: Path, hook: str) -> list[str]:
+    """Return the command list for *hook* from ``.grove.toml`` (empty if absent)."""
+    value = read_grove_config(source_repo).get(hook)
+    if not value:
+        return []
+    return [value] if isinstance(value, str) else list(value)
 
 
 def create_branch(repo: Path, branch: str, start_point: str | None = None) -> None:
@@ -96,6 +121,11 @@ def worktree_add(repo: Path, worktree_path: Path, branch: str) -> None:
 def worktree_remove(repo: Path, worktree_path: Path) -> None:
     """Remove a git worktree."""
     _run(["worktree", "remove", str(worktree_path), "--force"], cwd=repo)
+
+
+def worktree_repair(repo: Path, worktree_path: Path) -> None:
+    """Repair worktree linkage after a directory move."""
+    _run(["worktree", "repair", str(worktree_path)], cwd=repo)
 
 
 def worktree_list(repo: Path) -> list[dict[str, str]]:
