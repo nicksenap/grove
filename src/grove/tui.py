@@ -10,8 +10,9 @@ from enum import Enum, auto
 from textual import work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.containers import Horizontal
-from textual.widgets import Footer, Label, ListItem, ListView, RichLog
+from textual.containers import Horizontal, Vertical
+from textual.css.query import NoMatches
+from textual.widgets import Footer, Label, ListItem, ListView, RichLog, Static
 
 # ---------------------------------------------------------------------------
 # Data model
@@ -56,8 +57,37 @@ class ProcessState:
 # ---------------------------------------------------------------------------
 
 
+class AppHeader(Horizontal):
+    """Top bar showing app name and selected repo info."""
+
+    DEFAULT_CSS = """
+    AppHeader {
+        dock: top;
+        height: 1;
+        background: $accent;
+        color: $text;
+        padding: 0 1;
+    }
+    AppHeader #header-title {
+        width: 1fr;
+        color: $text;
+        text-style: bold;
+    }
+    AppHeader #header-info {
+        color: $text 70%;
+    }
+    """
+
+
 class RepoItem(ListItem):
     """A sidebar entry for one repo."""
+
+    DEFAULT_CSS = """
+    RepoItem {
+        padding: 0 1;
+        height: 1;
+    }
+    """
 
     def __init__(self, index: int, repo_name: str) -> None:
         super().__init__()
@@ -72,8 +102,6 @@ class RepoItem(ListItem):
 # App
 # ---------------------------------------------------------------------------
 
-_SIDEBAR_WIDTH = 30
-
 
 class RunApp(App):
     """TUI that manages multiple subprocess outputs in a sidebar + log layout."""
@@ -81,18 +109,42 @@ class RunApp(App):
     SHOW_COMMAND_PALETTE = False
     theme = "gruvbox"
 
-    CSS = f"""
-    #sidebar {{
-        width: {_SIDEBAR_WIDTH};
+    CSS = """
+    /* ── Sidebar ─────────────────────────────────── */
+    #sidebar-panel {
+        width: 32;
         dock: left;
-        border-right: solid $accent;
-    }}
-    RichLog {{
+        border-right: round $accent 40%;
+        border-title-color: $text-accent 50%;
+        border-title-style: bold;
+        padding: 0;
+    }
+    #sidebar-panel:focus-within {
+        border-right: round $accent;
+        border-title-color: $text-accent;
+    }
+    #sidebar {
+        width: 100%;
+    }
+
+    /* ── Log pane ────────────────────────────────── */
+    #log-panel {
+        border: round $accent 40%;
+        border-title-color: $text-accent 50%;
+        border-title-style: bold;
+    }
+    #log-panel:focus-within {
+        border: round $accent;
+        border-title-color: $text-accent;
+    }
+    RichLog {
         display: none;
-    }}
-    RichLog.active {{
+        background: $surface;
+        padding: 0 1;
+    }
+    RichLog.active {
         display: block;
-    }}
+    }
     """
 
     BINDINGS = [
@@ -126,14 +178,20 @@ class RunApp(App):
     # ── Layout ────────────────────────────────────────────────────────────
 
     def compose(self) -> ComposeResult:
+        yield AppHeader(
+            Static("[b]grove[/b] run", id="header-title"),
+            Label("", id="header-info"),
+        )
         with Horizontal():
-            yield ListView(
-                *[RepoItem(i, p.repo_name) for i, p in enumerate(self.procs)],
-                id="sidebar",
-            )
-            for i, _ps in enumerate(self.procs):
-                classes = "active" if i == 0 else ""
-                yield RichLog(id=f"log-{i}", classes=classes, wrap=True, markup=True)
+            with Vertical(id="sidebar-panel"):
+                yield ListView(
+                    *[RepoItem(i, p.repo_name) for i, p in enumerate(self.procs)],
+                    id="sidebar",
+                )
+            with Vertical(id="log-panel"):
+                for i, _ps in enumerate(self.procs):
+                    classes = "active" if i == 0 else ""
+                    yield RichLog(id=f"log-{i}", classes=classes, wrap=True, markup=True)
         yield Footer()
 
     # ── Lifecycle ─────────────────────────────────────────────────────────
@@ -141,6 +199,7 @@ class RunApp(App):
     def on_mount(self) -> None:
         sidebar = self.query_one("#sidebar", ListView)
         sidebar.index = 0
+        self._update_panel_titles()
         for i in range(len(self.procs)):
             self._start_process(i)
 
@@ -174,11 +233,13 @@ class RunApp(App):
             ps.status = ProcStatus.EXITED
             ps.exit_code = -1
             self.call_from_thread(self._update_label, idx)
+            self.call_from_thread(self._update_header_info)
             return
 
         ps.process = proc
         ps.status = ProcStatus.RUNNING
         self.call_from_thread(self._update_label, idx)
+        self.call_from_thread(self._update_header_info)
 
         assert proc.stdout is not None
         for line in proc.stdout:
@@ -190,6 +251,7 @@ class RunApp(App):
         ps.exit_code = proc.returncode
         ps.status = ProcStatus.EXITED
         self.call_from_thread(self._update_label, idx)
+        self.call_from_thread(self._update_header_info)
 
     def _terminate_process(self, idx: int) -> None:
         ps = self.procs[idx]
@@ -203,9 +265,47 @@ class RunApp(App):
                 ps.process.wait()
 
     def _update_label(self, idx: int) -> None:
-        ps = self.procs[idx]
-        label = self.query_one(f"#label-{idx}", Label)
-        label.update(f"{ps.status_icon} {ps.repo_name}")
+        try:
+            ps = self.procs[idx]
+            label = self.query_one(f"#label-{idx}", Label)
+            label.update(f"{ps.status_icon} {ps.repo_name}")
+        except NoMatches:
+            pass  # widget removed during shutdown
+
+    def _update_header_info(self) -> None:
+        try:
+            running = sum(1 for p in self.procs if p.status == ProcStatus.RUNNING)
+            exited = sum(1 for p in self.procs if p.status == ProcStatus.EXITED)
+            parts = []
+            if running:
+                parts.append(f"[green]{running} running[/]")
+            if exited:
+                failed = sum(
+                    1 for p in self.procs if p.status == ProcStatus.EXITED and p.exit_code != 0
+                )
+                if failed:
+                    parts.append(f"[red]{failed} failed[/]")
+                ok = exited - failed
+                if ok:
+                    parts.append(f"[dim]{ok} exited[/]")
+            info = self.query_one("#header-info", Label)
+            info.update("  ".join(parts))
+        except NoMatches:
+            pass  # widget removed during shutdown
+
+    def _update_panel_titles(self) -> None:
+        n = len(self.procs)
+        sidebar_panel = self.query_one("#sidebar-panel")
+        sidebar_panel.border_title = f"Repos ({n})"
+        self._update_log_panel_title()
+
+    def _update_log_panel_title(self) -> None:
+        try:
+            ps = self.procs[self._selected]
+            log_panel = self.query_one("#log-panel")
+            log_panel.border_title = f"{ps.repo_name} — {ps.command}"
+        except NoMatches:
+            pass  # widget removed during shutdown
 
     # ── Selection ─────────────────────────────────────────────────────────
 
@@ -228,6 +328,7 @@ class RunApp(App):
             else:
                 log.remove_class("active")
         self._selected = idx
+        self._update_log_panel_title()
 
     # ── Key actions ───────────────────────────────────────────────────────
 
