@@ -103,6 +103,11 @@ def _sanitize_name(branch: str) -> str:
 
 def _pick_one(prompt_text: str, choices: list[str]) -> str:
     """Arrow-key single selection."""
+    return choices[_pick_one_idx(prompt_text, choices)]
+
+
+def _pick_one_idx(prompt_text: str, choices: list[str]) -> int:
+    """Arrow-key single selection, returns the chosen index."""
     from simple_term_menu import TerminalMenu
 
     menu = TerminalMenu(
@@ -115,7 +120,7 @@ def _pick_one(prompt_text: str, choices: list[str]) -> str:
     idx = menu.show()
     if idx is None:
         raise typer.Abort()
-    return choices[idx]
+    return idx
 
 
 def _pick_many(prompt_text: str, choices: list[str]) -> list[str]:
@@ -230,20 +235,19 @@ def create(
 
         # Offer presets when available
         if cfg.presets:
+            preset_names = list(cfg.presets.keys())
             preset_choices = [
-                f"{name}  [dim]({', '.join(repos_list)})[/]"
+                f"{name}  \033[2m({', '.join(repos_list)})\033[0m"
                 for name, repos_list in cfg.presets.items()
             ]
-            source = _pick_one(
+            source_idx = _pick_one_idx(
                 "Select repos from",
                 [*preset_choices, "Pick manually…"],
             )
-            if source == "Pick manually…":
+            if source_idx == len(preset_choices):
                 repo_names = _pick_many("Select repos", sorted(available.keys()))
             else:
-                # Extract preset name from the display string
-                chosen_preset = source.split("  [dim]")[0]
-                repo_names = cfg.presets[chosen_preset]
+                repo_names = cfg.presets[preset_names[source_idx]]
         else:
             repo_names = _pick_many("Select repos", sorted(available.keys()))
 
