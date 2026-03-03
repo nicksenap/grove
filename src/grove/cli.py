@@ -237,8 +237,7 @@ def create(
         if cfg.presets:
             preset_names = list(cfg.presets.keys())
             preset_choices = [
-                f"{name}  \033[2m({', '.join(repos_list)})\033[0m"
-                for name, repos_list in cfg.presets.items()
+                f"{name}  ({', '.join(repos_list)})" for name, repos_list in cfg.presets.items()
             ]
             source_idx = _pick_one_idx(
                 "Select repos from",
