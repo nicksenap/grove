@@ -11,6 +11,7 @@ dependencies = [
     "typer>=0.12",
     "rich>=13.0",
     "simple-term-menu>=1.6.6",
+    "textual>=1.0",
 ]
 
 [project.scripts]
@@ -25,6 +26,7 @@ dev = [
     "ruff>=0.11",
     "ty>=0.0.1a6",
     "pytest>=8.0",
+    "pytest-asyncio>=0.24",
 ]
 
 [tool.ruff]

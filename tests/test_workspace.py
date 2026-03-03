@@ -1299,3 +1299,56 @@ class TestRunWorkspace:
             mock_proc.terminate.return_value = None
             workspace.run_workspace(sample_workspace)
         mock_proc.terminate.assert_called_once()
+
+
+class TestGetRunnable:
+    def test_returns_repos_with_run_hook(self, tmp_grove, sample_workspace):
+        with patch(
+            "grove.workspace.git.repo_hook_commands",
+            side_effect=lambda _src, hook: ["npm start"] if hook == "run" else [],
+        ):
+            result = workspace.get_runnable(sample_workspace)
+        assert len(result) == 1
+        assert result[0][0].repo_name == "svc-auth"
+        assert result[0][1] == ["npm start"]
+
+    def test_empty_when_no_run_hook(self, tmp_grove, sample_workspace):
+        with patch("grove.workspace.git.repo_hook_commands", return_value=[]):
+            result = workspace.get_runnable(sample_workspace)
+        assert result == []
+
+    def test_multiple_commands(self, tmp_grove, sample_workspace):
+        with patch(
+            "grove.workspace.git.repo_hook_commands",
+            side_effect=lambda _src, hook: ["npm install", "npm start"] if hook == "run" else [],
+        ):
+            result = workspace.get_runnable(sample_workspace)
+        assert len(result) == 1
+        assert result[0][1] == ["npm install", "npm start"]
+
+
+class TestRunPreHooks:
+    def test_calls_pre_run_hook(self, tmp_grove, sample_workspace):
+        wt = sample_workspace.repos[0]
+        runnable = [(wt, ["npm start"])]
+        with patch("grove.workspace._run_hook") as mock_hook:
+            workspace.run_pre_hooks(runnable)
+        mock_hook.assert_called_once_with(wt.repo_name, wt.source_repo, wt.worktree_path, "pre_run")
+
+    def test_noop_when_empty(self):
+        # Should not raise
+        workspace.run_pre_hooks([])
+
+
+class TestRunPostHooks:
+    def test_calls_post_run_hook(self, tmp_grove, sample_workspace):
+        wt = sample_workspace.repos[0]
+        runnable = [(wt, ["npm start"])]
+        with patch("grove.workspace._run_hook") as mock_hook:
+            workspace.run_post_hooks(runnable)
+        mock_hook.assert_called_once_with(
+            wt.repo_name, wt.source_repo, wt.worktree_path, "post_run"
+        )
+
+    def test_noop_when_empty(self):
+        workspace.run_post_hooks([])

@@ -682,15 +682,28 @@ def run(
         autocompletion=complete_workspace_name,
     ),
 ) -> None:
-    """Run dev processes across workspace repos (Ctrl+C to stop)."""
+    """Run dev processes across workspace repos (TUI with sidebar)."""
     ws = _resolve_workspace(name)
 
-    console.print(f"[bold]Running:[/] {ws.name}")
-    console.print()
-
-    count = workspace.run_workspace(ws)
-    if count == 0:
+    runnable = workspace.get_runnable(ws)
+    if not runnable:
         info("No repos have a [bold]run[/] hook in .grove.toml")
+        return
+
+    # Pre-run hooks
+    workspace.run_pre_hooks(runnable)
+
+    # Build TUI entries: (repo_name, command, cwd)
+    entries = [(wt.repo_name, " && ".join(cmds), str(wt.worktree_path)) for wt, cmds in runnable]
+
+    # Launch TUI
+    from grove.tui import RunApp
+
+    app = RunApp(entries)
+    app.run()
+
+    # Post-run hooks
+    workspace.run_post_hooks(runnable)
 
 
 _BACK_TO_REPOS = "← back to repos dir"
