@@ -43,7 +43,7 @@ gw status my-feature                                   # git status across repos
 gw status --all                                        # overview of all workspaces
 gw sync my-feature                                     # rebase all repos onto base branch
 gw go my-feature                                       # cd into workspace
-gw run my-feature                                      # run dev processes (Ctrl+C to stop)
+gw run my-feature                                      # run dev processes (TUI with per-repo logs)
 gw add-repo my-feature -r svc-c                        # add a repo to existing workspace
 gw remove-repo my-feature -r svc-a                     # remove a repo from workspace
 gw rename my-feature --to new-name                     # rename a workspace
@@ -88,9 +88,21 @@ The hook system follows the npm-style `pre`/`post` convention: one primitive (`r
 | Before/after rebase | `pre_sync`, `post_sync` | Type-check before rebase, reinstall after |
 | Dev session | `pre_run`, `run`, `post_run` | Pull containers, start dev server, tear down containers |
 
-### `gw run` (experimental)
+### `gw run`
 
-`gw run` starts `run` hooks across all repos as foreground processes and tears them down on Ctrl+C. It works, but the UX is minimal — all output is interleaved in a single terminal. Future versions may introduce a proper TUI (e.g. via [Textual](https://github.com/Textualize/textual)) with per-repo log panes, health indicators, and restart controls. Consider this command under active development.
+`gw run` launches a [Textual](https://github.com/Textualize/textual) TUI that manages `run` hooks across all repos. Each repo gets its own log pane with a sidebar showing status indicators (green = running, yellow = starting, red = exited with error).
+
+**Key bindings:**
+
+| Key | Action |
+|-----|--------|
+| `j` / `k` / `↑` / `↓` | Navigate repos |
+| `g` / `G` | Jump to first / last |
+| `1`–`9` | Quick-select repo by number |
+| `r` | Restart selected repo |
+| `q` | Quit (terminates all processes) |
+
+Pre-run hooks fire before the TUI launches, post-run hooks fire after it exits.
 
 ## Works great with AI coding tools
 
@@ -112,7 +124,7 @@ Grove copies your `CLAUDE.md` into new workspaces, so your agent gets project co
 - Add or remove repos from existing workspaces without recreating them
 - Rename workspaces (directory, state, and git linkage updated automatically)
 - Lifecycle hooks: `setup`, `teardown`, `pre_sync`, `post_sync` per repo
-- `gw run` to start dev processes across repos, with `pre_run`/`post_run` hooks
+- `gw run` launches a Textual TUI with per-repo log panes, status indicators, vim keybindings, and restart controls
 - `gw status --all` for a cross-workspace overview at a glance
 - `gw doctor` to diagnose and auto-fix stale state entries
 - Offers saved presets during interactive workspace creation

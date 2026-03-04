@@ -31,9 +31,18 @@ test *args:
 test-v *args:
     uv run pytest tests/ -v {{ args }}
 
-# Install gw as editable for development
+# Install gw as editable for development (local venv only)
 dev:
     uv pip install -e .
+
+# Install gw globally, linked to local source (changes reflect immediately)
+dev-global:
+    uv tool install --editable . --force --reinstall
+
+# Switch back to Homebrew-installed gw
+undev:
+    -uv tool uninstall grove
+    @echo "Homebrew gw is now active (if installed)"
 
 # Install gw as a uv tool (globally)
 install:

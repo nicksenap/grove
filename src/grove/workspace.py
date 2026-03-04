@@ -179,6 +179,7 @@ def _run_hook(repo_name: str, source_repo: Path, worktree_path: Path, hook: str)
                 cwd=worktree_path,
                 shell=True,
                 check=True,
+                stdin=subprocess.DEVNULL,
             )
         except subprocess.CalledProcessError as e:
             warning(f"[{repo_name}] {hook} command failed (exit {e.returncode}): {cmd}")
@@ -325,6 +326,31 @@ def sync_workspace(workspace: Workspace) -> list[dict[str, str]]:
     return results
 
 
+def get_runnable(ws: Workspace) -> list[tuple[RepoWorktree, list[str]]]:
+    """Return repos that have a ``run`` hook, with their command lists."""
+    return [
+        (wt, cmds) for wt in ws.repos if (cmds := git.repo_hook_commands(wt.source_repo, "run"))
+    ]
+
+
+def run_pre_hooks(runnable: list[tuple[RepoWorktree, list[str]]]) -> None:
+    """Execute ``pre_run`` hooks in parallel (best-effort)."""
+
+    def _pre_run(_name: str, repo_wt: RepoWorktree) -> None:
+        _run_hook(repo_wt.repo_name, repo_wt.source_repo, repo_wt.worktree_path, "pre_run")
+
+    _parallel(_pre_run, [(wt.repo_name, wt) for wt, _ in runnable], "Pre-run")
+
+
+def run_post_hooks(runnable: list[tuple[RepoWorktree, list[str]]]) -> None:
+    """Execute ``post_run`` hooks in parallel (best-effort)."""
+
+    def _post_run(_name: str, repo_wt: RepoWorktree) -> None:
+        _run_hook(repo_wt.repo_name, repo_wt.source_repo, repo_wt.worktree_path, "post_run")
+
+    _parallel(_post_run, [(wt.repo_name, wt) for wt, _ in runnable], "Post-run")
+
+
 def run_workspace(ws: Workspace) -> int:
     """Run ``run`` hooks across all repos as foreground processes.
 
@@ -332,18 +358,11 @@ def run_workspace(ws: Workspace) -> int:
     On exit (Ctrl+C or natural), runs ``post_run`` hooks for cleanup.
     Returns the number of repos that had a ``run`` hook.
     """
-    # Filter to repos that have a run hook, storing commands to avoid re-reading
-    runnable: list[tuple[RepoWorktree, list[str]]] = [
-        (wt, cmds) for wt in ws.repos if (cmds := git.repo_hook_commands(wt.source_repo, "run"))
-    ]
+    runnable = get_runnable(ws)
     if not runnable:
         return 0
 
-    # Pre-run hooks (parallel, best-effort)
-    def _pre_run(_name: str, repo_wt: RepoWorktree) -> None:
-        _run_hook(repo_wt.repo_name, repo_wt.source_repo, repo_wt.worktree_path, "pre_run")
-
-    _parallel(_pre_run, [(wt.repo_name, wt) for wt, _ in runnable], "Pre-run")
+    run_pre_hooks(runnable)
 
     # Start all run processes
     processes: list[tuple[str, subprocess.Popen]] = []
@@ -371,11 +390,7 @@ def run_workspace(ws: Workspace) -> int:
             with contextlib.suppress(BaseException):
                 proc.wait(timeout=5)
 
-    # Post-run hooks (parallel, best-effort) — always runs
-    def _post_run(_name: str, repo_wt: RepoWorktree) -> None:
-        _run_hook(repo_wt.repo_name, repo_wt.source_repo, repo_wt.worktree_path, "post_run")
-
-    _parallel(_post_run, [(wt.repo_name, wt) for wt, _ in runnable], "Post-run")
+    run_post_hooks(runnable)
 
     return len(runnable)
 

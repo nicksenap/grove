@@ -6,7 +6,7 @@ Add end-to-end tests that exercise the main flows against real git repos (not mo
 - `gw init` → `gw create` → `gw status` → `gw sync` → `gw delete`
 - `gw create` → `gw add-repo` → `gw remove-repo`
 - `gw create` → `gw rename` → `gw doctor`
-- `gw create` → `gw run` (with actual processes)
+- `gw create` → `gw run` (with actual processes, verify TUI launches)
 - Lifecycle hooks fire in correct order with real `.grove.toml` files
 
 ## Recursive repo discovery
@@ -27,3 +27,9 @@ Every command should be scriptable without interactive prompts (e.g. for CI, AI 
 - `gw remove-repo` — workspace picker, repo picker, confirmation prompt
 - `gw rename` — workspace picker
 - `gw go` — workspace picker
+
+## `gw run` TUI enhancements
+
+- PTY allocation for subprocess output — some programs buffer stdout when not connected to a TTY (workaround: `stdbuf -oL` or tool-specific flags in `.grove.toml`)
+- Log scrollback / search within a repo's log pane
+- Aggregate view showing interleaved output from all repos

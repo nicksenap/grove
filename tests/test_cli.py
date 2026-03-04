@@ -761,16 +761,22 @@ class TestRun:
         from grove import state
 
         state.add_workspace(sample_workspace)
-        with patch("grove.cli.workspace.run_workspace", return_value=2):
+        wt = sample_workspace.repos[0]
+        runnable = [(wt, ["npm start"])]
+        with (
+            patch("grove.cli.workspace.get_runnable", return_value=runnable),
+            patch("grove.cli.workspace.run_pre_hooks"),
+            patch("grove.cli.workspace.run_post_hooks"),
+            patch("grove.tui.RunApp.run"),
+        ):
             result = runner.invoke(app, ["run", "test-ws"])
         assert result.exit_code == 0
-        assert "Running" in result.output
 
     def test_no_hooks(self, tmp_grove, sample_workspace):
         from grove import state
 
         state.add_workspace(sample_workspace)
-        with patch("grove.cli.workspace.run_workspace", return_value=0):
+        with patch("grove.cli.workspace.get_runnable", return_value=[]):
             result = runner.invoke(app, ["run", "test-ws"])
         assert result.exit_code == 0
         assert "No repos" in result.output
