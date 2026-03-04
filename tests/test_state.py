@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from grove import state
 from grove.models import Workspace
 
@@ -74,3 +76,15 @@ class TestStateOperations:
         raw = json.loads(tmp_grove["state_path"].read_text())
         assert len(raw) == 1
         assert raw[0]["name"] == "test-ws"
+
+    def test_corrupt_json_gives_helpful_error(self, tmp_grove):
+        tmp_grove["state_path"].write_text("{not valid json")
+        with pytest.raises(SystemExit, match="corrupt"):
+            state.load_workspaces()
+
+    def test_atomic_write_produces_valid_json(self, tmp_grove, sample_workspace):
+        state.add_workspace(sample_workspace)
+        # Verify the file is valid JSON (not truncated)
+        raw = json.loads(tmp_grove["state_path"].read_text())
+        assert isinstance(raw, list)
+        assert len(raw) == 1

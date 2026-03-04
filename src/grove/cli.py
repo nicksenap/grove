@@ -98,8 +98,12 @@ def _sanitize_name(branch: str) -> str:
     """Derive a workspace name from a branch name.
 
     ``feat/login`` → ``feat-login``, strips leading/trailing dashes.
+    Raises ``typer.BadParameter`` if the result is empty.
     """
-    return re.sub(r"[/\s]+", "-", branch).strip("-")
+    name = re.sub(r"[/\s]+", "-", branch).strip("-")
+    if not name:
+        raise typer.BadParameter(f"Branch name {branch!r} produces an empty workspace name")
+    return name
 
 
 def _pick_one(prompt_text: str, choices: list[str]) -> str:

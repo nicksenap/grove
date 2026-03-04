@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
+import os
+import tempfile
 from pathlib import Path
 
 from grove.config import GROVE_DIR
@@ -15,13 +18,32 @@ def _load_raw() -> list[dict]:
     """Load raw state data."""
     if not STATE_PATH.exists():
         return []
-    return json.loads(STATE_PATH.read_text())
+    try:
+        return json.loads(STATE_PATH.read_text())
+    except json.JSONDecodeError as e:
+        raise SystemExit(
+            f"State file is corrupt ({STATE_PATH}): {e}\n"
+            "Delete the file to reset, or run: gw doctor --fix"
+        ) from e
+
+
+def _atomic_write(path: Path, content: str) -> None:
+    """Write *content* to *path* atomically via temp file + rename."""
+    fd, tmp = tempfile.mkstemp(dir=path.parent, suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w") as f:
+            f.write(content)
+        os.replace(tmp, path)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.unlink(tmp)
+        raise
 
 
 def _save_raw(data: list[dict]) -> None:
-    """Save raw state data."""
+    """Save raw state data atomically (write to temp, then replace)."""
     GROVE_DIR.mkdir(parents=True, exist_ok=True)
-    STATE_PATH.write_text(json.dumps(data, indent=2) + "\n")
+    _atomic_write(STATE_PATH, json.dumps(data, indent=2) + "\n")
 
 
 def load_workspaces() -> list[Workspace]:

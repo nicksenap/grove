@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import contextlib
+import os
+import re
+import tempfile
 import tomllib
 from pathlib import Path
 
@@ -10,6 +14,17 @@ from grove.models import Config
 GROVE_DIR = Path.home() / ".grove"
 CONFIG_PATH = GROVE_DIR / "config.toml"
 DEFAULT_WORKSPACE_DIR = GROVE_DIR / "workspaces"
+
+# Preset names must be simple identifiers safe for TOML section headers.
+_VALID_PRESET_NAME = re.compile(r"^[a-zA-Z0-9_-]+$")
+
+
+def validate_preset_name(name: str) -> None:
+    """Raise ``ValueError`` if *name* is not a valid preset identifier."""
+    if not _VALID_PRESET_NAME.match(name):
+        raise ValueError(
+            f"Invalid preset name {name!r} — only letters, digits, hyphens, and underscores allowed"
+        )
 
 
 def ensure_grove_dir() -> None:
@@ -27,8 +42,11 @@ def load_config() -> Config | None:
 
 
 def save_config(config: Config) -> None:
-    """Save config to TOML."""
+    """Save config to TOML atomically."""
     ensure_grove_dir()
+    # Validate preset names before writing
+    for preset_name in config.presets:
+        validate_preset_name(preset_name)
     # Hand-write TOML to avoid extra dependency
     lines = [
         f'repos_dir = "{config.repos_dir}"',
@@ -40,7 +58,20 @@ def save_config(config: Config) -> None:
         lines.append(f"[presets.{preset_name}]")
         lines.append(f"repos = [{quoted}]")
     lines.append("")
-    CONFIG_PATH.write_text("\n".join(lines))
+    _atomic_write(CONFIG_PATH, "\n".join(lines))
+
+
+def _atomic_write(path: Path, content: str) -> None:
+    """Write *content* to *path* atomically via temp file + rename."""
+    fd, tmp = tempfile.mkstemp(dir=path.parent, suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w") as f:
+            f.write(content)
+        os.replace(tmp, path)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.unlink(tmp)
+        raise
 
 
 def require_config() -> Config:
