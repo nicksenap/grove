@@ -148,6 +148,7 @@ class TestSetupHook:
                 cwd=ws.path / "svc-api",
                 shell=True,
                 check=True,
+                stdin=subprocess.DEVNULL,
             )
 
     def test_runs_multiple_setup_commands(self, tmp_grove):

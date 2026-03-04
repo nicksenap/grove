@@ -179,6 +179,7 @@ def _run_hook(repo_name: str, source_repo: Path, worktree_path: Path, hook: str)
                 cwd=worktree_path,
                 shell=True,
                 check=True,
+                stdin=subprocess.DEVNULL,
             )
         except subprocess.CalledProcessError as e:
             warning(f"[{repo_name}] {hook} command failed (exit {e.returncode}): {cmd}")
