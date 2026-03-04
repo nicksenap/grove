@@ -318,15 +318,13 @@ class RunApp(App):
             self._switch_to(event.item.repo_index)
 
     def _switch_to(self, idx: int) -> None:
-        if idx < 0 or idx >= len(self.procs):
+        if idx < 0 or idx >= len(self.procs) or idx == self._selected:
             return
-        # Hide old log, show new
-        for i in range(len(self.procs)):
-            log = self.query_one(f"#log-{i}", RichLog)
-            if i == idx:
-                log.add_class("active")
-            else:
-                log.remove_class("active")
+        # Only touch the two logs that change
+        old_log = self.query_one(f"#log-{self._selected}", RichLog)
+        new_log = self.query_one(f"#log-{idx}", RichLog)
+        old_log.remove_class("active")
+        new_log.add_class("active")
         self._selected = idx
         self._update_log_panel_title()
 
