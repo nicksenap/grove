@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
+import pytest
 from typer.testing import CliRunner
 
 from grove.cli import _format_drift, _format_pr, _sanitize_name, app
@@ -793,3 +794,93 @@ class TestShellInit:
         assert result.exit_code == 0
         assert "gw()" in result.output
         assert "GROVE_CD_FILE" in result.output
+
+
+class TestNonInteractive:
+    """Test that interactive pickers fail gracefully when stdin is not a TTY."""
+
+    def test_pick_one_idx_non_tty(self):
+        from click.exceptions import Exit
+
+        from grove.cli import _pick_one_idx
+
+        with patch("grove.cli.sys.stdin") as mock_stdin:
+            mock_stdin.isatty.return_value = False
+            with pytest.raises(Exit):
+                _pick_one_idx("Pick one", ["a", "b"])
+
+    def test_pick_many_non_tty(self):
+        from click.exceptions import Exit
+
+        from grove.cli import _pick_many
+
+        with patch("grove.cli.sys.stdin") as mock_stdin:
+            mock_stdin.isatty.return_value = False
+            with pytest.raises(Exit):
+                _pick_many("Pick many", ["a", "b"])
+
+    def test_create_requires_branch_non_tty(self, tmp_grove, fake_repos):
+        cfg = Config(
+            repos_dir=tmp_grove["repos_dir"],
+            workspace_dir=tmp_grove["workspace_dir"],
+        )
+        with (
+            patch("grove.cli.config.require_config", return_value=cfg),
+            patch("grove.cli.discover.find_repos", return_value=fake_repos),
+            patch("grove.cli.sys.stdin") as mock_stdin,
+        ):
+            mock_stdin.isatty.return_value = False
+            result = runner.invoke(app, ["create", "-r", "svc-auth"])
+            assert result.exit_code == 1
+            assert "--branch is required" in result.output
+
+    def test_create_copy_claude_md_flag(self, tmp_grove, fake_repos):
+        """--no-copy-claude-md skips the prompt entirely."""
+        cfg = Config(
+            repos_dir=tmp_grove["repos_dir"],
+            workspace_dir=tmp_grove["workspace_dir"],
+        )
+        ws_path = tmp_grove["workspace_dir"] / "feat-test"
+        mock_ws = Workspace(name="feat-test", path=ws_path, branch="feat/test", repos=[])
+
+        # Create a CLAUDE.md in repos_dir
+        claude_md = tmp_grove["repos_dir"] / "CLAUDE.md"
+        claude_md.write_text("# Test")
+
+        with (
+            patch("grove.cli.config.require_config", return_value=cfg),
+            patch("grove.cli.discover.find_repos", return_value=fake_repos),
+            patch("grove.cli.workspace.create_workspace", return_value=mock_ws),
+        ):
+            # --no-copy-claude-md should skip without prompting
+            result = runner.invoke(
+                app, ["create", "-r", "svc-auth", "-b", "feat/test", "--no-copy-claude-md"]
+            )
+            assert result.exit_code == 0
+            assert "CLAUDE.md copied" not in result.output
+
+    def test_create_copy_claude_md_flag_yes(self, tmp_grove, fake_repos):
+        """--copy-claude-md copies without prompting."""
+        cfg = Config(
+            repos_dir=tmp_grove["repos_dir"],
+            workspace_dir=tmp_grove["workspace_dir"],
+        )
+        ws_path = tmp_grove["workspace_dir"] / "feat-test"
+        ws_path.mkdir(parents=True, exist_ok=True)
+        mock_ws = Workspace(name="feat-test", path=ws_path, branch="feat/test", repos=[])
+
+        # Create a CLAUDE.md in repos_dir
+        claude_md = tmp_grove["repos_dir"] / "CLAUDE.md"
+        claude_md.write_text("# Test")
+
+        with (
+            patch("grove.cli.config.require_config", return_value=cfg),
+            patch("grove.cli.discover.find_repos", return_value=fake_repos),
+            patch("grove.cli.workspace.create_workspace", return_value=mock_ws),
+        ):
+            result = runner.invoke(
+                app, ["create", "-r", "svc-auth", "-b", "feat/test", "--copy-claude-md"]
+            )
+            assert result.exit_code == 0
+            assert "CLAUDE.md copied" in result.output
+            assert (ws_path / "CLAUDE.md").exists()

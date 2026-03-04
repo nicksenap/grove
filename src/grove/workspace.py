@@ -21,11 +21,16 @@ def _parallel(
     fn: Callable[[str, Any], Any],
     items: list[tuple[str, Any]],
     label: str = "Processing",
+    *,
+    spinner: bool = True,
 ) -> list[tuple[str, Any, Exception | None]]:
     """Run *fn(name, value)* for each ``(name, value)`` in *items* using threads.
 
     Returns a list of ``(name, result, error)`` tuples, one per item,
     preserving the original order of *items*.
+
+    When *spinner* is False, a plain info message is shown instead of a
+    persistent Rich spinner — useful when the tasks produce their own output.
     """
     if not items:
         return []
@@ -35,10 +40,11 @@ def _parallel(
         raise ValueError(f"Duplicate names in parallel items: {[n for n, _ in items]}")
     results: list[tuple[str, Any, Exception | None]] = [("", None, None)] * len(items)
 
-    with (
-        console.status(f"{label} {len(items)} repos…"),
-        ThreadPoolExecutor() as pool,
-    ):
+    ctx = console.status(f"{label} {len(items)} repos…") if spinner else contextlib.nullcontext()
+    if not spinner:
+        info(f"{label} {len(items)} repos…")
+
+    with ctx, ThreadPoolExecutor() as pool:
         futures = {pool.submit(fn, name, val): name for name, val in items}
         for future in as_completed(futures):
             name = futures[future]
@@ -128,7 +134,7 @@ def _provision_worktrees(
         _run_hook(repo_wt.repo_name, repo_wt.source_repo, repo_wt.worktree_path, "setup")
 
     setup_items = [(wt.repo_name, wt) for wt in created]
-    _parallel(_setup_one, setup_items, "Running setup for")
+    _parallel(_setup_one, setup_items, "Running setup for", spinner=False)
 
     return created
 
@@ -339,7 +345,7 @@ def run_pre_hooks(runnable: list[tuple[RepoWorktree, list[str]]]) -> None:
     def _pre_run(_name: str, repo_wt: RepoWorktree) -> None:
         _run_hook(repo_wt.repo_name, repo_wt.source_repo, repo_wt.worktree_path, "pre_run")
 
-    _parallel(_pre_run, [(wt.repo_name, wt) for wt, _ in runnable], "Pre-run")
+    _parallel(_pre_run, [(wt.repo_name, wt) for wt, _ in runnable], "Pre-run", spinner=False)
 
 
 def run_post_hooks(runnable: list[tuple[RepoWorktree, list[str]]]) -> None:
@@ -348,7 +354,7 @@ def run_post_hooks(runnable: list[tuple[RepoWorktree, list[str]]]) -> None:
     def _post_run(_name: str, repo_wt: RepoWorktree) -> None:
         _run_hook(repo_wt.repo_name, repo_wt.source_repo, repo_wt.worktree_path, "post_run")
 
-    _parallel(_post_run, [(wt.repo_name, wt) for wt, _ in runnable], "Post-run")
+    _parallel(_post_run, [(wt.repo_name, wt) for wt, _ in runnable], "Post-run", spinner=False)
 
 
 def run_workspace(ws: Workspace) -> int:

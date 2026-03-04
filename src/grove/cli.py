@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import re
+import sys
 from pathlib import Path
 
 import typer
@@ -108,6 +109,9 @@ def _pick_one(prompt_text: str, choices: list[str]) -> str:
 
 def _pick_one_idx(prompt_text: str, choices: list[str]) -> int:
     """Arrow-key single selection, returns the chosen index."""
+    if not sys.stdin.isatty():
+        error("Interactive selection requires a terminal. Provide explicit flags instead.")
+        raise typer.Exit(1)
     from simple_term_menu import TerminalMenu
 
     menu = TerminalMenu(
@@ -116,6 +120,8 @@ def _pick_one_idx(prompt_text: str, choices: list[str]) -> int:
         menu_cursor="❯ ",
         menu_cursor_style=("fg_cyan", "bold"),
         menu_highlight_style=("fg_cyan", "bold"),
+        search_key=None,
+        search_highlight_style=("fg_yellow", "bold"),
     )
     idx = menu.show()
     if idx is None:
@@ -124,18 +130,24 @@ def _pick_one_idx(prompt_text: str, choices: list[str]) -> int:
 
 
 def _pick_many(prompt_text: str, choices: list[str]) -> list[str]:
-    """Arrow-key + space multi-selection."""
+    """Type-to-search + tab multi-selection."""
+    if not sys.stdin.isatty():
+        error("Interactive selection requires a terminal. Provide explicit flags instead.")
+        raise typer.Exit(1)
     from simple_term_menu import TerminalMenu
 
     display = ["(all)", *choices]
     menu = TerminalMenu(
         display,
-        title=f"\n{prompt_text}\n  ↑/↓ navigate · space select · enter confirm",
+        title=f"\n{prompt_text}\n  ↑/↓ navigate · tab select · type to search · enter confirm",
         multi_select=True,
         multi_select_select_on_accept=False,
+        multi_select_keys=("tab",),
         menu_cursor="❯ ",
         menu_cursor_style=("fg_cyan", "bold"),
         menu_highlight_style=("fg_cyan", "bold"),
+        search_key=None,
+        search_highlight_style=("fg_yellow", "bold"),
     )
     result = menu.show()
     if result is None:
@@ -200,6 +212,9 @@ def create(
         autocompletion=complete_preset_name,
     ),
     all_repos: bool = typer.Option(False, "--all", help="Use all discovered repos"),
+    copy_claude_md: bool | None = typer.Option(
+        None, "--copy-claude-md/--no-copy-claude-md", help="Copy CLAUDE.md into workspace"
+    ),
 ) -> None:
     """Create a new workspace with worktrees from selected repos."""
     cfg = config.require_config()
@@ -207,6 +222,9 @@ def create(
 
     # --- Interactive fallback when branch is missing ---
     if branch is None:
+        if not sys.stdin.isatty():
+            error("--branch is required in non-interactive mode")
+            raise typer.Exit(1)
         from rich.prompt import Prompt
 
         branch = Prompt.ask("[bold]Branch name[/]", console=console)
@@ -284,9 +302,12 @@ def create(
     # --- Copy CLAUDE.md from repos dir if present ---
     claude_md = cfg.repos_dir / "CLAUDE.md"
     if claude_md.is_file():
-        import shutil
+        should_copy = copy_claude_md
+        if should_copy is None:
+            should_copy = typer.confirm("Copy CLAUDE.md into workspace?", default=True)
+        if should_copy:
+            import shutil
 
-        if typer.confirm("Copy CLAUDE.md into workspace?", default=True):
             shutil.copy2(claude_md, ws.path / "CLAUDE.md")
             success("CLAUDE.md copied")
 

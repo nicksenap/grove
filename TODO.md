@@ -9,24 +9,17 @@ Add end-to-end tests that exercise the main flows against real git repos (not mo
 - `gw create` → `gw run` (with actual processes, verify TUI launches)
 - Lifecycle hooks fire in correct order with real `.grove.toml` files
 
-## Recursive repo discovery
+## Rethink init + repo discovery
 
-`gw init` currently only looks one level deep (`repos_dir/*.git`). If repos live in nested folders (e.g. `~/dev/work/backend/svc-auth`), they're invisible.
+Current `gw init <dir>` ties config to a single flat directory. Breaks when repos are nested or split across multiple folders, and re-init overwrites the previous config.
 
-Make discovery recursive or configurable:
-- Scan N levels deep (default 2–3?)
-- Or accept multiple root dirs in config
-- Show discovered repos during init so the user can confirm
-
-## Non-interactive mode
-
-Every command should be scriptable without interactive prompts (e.g. for CI, AI agents, shell scripts). Commands that currently fall back to interactive pickers when arguments are omitted need a `-y` / `--yes` flag or equivalent to skip confirmation and use sensible defaults. Audit all commands:
-- `gw create` — branch picker, repo picker, preset picker, CLAUDE.md copy prompt
-- `gw delete` — confirmation prompt
-- `gw add-repo` — workspace picker, repo picker
-- `gw remove-repo` — workspace picker, repo picker, confirmation prompt
-- `gw rename` — workspace picker
-- `gw go` — workspace picker
+**New design:**
+- Config stores `repo_dirs: list[Path]` instead of singular `repos_dir`
+- `gw init` just sets up `~/.grove` + workspace dir, optionally accepts dirs upfront
+- `gw add-dir <path>` / `gw remove-dir <path>` to manage source directories
+- `gw explore` scans all configured dirs recursively (2–3 levels deep), prints discovered repos grouped by source dir, highlights new finds
+- Discovery stays live (no cache) — `gw explore` is informational, not a required step. `create`/`add-repo` always scan fresh so new repos are immediately available
+- Backward compat: old config with `repos_dir` (singular) treated as single-element list
 
 ## `gw run` TUI enhancements
 
