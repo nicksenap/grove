@@ -148,23 +148,23 @@ class RunApp(App):
     """
 
     BINDINGS = [
-        Binding("q", "quit_app", "Quit", show=True),
-        Binding("r", "restart", "Restart", show=True),
-        # Vim navigation
-        Binding("j", "nav_down", "j/↓", show=True),
-        Binding("k", "nav_up", "k/↑", show=True),
-        Binding("g", "nav_first", "gg first", show=False),
-        Binding("G", "nav_last", "G last", show=False),  # noqa: N815
+        Binding("q", "quit_app", "Quit", show=True, priority=True),
+        Binding("r", "restart", "Restart", show=True, priority=True),
+        # Vim navigation — priority ensures they fire before any focused widget
+        Binding("j", "nav_down", "j/↓", show=True, priority=True),
+        Binding("k", "nav_up", "k/↑", show=True, priority=True),
+        Binding("g", "nav_first", "gg first", show=False, priority=True),
+        Binding("G", "nav_last", "G last", show=False, priority=True),  # noqa: N815
         # Number keys
-        Binding("1", "select_1", "1", show=False),
-        Binding("2", "select_2", "2", show=False),
-        Binding("3", "select_3", "3", show=False),
-        Binding("4", "select_4", "4", show=False),
-        Binding("5", "select_5", "5", show=False),
-        Binding("6", "select_6", "6", show=False),
-        Binding("7", "select_7", "7", show=False),
-        Binding("8", "select_8", "8", show=False),
-        Binding("9", "select_9", "9", show=False),
+        Binding("1", "select_1", "1", show=False, priority=True),
+        Binding("2", "select_2", "2", show=False, priority=True),
+        Binding("3", "select_3", "3", show=False, priority=True),
+        Binding("4", "select_4", "4", show=False, priority=True),
+        Binding("5", "select_5", "5", show=False, priority=True),
+        Binding("6", "select_6", "6", show=False, priority=True),
+        Binding("7", "select_7", "7", show=False, priority=True),
+        Binding("8", "select_8", "8", show=False, priority=True),
+        Binding("9", "select_9", "9", show=False, priority=True),
     ]
 
     def __init__(self, entries: list[tuple[str, str, str]]) -> None:
@@ -191,7 +191,9 @@ class RunApp(App):
             with Vertical(id="log-panel"):
                 for i, _ps in enumerate(self.procs):
                     classes = "active" if i == 0 else ""
-                    yield RichLog(id=f"log-{i}", classes=classes, wrap=True, markup=True)
+                    log = RichLog(id=f"log-{i}", classes=classes, wrap=True, markup=True)
+                    log.can_focus = False
+                    yield log
         yield Footer()
 
     # ── Lifecycle ─────────────────────────────────────────────────────────
@@ -199,6 +201,7 @@ class RunApp(App):
     def on_mount(self) -> None:
         sidebar = self.query_one("#sidebar", ListView)
         sidebar.index = 0
+        sidebar.focus()
         self._update_panel_titles()
         for i in range(len(self.procs)):
             self._start_process(i)
@@ -223,6 +226,7 @@ class RunApp(App):
                 ps.command,
                 cwd=ps.cwd,
                 shell=True,
+                stdin=subprocess.DEVNULL,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,
@@ -336,12 +340,10 @@ class RunApp(App):
         self.exit()
 
     def action_nav_down(self) -> None:
-        sidebar = self.query_one("#sidebar", ListView)
-        sidebar.index = min(self._selected + 1, len(self.procs) - 1)
+        self.query_one("#sidebar", ListView).action_cursor_down()
 
     def action_nav_up(self) -> None:
-        sidebar = self.query_one("#sidebar", ListView)
-        sidebar.index = max(self._selected - 1, 0)
+        self.query_one("#sidebar", ListView).action_cursor_up()
 
     def action_nav_first(self) -> None:
         self.query_one("#sidebar", ListView).index = 0
