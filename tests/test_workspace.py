@@ -205,6 +205,25 @@ class TestDeleteWorkspace:
         result = workspace.delete_workspace("nope")
         assert result is False
 
+    def test_partial_failure_keeps_state(self, tmp_grove, sample_workspace):
+        """When worktree removal fails and directory persists, state is kept."""
+        state.add_workspace(sample_workspace)
+        sample_workspace.path.mkdir(exist_ok=True)
+        # Make the worktree path exist so shutil.rmtree of workspace dir
+        # doesn't fully clean up (simulate stuck directory)
+        wt_dir = sample_workspace.repos[0].worktree_path
+        wt_dir.mkdir(parents=True, exist_ok=True)
+        # Make a file that prevents rmtree from cleaning up
+        # (We mock the removal to always fail)
+        with (
+            patch("grove.workspace.git.worktree_remove", side_effect=GitError("locked")),
+            patch("grove.workspace.shutil.rmtree"),  # prevent actual cleanup
+        ):
+            result = workspace.delete_workspace("test-ws")
+        # With failures and directory still present, state should be preserved
+        assert result is False
+        assert state.get_workspace("test-ws") is not None
+
 
 class TestSyncWorkspace:
     def test_up_to_date(self, tmp_grove, sample_workspace):
@@ -871,6 +890,23 @@ class TestRenameWorkspace:
         saved = state.get_workspace("renamed")
         for repo_wt in saved.repos:
             assert "renamed" in str(repo_wt.worktree_path)
+
+    def test_rollback_on_directory_rename_failure(self, tmp_grove, sample_workspace):
+        """If directory rename fails, state reverts to original values."""
+        state.add_workspace(sample_workspace)
+        cfg = Config(
+            repos_dir=tmp_grove["repos_dir"],
+            workspace_dir=tmp_grove["workspace_dir"],
+        )
+        with patch.object(Path, "rename", side_effect=OSError("permission denied")):
+            result = workspace.rename_workspace("test-ws", "new-name", cfg)
+        assert result is False
+        # State should still have the old workspace
+        ws = state.get_workspace("test-ws")
+        assert ws is not None
+        assert ws.path == sample_workspace.path
+        # New name should not exist in state
+        assert state.get_workspace("new-name") is None
 
     def test_created_at_preserved(self, tmp_grove, sample_workspace):
         state.add_workspace(sample_workspace)

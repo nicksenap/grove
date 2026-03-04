@@ -57,6 +57,33 @@ class TestSaveLoad:
         assert config.load_config() is None
 
 
+class TestPresetNameValidation:
+    def test_valid_names(self):
+        for name in ("backend", "front-end", "my_preset", "v2", "A-Z_0-9"):
+            config.validate_preset_name(name)  # should not raise
+
+    def test_dots_rejected(self):
+        with pytest.raises(ValueError, match="Invalid preset name"):
+            config.validate_preset_name("backend.v2")
+
+    def test_spaces_rejected(self):
+        with pytest.raises(ValueError, match="Invalid preset name"):
+            config.validate_preset_name("my preset")
+
+    def test_brackets_rejected(self):
+        with pytest.raises(ValueError, match="Invalid preset name"):
+            config.validate_preset_name("bad]name")
+
+    def test_save_rejects_bad_preset_name(self, tmp_grove):
+        cfg = Config(
+            repos_dir=tmp_grove["repos_dir"],
+            workspace_dir=tmp_grove["workspace_dir"],
+            presets={"backend.v2": ["svc-auth"]},
+        )
+        with pytest.raises(ValueError, match="Invalid preset name"):
+            config.save_config(cfg)
+
+
 class TestRequireConfig:
     def test_raises_when_not_initialized(self, tmp_grove):
         tmp_grove["config_path"].unlink()

@@ -5,6 +5,7 @@ from __future__ import annotations
 from unittest.mock import patch
 
 import pytest
+import typer
 from typer.testing import CliRunner
 
 from grove.cli import _format_drift, _format_pr, _sanitize_name, app
@@ -43,6 +44,18 @@ class TestSanitizeName:
 
     def test_leading_slash(self):
         assert _sanitize_name("/feat") == "feat"
+
+    def test_all_slashes_raises(self):
+        with pytest.raises(typer.BadParameter, match="empty"):
+            _sanitize_name("/")
+
+    def test_all_spaces_raises(self):
+        with pytest.raises(typer.BadParameter, match="empty"):
+            _sanitize_name("  ")
+
+    def test_slash_space_raises(self):
+        with pytest.raises(typer.BadParameter, match="empty"):
+            _sanitize_name("/ /")
 
 
 class TestFormatDrift:

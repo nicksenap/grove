@@ -80,6 +80,25 @@ class TestWorktreeList:
         assert result[1] == {"path": "/ws/feat", "branch": "feat/x"}
 
 
+class TestWorktreeListDetachedHead:
+    def test_detached_head_has_no_branch_key(self, mock_run):
+        mock_run.return_value = MagicMock(
+            stdout=(
+                "worktree /repo\nbranch refs/heads/main\n\n"
+                "worktree /ws/detached\nHEAD abc1234\ndetached\n"
+            )
+        )
+        result = git.worktree_list(Path("/repo"))
+        assert len(result) == 2
+        assert result[0] == {"path": "/repo", "branch": "main"}
+        assert result[1] == {"path": "/ws/detached"}
+        assert "branch" not in result[1]
+
+    def test_detached_head_not_matched_by_has_branch(self, mock_run):
+        mock_run.return_value = MagicMock(stdout="worktree /ws/detached\nHEAD abc1234\ndetached\n")
+        assert git.worktree_has_branch(Path("/repo"), "main") is False
+
+
 class TestWorktreeHasBranch:
     def test_found(self, mock_run):
         mock_run.return_value = MagicMock(stdout="worktree /repo\nbranch refs/heads/main\n")

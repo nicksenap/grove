@@ -217,6 +217,7 @@ def _teardown_and_remove(
     """Run teardown hook then remove worktree. The shared removal primitive.
 
     *force_cleanup*: if True, fall back to ``shutil.rmtree`` when git fails.
+    When force cleanup succeeds, the error is swallowed (directory is gone).
     """
     if repo_wt.worktree_path.exists():
         with contextlib.suppress(Exception):
@@ -226,11 +227,18 @@ def _teardown_and_remove(
     except GitError:
         if force_cleanup and repo_wt.worktree_path.exists():
             shutil.rmtree(repo_wt.worktree_path, ignore_errors=True)
+            if not repo_wt.worktree_path.exists():
+                return  # directory cleaned up — don't propagate the error
         raise  # re-raise so _parallel records the error
 
 
 def delete_workspace(name: str) -> bool:
-    """Delete a workspace: remove worktrees, folder, and state entry."""
+    """Delete a workspace: remove worktrees, folder, and state entry.
+
+    Only removes the workspace from state when all worktree removals succeed
+    (or the workspace directory is gone). On partial failure the state entry is
+    kept so ``gw doctor`` can help clean up.
+    """
     workspace = state.get_workspace(name)
     if workspace is None:
         error(f"Workspace [bold]{name}[/] not found")
@@ -240,14 +248,23 @@ def delete_workspace(name: str) -> bool:
         _teardown_and_remove(_name, repo_wt, force_cleanup=True)
 
     items = [(wt.repo_name, wt) for wt in workspace.repos]
+    failures = 0
     for repo_name, _result, exc in _parallel(_remove_one, items, "Removing"):
         if exc is not None:
             warning(f"Could not remove worktree for {repo_name}: {exc}")
+            failures += 1
         else:
             success(f"Removed worktree: {repo_name}")
 
     if workspace.path.exists():
         shutil.rmtree(workspace.path, ignore_errors=True)
+
+    if failures and workspace.path.exists():
+        warning(
+            f"{failures} worktree(s) could not be removed. "
+            "Run [bold]gw doctor --fix[/] to clean up."
+        )
+        return False
 
     state.remove_workspace(name)
     return True
@@ -597,7 +614,11 @@ def remove_repo_from_workspace(
 
 
 def rename_workspace(old_name: str, new_name: str, config: Config) -> bool:
-    """Rename a workspace: directory, internal paths, state entry, and git linkage."""
+    """Rename a workspace: directory, internal paths, state entry, and git linkage.
+
+    Updates state first, then renames the directory.  If the directory rename
+    fails the state change is rolled back.
+    """
     ws = state.get_workspace(old_name)
     if ws is None:
         error(f"Workspace [bold]{old_name}[/] not found")
@@ -614,20 +635,30 @@ def rename_workspace(old_name: str, new_name: str, config: Config) -> bool:
         error(f"Directory already exists: {new_path}")
         return False
 
-    # Rename directory
-    try:
-        old_path.rename(new_path)
-    except OSError as e:
-        error(f"Failed to rename directory: {e}")
-        return False
+    # Save original values for rollback
+    orig_name = ws.name
+    orig_path = ws.path
+    orig_wt_paths = [(r, r.worktree_path) for r in ws.repos]
 
-    # Rebuild paths and update state in one write
+    # Update state first (easier to rollback than a directory rename)
     ws.name = new_name
     ws.path = new_path
     for repo_wt in ws.repos:
         repo_wt.worktree_path = new_path / repo_wt.repo_name
-
     state.update_workspace(ws, match_name=old_name)
+
+    # Rename directory
+    try:
+        old_path.rename(new_path)
+    except OSError as e:
+        # Rollback state to original values
+        ws.name = orig_name
+        ws.path = orig_path
+        for repo_wt, orig_wt_path in orig_wt_paths:
+            repo_wt.worktree_path = orig_wt_path
+        state.update_workspace(ws, match_name=new_name)
+        error(f"Failed to rename directory: {e}")
+        return False
 
     # Repair git worktree linkage (best-effort per repo)
     for repo_wt in ws.repos:
