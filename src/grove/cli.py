@@ -125,6 +125,7 @@ def _pick_one_idx(prompt_text: str, choices: list[str]) -> int:
         menu_cursor_style=("fg_cyan", "bold"),
         menu_highlight_style=("fg_cyan", "bold"),
         search_highlight_style=("fg_yellow", "bold"),
+        search_key=None,
     )
     idx = menu.show()
     if idx is None:
@@ -150,6 +151,7 @@ def _pick_many(prompt_text: str, choices: list[str]) -> list[str]:
         menu_cursor_style=("fg_cyan", "bold"),
         menu_highlight_style=("fg_cyan", "bold"),
         search_highlight_style=("fg_yellow", "bold"),
+        search_key=None,
     )
     result = menu.show()
     if result is None:
