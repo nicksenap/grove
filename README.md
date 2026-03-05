@@ -36,7 +36,13 @@ This enables `gw go` to change your working directory and auto-cds into new work
 ## Usage
 
 ```bash
-gw init ~/dev                                          # register repos directory
+# Setup — register one or more directories containing your repos
+gw init ~/dev ~/work/microservices                     # initialize with repo directories
+gw add-dir ~/other/repos                               # add another directory later
+gw remove-dir ~/old/repos                              # remove a directory
+gw explore                                             # deep-scan for repos (2–3 levels)
+
+# Day-to-day
 gw create my-feature -r svc-a,svc-b -b feat/login     # create workspace
 gw list                                                # list workspaces
 gw status my-feature                                   # git status across repos
@@ -51,7 +57,7 @@ gw doctor                                              # diagnose workspace heal
 gw delete my-feature                                   # clean up
 ```
 
-All commands with selection use arrow-key navigation (single-select) or arrow + space (multi-select), with an `(all)` shortcut.
+All interactive menus support **type-to-search** filtering, arrow-key navigation (single-select), or arrow + tab (multi-select) with an `(all)` shortcut.
 
 ## Per-repo config
 
@@ -118,6 +124,8 @@ Grove copies your `CLAUDE.md` into new workspaces, so your agent gets project co
 
 ## What it does
 
+- **Multiple repo directories** — configure as many source directories as you need with `gw add-dir`
+- `gw explore` deep-scans directories (2–3 levels) to find repos you haven't registered yet
 - Fetches latest from remotes before creating worktrees
 - Creates new branches from the default remote branch (`origin/main`)
 - Creates git worktrees from multiple repos into `~/.grove/workspaces/<name>/`

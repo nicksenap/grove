@@ -33,12 +33,22 @@ def ensure_grove_dir() -> None:
 
 
 def load_config() -> Config | None:
-    """Load config from TOML. Returns None if not initialized."""
+    """Load config from TOML. Returns None if not initialized.
+
+    Automatically migrates old ``repos_dir`` (singular) configs to the
+    new ``repo_dirs`` (list) format on first read.
+    """
     if not CONFIG_PATH.exists():
         return None
     with open(CONFIG_PATH, "rb") as f:
         data = tomllib.load(f)
-    return Config.from_dict(data)
+    cfg = Config.from_dict(data)
+
+    # Auto-migrate old format to new format on disk
+    if "repos_dir" in data and "repo_dirs" not in data:
+        save_config(cfg)
+
+    return cfg
 
 
 def save_config(config: Config) -> None:
@@ -48,8 +58,9 @@ def save_config(config: Config) -> None:
     for preset_name in config.presets:
         validate_preset_name(preset_name)
     # Hand-write TOML to avoid extra dependency
+    quoted_dirs = ", ".join(f'"{p}"' for p in config.repo_dirs)
     lines = [
-        f'repos_dir = "{config.repos_dir}"',
+        f"repo_dirs = [{quoted_dirs}]",
         f'workspace_dir = "{config.workspace_dir}"',
     ]
     for preset_name, repos in config.presets.items():
@@ -78,5 +89,5 @@ def require_config() -> Config:
     """Load config or raise an error if not initialized."""
     config = load_config()
     if config is None:
-        raise SystemExit("Grove not initialized. Run: gw init <repos-dir>")
+        raise SystemExit("Grove not initialized. Run: gw init")
     return config

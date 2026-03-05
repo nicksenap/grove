@@ -37,5 +37,5 @@ Repos can have a `.grove.toml` at their root:
 - `update.py` — Non-blocking version check (cached, background refresh)
 - `console.py` — Rich output helpers
 - `git.py` — Git subprocess calls
-- `discover.py` — Repo discovery
+- `discover.py` — Repo discovery (single-dir, multi-dir, and recursive explore)
 - `models.py` — Dataclasses (Config, Workspace, RepoWorktree)

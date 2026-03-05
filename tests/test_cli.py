@@ -106,9 +106,14 @@ class TestFormatPr:
 
 
 class TestInit:
-    def test_success(self, tmp_grove):
+    def test_success_with_dir(self, tmp_grove):
         repos_dir = tmp_grove["repos_dir"]
         result = runner.invoke(app, ["init", str(repos_dir)])
+        assert result.exit_code == 0
+        assert "Initialized" in result.output
+
+    def test_success_no_args(self, tmp_grove):
+        result = runner.invoke(app, ["init"])
         assert result.exit_code == 0
         assert "Initialized" in result.output
 
@@ -117,11 +122,74 @@ class TestInit:
         assert result.exit_code == 1
         assert "does not exist" in result.output
 
+    def test_init_adds_to_existing_config(self, tmp_grove):
+        repos_dir = tmp_grove["repos_dir"]
+        other_dir = tmp_grove["grove_dir"] / "other"
+        other_dir.mkdir()
+        runner.invoke(app, ["init", str(repos_dir)])
+        result = runner.invoke(app, ["init", str(other_dir)])
+        assert result.exit_code == 0
+        from grove import config as cfg_mod
+
+        loaded = cfg_mod.load_config()
+        assert loaded is not None
+        assert len(loaded.repo_dirs) == 2
+
+
+class TestAddDir:
+    def test_success(self, tmp_grove):
+        new_dir = tmp_grove["grove_dir"] / "more_repos"
+        new_dir.mkdir()
+        result = runner.invoke(app, ["add-dir", str(new_dir)])
+        assert result.exit_code == 0
+        assert "Added" in result.output
+
+    def test_nonexistent_dir(self, tmp_grove):
+        result = runner.invoke(app, ["add-dir", "/nonexistent"])
+        assert result.exit_code == 1
+        assert "does not exist" in result.output
+
+    def test_duplicate_dir(self, tmp_grove):
+        repos_dir = tmp_grove["repos_dir"]
+        result = runner.invoke(app, ["add-dir", str(repos_dir)])
+        assert result.exit_code == 0
+        assert "already configured" in result.output
+
+
+class TestRemoveDir:
+    def test_success(self, tmp_grove):
+        repos_dir = tmp_grove["repos_dir"]
+        result = runner.invoke(app, ["remove-dir", str(repos_dir)])
+        assert result.exit_code == 0
+        assert "Removed" in result.output
+
+    def test_not_configured(self, tmp_grove):
+        result = runner.invoke(app, ["remove-dir", "/some/other/path"])
+        assert result.exit_code == 1
+        assert "not configured" in result.output
+
+
+class TestExplore:
+    def test_with_repos(self, tmp_grove, fake_repos):
+        result = runner.invoke(app, ["explore"])
+        assert result.exit_code == 0
+        assert "svc-auth" in result.output
+
+    def test_no_repo_dirs(self, tmp_grove):
+        from grove import config as cfg_mod
+
+        cfg = cfg_mod.load_config()
+        cfg.repo_dirs = []
+        cfg_mod.save_config(cfg)
+        result = runner.invoke(app, ["explore"])
+        assert result.exit_code == 1
+        assert "No repo dirs" in result.output
+
 
 class TestCreate:
     def _make_config(self, tmp_grove):
         return Config(
-            repos_dir=tmp_grove["repos_dir"],
+            repo_dirs=[tmp_grove["repos_dir"]],
             workspace_dir=tmp_grove["workspace_dir"],
         )
 
@@ -136,7 +204,7 @@ class TestCreate:
 
         with (
             patch("grove.cli.config.require_config") as mock_cfg,
-            patch("grove.cli.discover.find_repos") as mock_find,
+            patch("grove.cli.discover.find_all_repos") as mock_find,
             patch("grove.cli.workspace.create_workspace", return_value=mock_ws),
         ):
             mock_cfg.return_value = self._make_config(tmp_grove)
@@ -153,7 +221,7 @@ class TestCreate:
 
         with (
             patch("grove.cli.config.require_config") as mock_cfg,
-            patch("grove.cli.discover.find_repos") as mock_find,
+            patch("grove.cli.discover.find_all_repos") as mock_find,
             patch("grove.cli.workspace.create_workspace", return_value=mock_ws) as mock_create,
         ):
             mock_cfg.return_value = self._make_config(tmp_grove)
@@ -173,7 +241,7 @@ class TestCreate:
 
         with (
             patch("grove.cli.config.require_config", return_value=cfg),
-            patch("grove.cli.discover.find_repos", return_value=fake_repos),
+            patch("grove.cli.discover.find_all_repos", return_value=fake_repos),
             patch("grove.cli.workspace.create_workspace", return_value=mock_ws) as mock_create,
         ):
             result = runner.invoke(app, ["create", "-p", "backend", "-b", "feat/x"])
@@ -188,7 +256,7 @@ class TestCreate:
 
         with (
             patch("grove.cli.config.require_config", return_value=cfg),
-            patch("grove.cli.discover.find_repos", return_value=fake_repos),
+            patch("grove.cli.discover.find_all_repos", return_value=fake_repos),
         ):
             result = runner.invoke(app, ["create", "-p", "nope", "-b", "feat/x"])
             assert result.exit_code == 1
@@ -201,7 +269,7 @@ class TestCreate:
 
         with (
             patch("grove.cli.config.require_config") as mock_cfg,
-            patch("grove.cli.discover.find_repos") as mock_find,
+            patch("grove.cli.discover.find_all_repos") as mock_find,
             patch("grove.cli.workspace.create_workspace", return_value=mock_ws),
             patch.dict("os.environ", {"GROVE_CD_FILE": str(cd_file)}),
         ):
@@ -214,7 +282,7 @@ class TestCreate:
     def test_create_failure(self, tmp_grove, fake_repos):
         with (
             patch("grove.cli.config.require_config") as mock_cfg,
-            patch("grove.cli.discover.find_repos") as mock_find,
+            patch("grove.cli.discover.find_all_repos") as mock_find,
             patch("grove.cli.workspace.create_workspace", return_value=None),
         ):
             mock_cfg.return_value = self._make_config(tmp_grove)
@@ -225,7 +293,7 @@ class TestCreate:
     def test_invalid_repo(self, tmp_grove, fake_repos):
         with (
             patch("grove.cli.config.require_config") as mock_cfg,
-            patch("grove.cli.discover.find_repos") as mock_find,
+            patch("grove.cli.discover.find_all_repos") as mock_find,
         ):
             mock_cfg.return_value = self._make_config(tmp_grove)
             mock_find.return_value = fake_repos
@@ -488,14 +556,14 @@ class TestGo:
 class TestPreset:
     def _make_config(self, tmp_grove):
         return Config(
-            repos_dir=tmp_grove["repos_dir"],
+            repo_dirs=[tmp_grove["repos_dir"]],
             workspace_dir=tmp_grove["workspace_dir"],
         )
 
     def test_add_with_flags(self, tmp_grove, fake_repos):
         with (
             patch("grove.cli.config.require_config") as mock_cfg,
-            patch("grove.cli.discover.find_repos", return_value=fake_repos),
+            patch("grove.cli.discover.find_all_repos", return_value=fake_repos),
             patch("grove.cli.config.save_config") as mock_save,
         ):
             cfg = self._make_config(tmp_grove)
@@ -509,7 +577,7 @@ class TestPreset:
     def test_add_invalid_repo(self, tmp_grove, fake_repos):
         with (
             patch("grove.cli.config.require_config") as mock_cfg,
-            patch("grove.cli.discover.find_repos", return_value=fake_repos),
+            patch("grove.cli.discover.find_all_repos", return_value=fake_repos),
         ):
             mock_cfg.return_value = self._make_config(tmp_grove)
             result = runner.invoke(app, ["preset", "add", "bad", "-r", "nonexistent"])
@@ -599,7 +667,7 @@ class TestDoctor:
             patch("grove.cli.workspace.diagnose_workspaces", return_value=[]),
         ):
             mock_cfg.return_value = Config(
-                repos_dir=tmp_grove["repos_dir"],
+                repo_dirs=[tmp_grove["repos_dir"]],
                 workspace_dir=tmp_grove["workspace_dir"],
             )
             result = runner.invoke(app, ["doctor"])
@@ -622,7 +690,7 @@ class TestDoctor:
             patch("grove.cli.workspace.diagnose_workspaces", return_value=issues),
         ):
             mock_cfg.return_value = Config(
-                repos_dir=tmp_grove["repos_dir"],
+                repo_dirs=[tmp_grove["repos_dir"]],
                 workspace_dir=tmp_grove["workspace_dir"],
             )
             result = runner.invoke(app, ["doctor"])
@@ -647,7 +715,7 @@ class TestDoctor:
             patch("grove.cli.workspace.fix_workspace_issues", return_value=1) as mock_fix,
         ):
             mock_cfg.return_value = Config(
-                repos_dir=tmp_grove["repos_dir"],
+                repo_dirs=[tmp_grove["repos_dir"]],
                 workspace_dir=tmp_grove["workspace_dir"],
             )
             result = runner.invoke(app, ["doctor", "--fix"])
@@ -666,7 +734,7 @@ class TestRename:
             patch("grove.cli.workspace.rename_workspace", return_value=True),
         ):
             mock_cfg.return_value = Config(
-                repos_dir=tmp_grove["repos_dir"],
+                repo_dirs=[tmp_grove["repos_dir"]],
                 workspace_dir=tmp_grove["workspace_dir"],
             )
             result = runner.invoke(app, ["rename", "test-ws", "--to", "new-name"])
@@ -679,7 +747,7 @@ class TestRename:
             patch("grove.cli.workspace.rename_workspace", return_value=False),
         ):
             mock_cfg.return_value = Config(
-                repos_dir=tmp_grove["repos_dir"],
+                repo_dirs=[tmp_grove["repos_dir"]],
                 workspace_dir=tmp_grove["workspace_dir"],
             )
             result = runner.invoke(app, ["rename", "nope", "--to", "new"])
@@ -701,11 +769,11 @@ class TestAddRepo:
         ]
         with (
             patch("grove.cli.config.require_config") as mock_cfg,
-            patch("grove.cli.discover.find_repos", return_value=fake_repos),
+            patch("grove.cli.discover.find_all_repos", return_value=fake_repos),
             patch("grove.cli.workspace.add_repo_to_workspace", return_value=mock_added),
         ):
             mock_cfg.return_value = Config(
-                repos_dir=tmp_grove["repos_dir"],
+                repo_dirs=[tmp_grove["repos_dir"]],
                 workspace_dir=tmp_grove["workspace_dir"],
             )
             result = runner.invoke(app, ["add-repo", "test-ws", "-r", "svc-api"])
@@ -715,10 +783,10 @@ class TestAddRepo:
     def test_not_found(self, tmp_grove, fake_repos):
         with (
             patch("grove.cli.config.require_config") as mock_cfg,
-            patch("grove.cli.discover.find_repos", return_value=fake_repos),
+            patch("grove.cli.discover.find_all_repos", return_value=fake_repos),
         ):
             mock_cfg.return_value = Config(
-                repos_dir=tmp_grove["repos_dir"],
+                repo_dirs=[tmp_grove["repos_dir"]],
                 workspace_dir=tmp_grove["workspace_dir"],
             )
             result = runner.invoke(app, ["add-repo", "nope", "-r", "svc-api"])
@@ -731,10 +799,10 @@ class TestAddRepo:
         state.add_workspace(sample_workspace)
         with (
             patch("grove.cli.config.require_config") as mock_cfg,
-            patch("grove.cli.discover.find_repos", return_value=fake_repos),
+            patch("grove.cli.discover.find_all_repos", return_value=fake_repos),
         ):
             mock_cfg.return_value = Config(
-                repos_dir=tmp_grove["repos_dir"],
+                repo_dirs=[tmp_grove["repos_dir"]],
                 workspace_dir=tmp_grove["workspace_dir"],
             )
             result = runner.invoke(app, ["add-repo", "test-ws", "-r", "nonexistent"])
@@ -834,12 +902,12 @@ class TestNonInteractive:
 
     def test_create_requires_branch_non_tty(self, tmp_grove, fake_repos):
         cfg = Config(
-            repos_dir=tmp_grove["repos_dir"],
+            repo_dirs=[tmp_grove["repos_dir"]],
             workspace_dir=tmp_grove["workspace_dir"],
         )
         with (
             patch("grove.cli.config.require_config", return_value=cfg),
-            patch("grove.cli.discover.find_repos", return_value=fake_repos),
+            patch("grove.cli.discover.find_all_repos", return_value=fake_repos),
             patch("grove.cli.sys.stdin") as mock_stdin,
         ):
             mock_stdin.isatty.return_value = False
@@ -850,7 +918,7 @@ class TestNonInteractive:
     def test_create_copy_claude_md_flag(self, tmp_grove, fake_repos):
         """--no-copy-claude-md skips the prompt entirely."""
         cfg = Config(
-            repos_dir=tmp_grove["repos_dir"],
+            repo_dirs=[tmp_grove["repos_dir"]],
             workspace_dir=tmp_grove["workspace_dir"],
         )
         ws_path = tmp_grove["workspace_dir"] / "feat-test"
@@ -862,7 +930,7 @@ class TestNonInteractive:
 
         with (
             patch("grove.cli.config.require_config", return_value=cfg),
-            patch("grove.cli.discover.find_repos", return_value=fake_repos),
+            patch("grove.cli.discover.find_all_repos", return_value=fake_repos),
             patch("grove.cli.workspace.create_workspace", return_value=mock_ws),
         ):
             # --no-copy-claude-md should skip without prompting
@@ -875,7 +943,7 @@ class TestNonInteractive:
     def test_create_copy_claude_md_flag_yes(self, tmp_grove, fake_repos):
         """--copy-claude-md copies without prompting."""
         cfg = Config(
-            repos_dir=tmp_grove["repos_dir"],
+            repo_dirs=[tmp_grove["repos_dir"]],
             workspace_dir=tmp_grove["workspace_dir"],
         )
         ws_path = tmp_grove["workspace_dir"] / "feat-test"
@@ -888,7 +956,7 @@ class TestNonInteractive:
 
         with (
             patch("grove.cli.config.require_config", return_value=cfg),
-            patch("grove.cli.discover.find_repos", return_value=fake_repos),
+            patch("grove.cli.discover.find_all_repos", return_value=fake_repos),
             patch("grove.cli.workspace.create_workspace", return_value=mock_ws),
         ):
             result = runner.invoke(

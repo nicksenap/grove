@@ -9,16 +9,14 @@ Add end-to-end tests that exercise the main flows against real git repos (not mo
 - `gw create` → `gw run` (with actual processes, verify TUI launches)
 - Lifecycle hooks fire in correct order with real `.grove.toml` files
 
-## Rethink init + repo discovery
+## ~~Rethink init + repo discovery~~ (done)
 
-Current `gw init <dir>` ties config to a single flat directory. Breaks when repos are nested or split across multiple folders, and re-init overwrites the previous config.
-
-**New design:**
+Implemented in multi-dir init PR:
 - Config stores `repo_dirs: list[Path]` instead of singular `repos_dir`
-- `gw init` just sets up `~/.grove` + workspace dir, optionally accepts dirs upfront
+- `gw init` sets up `~/.grove`, optionally accepts dirs upfront
 - `gw add-dir <path>` / `gw remove-dir <path>` to manage source directories
-- `gw explore` scans all configured dirs recursively (2–3 levels deep), prints discovered repos grouped by source dir, highlights new finds
-- Discovery stays live (no cache) — `gw explore` is informational, not a required step. `create`/`add-repo` always scan fresh so new repos are immediately available
+- `gw explore` scans all configured dirs recursively (up to 3 levels deep), prints discovered repos grouped by source dir, highlights new finds
+- Discovery stays live — `create`/`add-repo` always scan fresh
 - Backward compat: old config with `repos_dir` (singular) treated as single-element list
 
 ## `gw run` TUI enhancements
