@@ -1,6 +1,10 @@
-# Grove (`gw`)
+<p align="center">
+  <img src="assets/logo-light.png" alt="Grove logo" width="120">
+</p>
 
-**grove** /ɡrōv/ *noun* — a small group of trees growing together.
+<h1 align="center">Grove (<code>gw</code>)</h1>
+
+<p align="center"><b>grove</b> /ɡrōv/ <i>noun</i> — a small group of trees growing together.</p>
 
 ## Why?
 
