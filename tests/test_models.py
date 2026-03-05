@@ -9,16 +9,16 @@ from grove.models import Config, RepoWorktree, Workspace
 
 class TestConfig:
     def test_roundtrip_basic(self):
-        cfg = Config(repos_dir=Path("/repos"), workspace_dir=Path("/ws"))
+        cfg = Config(repo_dirs=[Path("/repos")], workspace_dir=Path("/ws"))
         d = cfg.to_dict()
         cfg2 = Config.from_dict(d)
-        assert cfg2.repos_dir == cfg.repos_dir
+        assert cfg2.repo_dirs == cfg.repo_dirs
         assert cfg2.workspace_dir == cfg.workspace_dir
         assert cfg2.presets == {}
 
     def test_roundtrip_with_presets(self):
         cfg = Config(
-            repos_dir=Path("/repos"),
+            repo_dirs=[Path("/repos")],
             workspace_dir=Path("/ws"),
             presets={
                 "backend": ["svc-auth", "svc-api"],
@@ -30,14 +30,25 @@ class TestConfig:
         assert cfg2.presets == {"backend": ["svc-auth", "svc-api"], "frontend": ["web-app"]}
 
     def test_from_dict_missing_presets(self):
-        d = {"repos_dir": "/repos", "workspace_dir": "/ws"}
+        d = {"repo_dirs": ["/repos"], "workspace_dir": "/ws"}
         cfg = Config.from_dict(d)
         assert cfg.presets == {}
 
+    def test_backward_compat_repos_dir_singular(self):
+        d = {"repos_dir": "/repos", "workspace_dir": "/ws"}
+        cfg = Config.from_dict(d)
+        assert cfg.repo_dirs == [Path("/repos")]
+
     def test_to_dict_no_presets_key_when_empty(self):
-        cfg = Config(repos_dir=Path("/r"), workspace_dir=Path("/w"))
+        cfg = Config(repo_dirs=[Path("/r")], workspace_dir=Path("/w"))
         d = cfg.to_dict()
         assert "presets" not in d
+
+    def test_multiple_repo_dirs_roundtrip(self):
+        cfg = Config(repo_dirs=[Path("/a"), Path("/b")], workspace_dir=Path("/ws"))
+        d = cfg.to_dict()
+        cfg2 = Config.from_dict(d)
+        assert cfg2.repo_dirs == [Path("/a"), Path("/b")]
 
 
 class TestRepoWorktree:

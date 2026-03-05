@@ -11,13 +11,13 @@ from pathlib import Path
 class Config:
     """Global Grove configuration."""
 
-    repos_dir: Path
+    repo_dirs: list[Path]
     workspace_dir: Path
     presets: dict[str, list[str]] = field(default_factory=dict)
 
     def to_dict(self) -> dict:
         d: dict = {
-            "repos_dir": str(self.repos_dir),
+            "repo_dirs": [str(p) for p in self.repo_dirs],
             "workspace_dir": str(self.workspace_dir),
         }
         if self.presets:
@@ -29,8 +29,17 @@ class Config:
         presets_raw = data.get("presets", {})
         # Each preset is a TOML table: [presets.name] with repos = [...]
         presets = {name: list(val["repos"]) for name, val in presets_raw.items()}
+
+        # Backward compat: old config has repos_dir (singular)
+        if "repo_dirs" in data:
+            repo_dirs = [Path(p) for p in data["repo_dirs"]]
+        elif "repos_dir" in data:
+            repo_dirs = [Path(data["repos_dir"])]
+        else:
+            repo_dirs = []
+
         return cls(
-            repos_dir=Path(data["repos_dir"]),
+            repo_dirs=repo_dirs,
             workspace_dir=Path(data["workspace_dir"]),
             presets=presets,
         )

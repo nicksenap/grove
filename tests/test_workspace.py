@@ -31,7 +31,7 @@ def mock_git():
 class TestCreateWorkspace:
     def test_success(self, tmp_grove, mock_git):
         cfg = Config(
-            repos_dir=tmp_grove["repos_dir"],
+            repo_dirs=[tmp_grove["repos_dir"]],
             workspace_dir=tmp_grove["workspace_dir"],
         )
         repo_path = tmp_grove["repos_dir"] / "svc-api"
@@ -52,7 +52,7 @@ class TestCreateWorkspace:
     def test_duplicate_name_fails(self, tmp_grove, mock_git, sample_workspace):
         state.add_workspace(sample_workspace)
         cfg = Config(
-            repos_dir=tmp_grove["repos_dir"],
+            repo_dirs=[tmp_grove["repos_dir"]],
             workspace_dir=tmp_grove["workspace_dir"],
         )
         ws = workspace.create_workspace("test-ws", {}, "feat/x", cfg)
@@ -61,7 +61,7 @@ class TestCreateWorkspace:
     def test_duplicate_branch_fails(self, tmp_grove):
         with patch("grove.workspace.git.worktree_has_branch", return_value=True):
             cfg = Config(
-                repos_dir=tmp_grove["repos_dir"],
+                repo_dirs=[tmp_grove["repos_dir"]],
                 workspace_dir=tmp_grove["workspace_dir"],
             )
             repo_path = tmp_grove["repos_dir"] / "svc-api"
@@ -71,7 +71,7 @@ class TestCreateWorkspace:
 
     def test_rollback_on_worktree_failure(self, tmp_grove):
         cfg = Config(
-            repos_dir=tmp_grove["repos_dir"],
+            repo_dirs=[tmp_grove["repos_dir"]],
             workspace_dir=tmp_grove["workspace_dir"],
         )
         repo1 = tmp_grove["repos_dir"] / "repo1"
@@ -100,7 +100,7 @@ class TestCreateWorkspace:
 
     def test_auto_creates_branch(self, tmp_grove):
         cfg = Config(
-            repos_dir=tmp_grove["repos_dir"],
+            repo_dirs=[tmp_grove["repos_dir"]],
             workspace_dir=tmp_grove["workspace_dir"],
         )
         repo_path = tmp_grove["repos_dir"] / "svc-api"
@@ -122,7 +122,7 @@ class TestCreateWorkspace:
 class TestSetupHook:
     def test_runs_setup_command(self, tmp_grove):
         cfg = Config(
-            repos_dir=tmp_grove["repos_dir"],
+            repo_dirs=[tmp_grove["repos_dir"]],
             workspace_dir=tmp_grove["workspace_dir"],
         )
         repo_path = tmp_grove["repos_dir"] / "svc-api"
@@ -153,7 +153,7 @@ class TestSetupHook:
 
     def test_runs_multiple_setup_commands(self, tmp_grove):
         cfg = Config(
-            repos_dir=tmp_grove["repos_dir"],
+            repo_dirs=[tmp_grove["repos_dir"]],
             workspace_dir=tmp_grove["workspace_dir"],
         )
         repo_path = tmp_grove["repos_dir"] / "web"
@@ -176,7 +176,7 @@ class TestSetupHook:
 
     def test_no_setup_no_crash(self, tmp_grove):
         cfg = Config(
-            repos_dir=tmp_grove["repos_dir"],
+            repo_dirs=[tmp_grove["repos_dir"]],
             workspace_dir=tmp_grove["workspace_dir"],
         )
         repo_path = tmp_grove["repos_dir"] / "svc"
@@ -404,7 +404,7 @@ class TestParallelExecution:
     def test_multi_repo_fetch_all_called(self, tmp_grove):
         """All repos are fetched in parallel during create."""
         cfg = Config(
-            repos_dir=tmp_grove["repos_dir"],
+            repo_dirs=[tmp_grove["repos_dir"]],
             workspace_dir=tmp_grove["workspace_dir"],
         )
         repos: dict[str, Path] = {}
@@ -617,7 +617,7 @@ class TestAddRepoToWorkspace:
     def test_success(self, tmp_grove, sample_workspace):
         state.add_workspace(sample_workspace)
         cfg = Config(
-            repos_dir=tmp_grove["repos_dir"],
+            repo_dirs=[tmp_grove["repos_dir"]],
             workspace_dir=tmp_grove["workspace_dir"],
         )
         new_repo = tmp_grove["repos_dir"] / "svc-api"
@@ -641,7 +641,7 @@ class TestAddRepoToWorkspace:
     def test_already_in_workspace_skip(self, tmp_grove, sample_workspace):
         state.add_workspace(sample_workspace)
         cfg = Config(
-            repos_dir=tmp_grove["repos_dir"],
+            repo_dirs=[tmp_grove["repos_dir"]],
             workspace_dir=tmp_grove["workspace_dir"],
         )
         existing = tmp_grove["repos_dir"] / "svc-auth"
@@ -653,7 +653,7 @@ class TestAddRepoToWorkspace:
     def test_branch_conflict(self, tmp_grove, sample_workspace):
         state.add_workspace(sample_workspace)
         cfg = Config(
-            repos_dir=tmp_grove["repos_dir"],
+            repo_dirs=[tmp_grove["repos_dir"]],
             workspace_dir=tmp_grove["workspace_dir"],
         )
         new_repo = tmp_grove["repos_dir"] / "svc-api"
@@ -666,7 +666,7 @@ class TestAddRepoToWorkspace:
     def test_branch_creation(self, tmp_grove, sample_workspace):
         state.add_workspace(sample_workspace)
         cfg = Config(
-            repos_dir=tmp_grove["repos_dir"],
+            repo_dirs=[tmp_grove["repos_dir"]],
             workspace_dir=tmp_grove["workspace_dir"],
         )
         new_repo = tmp_grove["repos_dir"] / "svc-api"
@@ -688,7 +688,7 @@ class TestAddRepoToWorkspace:
     def test_setup_hook_runs(self, tmp_grove, sample_workspace):
         state.add_workspace(sample_workspace)
         cfg = Config(
-            repos_dir=tmp_grove["repos_dir"],
+            repo_dirs=[tmp_grove["repos_dir"]],
             workspace_dir=tmp_grove["workspace_dir"],
         )
         new_repo = tmp_grove["repos_dir"] / "svc-api"
@@ -716,7 +716,7 @@ class TestAddRepoToWorkspace:
     def test_rollback_does_not_delete_workspace_dir(self, tmp_grove, sample_workspace):
         state.add_workspace(sample_workspace)
         cfg = Config(
-            repos_dir=tmp_grove["repos_dir"],
+            repo_dirs=[tmp_grove["repos_dir"]],
             workspace_dir=tmp_grove["workspace_dir"],
         )
         new_repo = tmp_grove["repos_dir"] / "svc-api"
@@ -835,7 +835,7 @@ class TestRenameWorkspace:
     def test_success(self, tmp_grove, sample_workspace):
         state.add_workspace(sample_workspace)
         cfg = Config(
-            repos_dir=tmp_grove["repos_dir"],
+            repo_dirs=[tmp_grove["repos_dir"]],
             workspace_dir=tmp_grove["workspace_dir"],
         )
         with patch("grove.workspace.git.worktree_repair"):
@@ -848,7 +848,7 @@ class TestRenameWorkspace:
 
     def test_not_found(self, tmp_grove):
         cfg = Config(
-            repos_dir=tmp_grove["repos_dir"],
+            repo_dirs=[tmp_grove["repos_dir"]],
             workspace_dir=tmp_grove["workspace_dir"],
         )
         assert workspace.rename_workspace("nope", "new", cfg) is False
@@ -864,7 +864,7 @@ class TestRenameWorkspace:
         (tmp_grove["workspace_dir"] / "other").mkdir()
         state.add_workspace(other)
         cfg = Config(
-            repos_dir=tmp_grove["repos_dir"],
+            repo_dirs=[tmp_grove["repos_dir"]],
             workspace_dir=tmp_grove["workspace_dir"],
         )
         assert workspace.rename_workspace("test-ws", "other", cfg) is False
@@ -872,7 +872,7 @@ class TestRenameWorkspace:
     def test_dir_exists(self, tmp_grove, sample_workspace):
         state.add_workspace(sample_workspace)
         cfg = Config(
-            repos_dir=tmp_grove["repos_dir"],
+            repo_dirs=[tmp_grove["repos_dir"]],
             workspace_dir=tmp_grove["workspace_dir"],
         )
         # Create target dir manually (not as workspace)
@@ -882,7 +882,7 @@ class TestRenameWorkspace:
     def test_paths_updated(self, tmp_grove, sample_workspace):
         state.add_workspace(sample_workspace)
         cfg = Config(
-            repos_dir=tmp_grove["repos_dir"],
+            repo_dirs=[tmp_grove["repos_dir"]],
             workspace_dir=tmp_grove["workspace_dir"],
         )
         with patch("grove.workspace.git.worktree_repair"):
@@ -895,7 +895,7 @@ class TestRenameWorkspace:
         """If directory rename fails, state reverts to original values."""
         state.add_workspace(sample_workspace)
         cfg = Config(
-            repos_dir=tmp_grove["repos_dir"],
+            repo_dirs=[tmp_grove["repos_dir"]],
             workspace_dir=tmp_grove["workspace_dir"],
         )
         with patch.object(Path, "rename", side_effect=OSError("permission denied")):
@@ -912,7 +912,7 @@ class TestRenameWorkspace:
         state.add_workspace(sample_workspace)
         original_created = sample_workspace.created_at
         cfg = Config(
-            repos_dir=tmp_grove["repos_dir"],
+            repo_dirs=[tmp_grove["repos_dir"]],
             workspace_dir=tmp_grove["workspace_dir"],
         )
         with patch("grove.workspace.git.worktree_repair"):
@@ -923,7 +923,7 @@ class TestRenameWorkspace:
     def test_worktree_repair_called(self, tmp_grove, sample_workspace):
         state.add_workspace(sample_workspace)
         cfg = Config(
-            repos_dir=tmp_grove["repos_dir"],
+            repo_dirs=[tmp_grove["repos_dir"]],
             workspace_dir=tmp_grove["workspace_dir"],
         )
         with patch("grove.workspace.git.worktree_repair") as mock_repair:
@@ -933,7 +933,7 @@ class TestRenameWorkspace:
     def test_repair_failure_does_not_abort(self, tmp_grove, sample_workspace):
         state.add_workspace(sample_workspace)
         cfg = Config(
-            repos_dir=tmp_grove["repos_dir"],
+            repo_dirs=[tmp_grove["repos_dir"]],
             workspace_dir=tmp_grove["workspace_dir"],
         )
         with patch("grove.workspace.git.worktree_repair", side_effect=GitError("broken")):
@@ -1051,7 +1051,7 @@ class TestDiagnoseWorkspaces:
         src.mkdir(parents=True, exist_ok=True)
 
         cfg = Config(
-            repos_dir=tmp_grove["repos_dir"],
+            repo_dirs=[tmp_grove["repos_dir"]],
             workspace_dir=tmp_grove["workspace_dir"],
         )
         with patch(
@@ -1070,7 +1070,7 @@ class TestDiagnoseWorkspaces:
         state.add_workspace(ws)
 
         cfg = Config(
-            repos_dir=tmp_grove["repos_dir"],
+            repo_dirs=[tmp_grove["repos_dir"]],
             workspace_dir=tmp_grove["workspace_dir"],
         )
         issues = workspace.diagnose_workspaces(cfg)
@@ -1098,7 +1098,7 @@ class TestDiagnoseWorkspaces:
         state.add_workspace(ws)
 
         cfg = Config(
-            repos_dir=tmp_grove["repos_dir"],
+            repo_dirs=[tmp_grove["repos_dir"]],
             workspace_dir=tmp_grove["workspace_dir"],
         )
         issues = workspace.diagnose_workspaces(cfg)
@@ -1126,7 +1126,7 @@ class TestDiagnoseWorkspaces:
         state.add_workspace(ws)
 
         cfg = Config(
-            repos_dir=tmp_grove["repos_dir"],
+            repo_dirs=[tmp_grove["repos_dir"]],
             workspace_dir=tmp_grove["workspace_dir"],
         )
         issues = workspace.diagnose_workspaces(cfg)
@@ -1156,7 +1156,7 @@ class TestDiagnoseWorkspaces:
         state.add_workspace(ws)
 
         cfg = Config(
-            repos_dir=tmp_grove["repos_dir"],
+            repo_dirs=[tmp_grove["repos_dir"]],
             workspace_dir=tmp_grove["workspace_dir"],
         )
         # Return empty worktree list — not registered
@@ -1188,7 +1188,7 @@ class TestDiagnoseWorkspaces:
         state.add_workspace(ws)
 
         cfg = Config(
-            repos_dir=tmp_grove["repos_dir"],
+            repo_dirs=[tmp_grove["repos_dir"]],
             workspace_dir=tmp_grove["workspace_dir"],
         )
         with patch("grove.workspace.git.worktree_list", side_effect=GitError("broken")):

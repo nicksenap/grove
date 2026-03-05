@@ -72,7 +72,7 @@ def complete_repo_name(incomplete: str) -> list[str]:
         cfg = config.load_config()
         if cfg is None:
             return []
-        repos = discover.find_repos(cfg.repos_dir)
+        repos = discover.find_all_repos(cfg.repo_dirs)
         return [name for name in repos if name.startswith(incomplete)]
     except Exception:
         return []
@@ -112,7 +112,7 @@ def _pick_one(prompt_text: str, choices: list[str]) -> str:
 
 
 def _pick_one_idx(prompt_text: str, choices: list[str]) -> int:
-    """Arrow-key single selection, returns the chosen index."""
+    """Arrow-key single selection with type-to-search, returns the chosen index."""
     if not sys.stdin.isatty():
         error("Interactive selection requires a terminal. Provide explicit flags instead.")
         raise typer.Exit(1)
@@ -120,11 +120,10 @@ def _pick_one_idx(prompt_text: str, choices: list[str]) -> int:
 
     menu = TerminalMenu(
         choices,
-        title=f"\n{prompt_text}",
+        title=f"\n{prompt_text}\n  ↑/↓ navigate · type to search · enter confirm",
         menu_cursor="❯ ",
         menu_cursor_style=("fg_cyan", "bold"),
         menu_highlight_style=("fg_cyan", "bold"),
-        search_key=None,
         search_highlight_style=("fg_yellow", "bold"),
     )
     idx = menu.show()
@@ -150,7 +149,6 @@ def _pick_many(prompt_text: str, choices: list[str]) -> list[str]:
         menu_cursor="❯ ",
         menu_cursor_style=("fg_cyan", "bold"),
         menu_highlight_style=("fg_cyan", "bold"),
-        search_key=None,
         search_highlight_style=("fg_yellow", "bold"),
     )
     result = menu.show()
@@ -171,28 +169,133 @@ def _pick_many(prompt_text: str, choices: list[str]) -> list[str]:
 
 @app.command()
 def init(
-    repos_dir: str = typer.Argument(help="Directory containing your git repos"),
+    dirs: list[str] | None = typer.Argument(  # noqa: B008
+        None, help="Directories containing your git repos (optional, can add later)"
+    ),
 ) -> None:
-    """Initialize Grove with a repos directory."""
-    repos_path = Path(repos_dir).expanduser().resolve()
+    """Initialize Grove, optionally with repo directories."""
+    repo_dirs: list[Path] = []
+    if dirs:
+        for d in dirs:
+            p = Path(d).expanduser().resolve()
+            if not p.is_dir():
+                error(f"Directory does not exist: {p}")
+                raise typer.Exit(1)
+            repo_dirs.append(p)
 
-    if not repos_path.is_dir():
-        error(f"Directory does not exist: {repos_path}")
+    # Merge with existing config if re-running init
+    existing = config.load_config()
+    if existing:
+        # Add new dirs to existing, avoiding duplicates
+        existing_set = {p.resolve() for p in existing.repo_dirs}
+        for p in repo_dirs:
+            if p.resolve() not in existing_set:
+                existing.repo_dirs.append(p)
+        config.save_config(existing)
+        cfg = existing
+    else:
+        cfg = config.Config(
+            repo_dirs=repo_dirs,
+            workspace_dir=config.DEFAULT_WORKSPACE_DIR,
+        )
+        config.save_config(cfg)
+        config.DEFAULT_WORKSPACE_DIR.mkdir(parents=True, exist_ok=True)
+
+    success("Initialized Grove")
+    if cfg.repo_dirs:
+        repos = discover.find_all_repos(cfg.repo_dirs)
+        dirs_label = ", ".join(str(d) for d in cfg.repo_dirs)
+        info(f"Repo dirs: {dirs_label}")
+        if repos:
+            info(f"Found {len(repos)} repos: {', '.join(repos.keys())}")
+        else:
+            info("No git repos found in configured directories yet")
+    else:
+        info("No repo dirs configured. Add one with: gw add-dir <path>")
+
+
+@app.command("add-dir")
+def add_dir(
+    path: str = typer.Argument(help="Directory containing git repos"),
+) -> None:
+    """Add a repo source directory."""
+    cfg = config.require_config()
+    dir_path = Path(path).expanduser().resolve()
+
+    if not dir_path.is_dir():
+        error(f"Directory does not exist: {dir_path}")
         raise typer.Exit(1)
 
-    repos = discover.find_repos(repos_path)
-    cfg = config.Config(
-        repos_dir=repos_path,
-        workspace_dir=config.DEFAULT_WORKSPACE_DIR,
-    )
-    config.save_config(cfg)
-    config.DEFAULT_WORKSPACE_DIR.mkdir(parents=True, exist_ok=True)
+    if dir_path in {p.resolve() for p in cfg.repo_dirs}:
+        info(f"Directory already configured: {dir_path}")
+        return
 
-    success(f"Initialized Grove with repos dir: {repos_path}")
+    cfg.repo_dirs.append(dir_path)
+    config.save_config(cfg)
+
+    repos = discover.find_repos(dir_path)
+    success(f"Added repo dir: {dir_path}")
     if repos:
         info(f"Found {len(repos)} repos: {', '.join(repos.keys())}")
     else:
-        info("No git repos found in that directory yet")
+        info("No git repos found in that directory")
+
+
+@app.command("remove-dir")
+def remove_dir(
+    path: str | None = typer.Argument(None, help="Directory to remove"),
+) -> None:
+    """Remove a repo source directory."""
+    cfg = config.require_config()
+
+    if not cfg.repo_dirs:
+        error("No repo dirs configured")
+        raise typer.Exit(1)
+
+    if path is None:
+        path = _pick_one("Select directory to remove", [str(d) for d in cfg.repo_dirs])
+
+    dir_path = Path(path).expanduser().resolve()
+    resolved_dirs = {p.resolve(): p for p in cfg.repo_dirs}
+    if dir_path not in resolved_dirs:
+        error(f"Directory not configured: {dir_path}")
+        raise typer.Exit(1)
+
+    cfg.repo_dirs = [p for p in cfg.repo_dirs if p.resolve() != dir_path]
+    config.save_config(cfg)
+    success(f"Removed repo dir: {dir_path}")
+
+
+@app.command()
+def explore() -> None:
+    """Scan configured directories for git repos (deep search)."""
+    cfg = config.require_config()
+
+    if not cfg.repo_dirs:
+        error("No repo dirs configured. Run: gw add-dir <path>")
+        raise typer.Exit(1)
+
+    known = discover.find_all_repos(cfg.repo_dirs)
+    grouped = discover.explore_repos(cfg.repo_dirs)
+
+    if not grouped:
+        info("No git repos found in configured directories")
+        return
+
+    total = 0
+    nested_count = 0
+    for source_dir, repos in grouped.items():
+        console.print(f"\n[bold]{source_dir}[/]")
+        for name, repo_path in sorted(repos.items()):
+            total += 1
+            if name not in known:
+                nested_count += 1
+                console.print(f"  [green]★[/] {name}  [dim]{repo_path}[/]  [green](nested)[/]")
+            else:
+                console.print(f"    {name}  [dim]{repo_path}[/]")
+
+    console.print()
+    info(f"{total} repos found" + (f" ({nested_count} nested)" if nested_count else ""))
 
 
 @app.command()
@@ -222,7 +325,7 @@ def create(
 ) -> None:
     """Create a new workspace with worktrees from selected repos."""
     cfg = config.require_config()
-    available = discover.find_repos(cfg.repos_dir)
+    available = discover.find_all_repos(cfg.repo_dirs)
 
     # --- Interactive fallback when branch is missing ---
     if branch is None:
@@ -252,7 +355,7 @@ def create(
     else:
         # No flags at all — interactive picker
         if not available:
-            error("No repos found. Run: gw init <repos-dir>")
+            error("No repos found. Run: gw add-dir <path>")
             raise typer.Exit(1)
 
         # Offer presets when available
@@ -290,7 +393,7 @@ def create(
     selected: dict[str, Path] = {}
     for rn in repo_names:
         if rn not in available:
-            error(f"Repo [bold]{rn}[/] not found in {cfg.repos_dir}")
+            error(f"Repo [bold]{rn}[/] not found")
             info(f"Available: {', '.join(available.keys())}")
             raise typer.Exit(1)
         selected[rn] = available[rn]
@@ -304,8 +407,8 @@ def create(
         raise typer.Exit(1)
 
     # --- Copy CLAUDE.md from repos dir if present ---
-    claude_md = cfg.repos_dir / "CLAUDE.md"
-    if claude_md.is_file():
+    claude_md = next((d / "CLAUDE.md" for d in cfg.repo_dirs if (d / "CLAUDE.md").is_file()), None)
+    if claude_md is not None:
         should_copy = copy_claude_md
         if should_copy is None:
             should_copy = typer.confirm("Copy CLAUDE.md into workspace?", default=True)
@@ -457,7 +560,7 @@ def add_repo(
 ) -> None:
     """Add repos to an existing workspace."""
     cfg = config.require_config()
-    available = discover.find_repos(cfg.repos_dir)
+    available = discover.find_all_repos(cfg.repo_dirs)
 
     # Resolve workspace
     if name is None:
@@ -483,7 +586,7 @@ def add_repo(
         repo_names = [r.strip() for r in repos.split(",")]
         for rn in repo_names:
             if rn not in available:
-                error(f"Repo [bold]{rn}[/] not found in {cfg.repos_dir}")
+                error(f"Repo [bold]{rn}[/] not found")
                 raise typer.Exit(1)
     else:
         repo_names = _pick_many("Select repos to add", sorted(addable.keys()))
@@ -764,7 +867,13 @@ def go(
 
         if picked == _BACK_TO_REPOS:
             cfg = config.require_config()
-            print(cfg.repos_dir)
+            if len(cfg.repo_dirs) == 1:
+                print(cfg.repo_dirs[0])
+            elif cfg.repo_dirs:
+                picked_dir = _pick_one("Select repo directory", [str(d) for d in cfg.repo_dirs])
+                print(picked_dir)
+            else:
+                error("No repo dirs configured. Run: gw add-dir <path>")
             return
 
         # Strip the "(current)" suffix if present
@@ -800,10 +909,10 @@ def preset_add(
 ) -> None:
     """Create or update a named preset."""
     cfg = config.require_config()
-    available = discover.find_repos(cfg.repos_dir)
+    available = discover.find_all_repos(cfg.repo_dirs)
 
     if not available:
-        error("No repos found. Run: gw init <repos-dir>")
+        error("No repos found. Run: gw add-dir <path>")
         raise typer.Exit(1)
 
     # Interactive: prompt for name
@@ -820,7 +929,7 @@ def preset_add(
         repo_names = [r.strip() for r in repos.split(",")]
         for rn in repo_names:
             if rn not in available:
-                error(f"Repo [bold]{rn}[/] not found in {cfg.repos_dir}")
+                error(f"Repo [bold]{rn}[/] not found")
                 info(f"Available: {', '.join(available.keys())}")
                 raise typer.Exit(1)
     else:

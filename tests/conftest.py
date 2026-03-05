@@ -33,7 +33,7 @@ def tmp_grove(tmp_path: Path):
     state_path = grove_dir / "state.json"
 
     # Write minimal config
-    config_path.write_text(f'repos_dir = "{repos_dir}"\nworkspace_dir = "{workspace_dir}"\n')
+    config_path.write_text(f'repo_dirs = ["{repos_dir}"]\nworkspace_dir = "{workspace_dir}"\n')
     state_path.write_text("[]")
 
     # Patch Grove constants to use tmp dirs
@@ -71,7 +71,7 @@ def fake_repos(tmp_grove: dict) -> dict[str, Path]:
 def sample_config(tmp_grove: dict) -> Config:
     """Return a Config pointing at the tmp dirs."""
     return Config(
-        repos_dir=tmp_grove["repos_dir"],
+        repo_dirs=[tmp_grove["repos_dir"]],
         workspace_dir=tmp_grove["workspace_dir"],
     )
 
