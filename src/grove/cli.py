@@ -428,8 +428,21 @@ def create(
 
 
 @app.command("list")
-def list_workspaces() -> None:
+def list_workspaces(
+    show_status: bool = typer.Option(False, "--status", "-s", help="Include git status summary"),
+) -> None:
     """List all workspaces."""
+    if show_status:
+        summaries = workspace.all_workspaces_summary()
+        if not summaries:
+            info("No workspaces. Create one with: gw create <name> -r repo1,repo2 -b branch")
+            return
+        table = make_table("Name", "Branch", "Repos", "Status", "Path")
+        for s in summaries:
+            table.add_row(s["name"], s["branch"], s["repos"], s["status"], s["path"])
+        console.print(table)
+        return
+
     workspaces = state.load_workspaces()
     if not workspaces:
         info("No workspaces. Create one with: gw create <name> -r repo1,repo2 -b branch")
@@ -716,6 +729,7 @@ def status(
 ) -> None:
     """Show git status across a workspace's repos."""
     if show_all:
+        warning("--all is deprecated, use: gw list -s")
         if name is not None:
             error("Cannot combine workspace name with --all")
             raise typer.Exit(1)

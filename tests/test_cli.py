@@ -316,6 +316,31 @@ class TestList:
         assert result.exit_code == 0
         assert "test-ws" in result.output
 
+    def test_status_flag(self, tmp_grove, sample_workspace):
+        from grove import state
+
+        state.add_workspace(sample_workspace)
+        with patch("grove.cli.workspace.all_workspaces_summary") as mock_summary:
+            mock_summary.return_value = [
+                {
+                    "name": "test-ws",
+                    "branch": "feat/test",
+                    "repos": "1",
+                    "status": "1 clean",
+                    "path": str(sample_workspace.path),
+                },
+            ]
+            result = runner.invoke(app, ["list", "-s"])
+        assert result.exit_code == 0
+        assert "test-ws" in result.output
+        assert "1 clean" in result.output
+
+    def test_status_flag_empty(self, tmp_grove):
+        with patch("grove.cli.workspace.all_workspaces_summary", return_value=[]):
+            result = runner.invoke(app, ["list", "--status"])
+        assert result.exit_code == 0
+        assert "No workspaces" in result.output
+
 
 class TestDelete:
     def test_success(self, tmp_grove, sample_workspace):
@@ -626,7 +651,9 @@ class TestPreset:
 
 
 class TestStatusAll:
-    def test_flag_works(self, tmp_grove, sample_workspace):
+    """status --all is deprecated in favor of list -s but still works."""
+
+    def test_flag_works_with_deprecation(self, tmp_grove, sample_workspace):
         from grove import state
 
         state.add_workspace(sample_workspace)
@@ -643,7 +670,7 @@ class TestStatusAll:
             result = runner.invoke(app, ["status", "--all"])
         assert result.exit_code == 0
         assert "test-ws" in result.output
-        assert "1 clean" in result.output
+        assert "deprecated" in result.output
 
     def test_mutual_exclusivity(self, tmp_grove, sample_workspace):
         from grove import state

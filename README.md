@@ -45,8 +45,8 @@ gw explore                                             # deep-scan for repos (2â
 # Day-to-day
 gw create my-feature -r svc-a,svc-b -b feat/login     # create workspace
 gw list                                                # list workspaces
+gw list -s                                             # list with git status summary
 gw status my-feature                                   # git status across repos
-gw status --all                                        # overview of all workspaces
 gw sync my-feature                                     # rebase all repos onto base branch
 gw go my-feature                                       # cd into workspace
 gw run my-feature                                      # run dev processes (TUI with per-repo logs)
