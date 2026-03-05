@@ -19,6 +19,10 @@ Implemented in multi-dir init PR:
 - Discovery stays live — `create`/`add-repo` always scan fresh
 - Backward compat: old config with `repos_dir` (singular) treated as single-element list
 
+## Remove `status --all`
+
+Deprecated in favor of `gw list -s`. Remove the `--all` flag from `gw status` after a few releases.
+
 ## `gw run` TUI enhancements
 
 - PTY allocation for subprocess output — some programs buffer stdout when not connected to a TTY (workaround: `stdbuf -oL` or tool-specific flags in `.grove.toml`)
