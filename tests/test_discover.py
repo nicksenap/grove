@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 from pathlib import Path
+from unittest.mock import patch
 
-from grove.discover import explore_repos, find_all_repos, find_repos
+from grove.discover import discover_repos, explore_repos, find_all_repos, find_repos
 
 
 def _make_repo(path: Path) -> None:
@@ -77,3 +78,70 @@ class TestExploreRepos:
         assert dir2 in result
         assert "repo-a" in result[dir1]
         assert "repo-b" in result[dir2]
+
+
+class TestDiscoverRepos:
+    """Tests for discover_repos — deep scan with remote identity."""
+
+    def _make_repo_with_remote(self, path: Path, url: str) -> None:
+        _make_repo(path)
+        # We mock remote_url, so just need the .git dir to exist
+
+    def test_uses_remote_for_display_name(self, tmp_path: Path):
+        _make_repo(tmp_path / "my-repo")
+        with patch("grove.discover.remote_url", return_value="git@github.com:org/my-repo.git"):
+            result = discover_repos([tmp_path])
+        assert len(result) == 1
+        assert result[0].display_name == "org/my-repo"
+        assert result[0].name == "my-repo"
+
+    def test_falls_back_to_folder_name(self, tmp_path: Path):
+        _make_repo(tmp_path / "local-only")
+        with patch("grove.discover.remote_url", return_value=None):
+            result = discover_repos([tmp_path])
+        assert len(result) == 1
+        assert result[0].display_name == "local-only"
+
+    def test_dedup_by_remote_url(self, tmp_path: Path):
+        dir1 = tmp_path / "dir1"
+        dir2 = tmp_path / "dir2"
+        _make_repo(dir1 / "repo-a")
+        _make_repo(dir2 / "repo-a-fork")
+        url = "git@github.com:org/repo-a.git"
+        with patch("grove.discover.remote_url", return_value=url):
+            result = discover_repos([dir1, dir2])
+        # Same remote → deduped to one entry
+        assert len(result) == 1
+
+    def test_different_remotes_not_deduped(self, tmp_path: Path):
+        dir1 = tmp_path / "dir1"
+        dir2 = tmp_path / "dir2"
+        _make_repo(dir1 / "repo")
+        _make_repo(dir2 / "repo")
+
+        def mock_remote(path, remote="origin"):
+            if "dir1" in str(path):
+                return "git@github.com:org-a/repo.git"
+            return "git@github.com:org-b/repo.git"
+
+        with patch("grove.discover.remote_url", side_effect=mock_remote):
+            result = discover_repos([dir1, dir2])
+        assert len(result) == 2
+        names = {r.display_name for r in result}
+        assert names == {"org-a/repo", "org-b/repo"}
+
+    def test_prefers_direct_child_over_nested(self, tmp_path: Path):
+        _make_repo(tmp_path / "repo-a")
+        _make_repo(tmp_path / "nested" / "repo-a")
+        url = "git@github.com:org/repo-a.git"
+        with patch("grove.discover.remote_url", return_value=url):
+            result = discover_repos([tmp_path])
+        assert len(result) == 1
+        assert result[0].path == tmp_path / "repo-a"
+
+    def test_finds_nested_repos(self, tmp_path: Path):
+        _make_repo(tmp_path / "sub" / "deep-repo")
+        with patch("grove.discover.remote_url", return_value="git@github.com:org/deep.git"):
+            result = discover_repos([tmp_path])
+        assert len(result) == 1
+        assert result[0].display_name == "org/deep"

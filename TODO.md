@@ -23,6 +23,14 @@ Implemented in multi-dir init PR:
 
 Deprecated in favor of `gw list -s`. Remove the `--all` flag from `gw status` after a few releases.
 
+## ~~Smarter repo discovery — identity by git remote~~ (done)
+
+Implemented: repos are now identified by `origin` remote URL instead of folder name.
+- Interactive pickers (`create`, `add-repo`, `explore`) do deep scans and show `org/repo` from remote
+- Same-named folders with different remotes are distinguished
+- Same remote across multiple paths is deduped (direct children preferred)
+- Non-interactive flags (`-r`) still use folder names for backward compat
+
 ## `gw run` TUI enhancements
 
 - PTY allocation for subprocess output — some programs buffer stdout when not connected to a TTY (workaround: `stdbuf -oL` or tool-specific flags in `.grove.toml`)
