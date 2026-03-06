@@ -208,6 +208,41 @@ class TestPrStatus:
             assert git.pr_status(Path("/ws")) is None
 
 
+class TestRemoteUrl:
+    def test_returns_url(self, mock_run):
+        mock_run.return_value = MagicMock(stdout="git@github.com:org/repo.git\n")
+        assert git.remote_url(Path("/repo")) == "git@github.com:org/repo.git"
+
+    def test_returns_none_on_error(self, mock_run):
+        mock_run.side_effect = GitError("no remote")
+        assert git.remote_url(Path("/repo")) is None
+
+    def test_custom_remote(self, mock_run):
+        mock_run.return_value = MagicMock(stdout="https://github.com/org/repo.git\n")
+        git.remote_url(Path("/repo"), remote="upstream")
+        mock_run.assert_called_once_with(["remote", "get-url", "upstream"], cwd=Path("/repo"))
+
+
+class TestParseRemoteName:
+    def test_ssh_format(self):
+        assert git.parse_remote_name("git@github.com:org/repo.git") == "org/repo"
+
+    def test_ssh_no_git_suffix(self):
+        assert git.parse_remote_name("git@github.com:org/repo") == "org/repo"
+
+    def test_https_format(self):
+        assert git.parse_remote_name("https://github.com/org/repo.git") == "org/repo"
+
+    def test_https_no_git_suffix(self):
+        assert git.parse_remote_name("https://github.com/org/repo") == "org/repo"
+
+    def test_nested_path(self):
+        assert git.parse_remote_name("git@gitlab.com:group/sub/repo.git") == "group/sub/repo"
+
+    def test_invalid_url(self):
+        assert git.parse_remote_name("not-a-url") is None
+
+
 class TestRunIntegration:
     """Test the actual _run function with subprocess mocking."""
 

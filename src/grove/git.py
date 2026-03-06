@@ -25,6 +25,34 @@ def _run(args: list[str], cwd: Path | None = None) -> subprocess.CompletedProces
         raise GitError(e.stderr.strip() or e.stdout.strip()) from e
 
 
+def remote_url(path: Path, remote: str = "origin") -> str | None:
+    """Return the fetch URL for *remote*, or ``None`` if unavailable."""
+    try:
+        result = _run(["remote", "get-url", remote], cwd=path)
+        return result.stdout.strip() or None
+    except GitError:
+        return None
+
+
+def parse_remote_name(url: str) -> str | None:
+    """Extract ``owner/repo`` from a git remote URL.
+
+    Handles HTTPS (``https://github.com/owner/repo.git``)
+    and SSH (``git@github.com:owner/repo.git``) formats.
+    """
+    import re
+
+    # SSH: git@host:owner/repo.git
+    m = re.match(r"^[\w.-]+@[\w.-]+:(.*?)(?:\.git)?$", url)
+    if m:
+        return m.group(1)
+    # HTTPS: https://host/owner/repo.git
+    m = re.match(r"^https?://[^/]+/(.*?)(?:\.git)?$", url)
+    if m:
+        return m.group(1)
+    return None
+
+
 def is_git_repo(path: Path) -> bool:
     """Check if a directory is a git repository."""
     try:

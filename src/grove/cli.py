@@ -106,6 +106,18 @@ def _sanitize_name(branch: str) -> str:
     return name
 
 
+def _validate_repo_names(repo_names: list[str], available: dict[str, Path]) -> dict[str, Path]:
+    """Validate repo names against available repos, exit on unknown names."""
+    selected: dict[str, Path] = {}
+    for rn in repo_names:
+        if rn not in available:
+            error(f"Repo [bold]{rn}[/] not found")
+            info(f"Available: {', '.join(available.keys())}")
+            raise typer.Exit(1)
+        selected[rn] = available[rn]
+    return selected
+
+
 def _pick_one(prompt_text: str, choices: list[str]) -> str:
     """Arrow-key single selection."""
     return choices[_pick_one_idx(prompt_text, choices)]
@@ -277,27 +289,44 @@ def explore() -> None:
         error("No repo dirs configured. Run: gw add-dir <path>")
         raise typer.Exit(1)
 
-    known = discover.find_all_repos(cfg.repo_dirs)
-    grouped = discover.explore_repos(cfg.repo_dirs)
+    discovered = discover.discover_repos(cfg.repo_dirs)
 
-    if not grouped:
+    if not discovered:
         info("No git repos found in configured directories")
         return
 
-    total = 0
+    # Group by parent dir for display
+    from collections import defaultdict
+
+    by_dir: dict[Path, list[discover.RepoInfo]] = defaultdict(list)
+    for r in discovered:
+        # Find which repo_dir this belongs to
+        parent = r.path.parent
+        for d in cfg.repo_dirs:
+            resolved_d = d.resolve()
+            try:
+                r.path.resolve().relative_to(resolved_d)
+                parent = d
+                break
+            except ValueError:
+                continue
+        by_dir[parent].append(r)
+
     nested_count = 0
-    for source_dir, repos in grouped.items():
+    for source_dir in sorted(by_dir):
         console.print(f"\n[bold]{source_dir}[/]")
-        for name, repo_path in sorted(repos.items()):
-            total += 1
-            if name not in known:
+        for r in sorted(by_dir[source_dir], key=lambda x: x.display_name):
+            is_nested = r.path.parent.resolve() != source_dir.resolve()
+            if is_nested:
                 nested_count += 1
-                console.print(f"  [green]★[/] {name}  [dim]{repo_path}[/]  [green](nested)[/]")
+                console.print(
+                    f"  [green]★[/] {r.display_name}  [dim]{r.path}[/]  [green](nested)[/]"
+                )
             else:
-                console.print(f"    {name}  [dim]{repo_path}[/]")
+                console.print(f"    {r.display_name}  [dim]{r.path}[/]")
 
     console.print()
-    info(f"{total} repos found" + (f" ({nested_count} nested)" if nested_count else ""))
+    info(f"{len(discovered)} repos found" + (f" ({nested_count} nested)" if nested_count else ""))
 
 
 @app.command()
@@ -327,7 +356,6 @@ def create(
 ) -> None:
     """Create a new workspace with worktrees from selected repos."""
     cfg = config.require_config()
-    available = discover.find_all_repos(cfg.repo_dirs)
 
     # --- Interactive fallback when branch is missing ---
     if branch is None:
@@ -341,9 +369,10 @@ def create(
             error("Branch name is required")
             raise typer.Exit(1)
 
-    # --- Resolve repos: -r > -p > --all / default all ---
+    # --- Resolve repos: -r > -p > --all / deep-scan picker ---
+    selected: dict[str, Path] | None = None
+
     if repos is not None:
-        # Explicit repo list
         repo_names = [r.strip() for r in repos.split(",")]
     elif preset is not None:
         if preset not in cfg.presets:
@@ -353,15 +382,21 @@ def create(
             raise typer.Exit(1)
         repo_names = cfg.presets[preset]
     elif all_repos:
+        available = discover.find_all_repos(cfg.repo_dirs)
         repo_names = list(available.keys())
     else:
-        # No flags at all — interactive picker
-        if not available:
+        # Interactive picker — deep scan with remote identity
+        discovered = discover.discover_repos(cfg.repo_dirs)
+        if not discovered:
             error("No repos found. Run: gw add-dir <path>")
             raise typer.Exit(1)
 
+        # Build picker: display_name -> RepoInfo
+        repo_by_display = {r.display_name: r for r in discovered}
+
         # Offer presets when available
         if cfg.presets:
+            available = discover.find_all_repos(cfg.repo_dirs)
             preset_names = list(cfg.presets.keys())
             preset_choices = [
                 f"{name}  ({', '.join(repos_list)})" for name, repos_list in cfg.presets.items()
@@ -371,34 +406,34 @@ def create(
                 [*preset_choices, "Pick manually…"],
             )
             if source_idx == len(preset_choices):
-                repo_names = _pick_many("Select repos", sorted(available.keys()))
+                picked = _pick_many("Select repos", sorted(repo_by_display.keys()))
+                selected = {repo_by_display[p].name: repo_by_display[p].path for p in picked}
             else:
                 repo_names = cfg.presets[preset_names[source_idx]]
+                selected = _validate_repo_names(repo_names, available)
         else:
-            repo_names = _pick_many("Select repos", sorted(available.keys()))
+            picked = _pick_many("Select repos", sorted(repo_by_display.keys()))
+            selected = {repo_by_display[p].name: repo_by_display[p].path for p in picked}
 
         # Offer to save as preset if none exist
         if (
             not cfg.presets
-            and len(repo_names) < len(available)
+            and selected
+            and len(selected) < len(repo_by_display)
             and typer.confirm("Save this selection as a preset?", default=False)
         ):
             from rich.prompt import Prompt
 
             preset_name = Prompt.ask("[bold]Preset name[/]", console=console)
             if preset_name:
-                cfg.presets[preset_name] = repo_names
+                cfg.presets[preset_name] = list(selected.keys())
                 config.save_config(cfg)
                 success(f"Preset [bold]{preset_name}[/] saved")
 
-    # Validate selected repos
-    selected: dict[str, Path] = {}
-    for rn in repo_names:
-        if rn not in available:
-            error(f"Repo [bold]{rn}[/] not found")
-            info(f"Available: {', '.join(available.keys())}")
-            raise typer.Exit(1)
-        selected[rn] = available[rn]
+    # Validate selected repos (non-interactive paths use folder names)
+    if selected is None:
+        available = discover.find_all_repos(cfg.repo_dirs)
+        selected = _validate_repo_names(repo_names, available)
 
     # --- Resolve name: explicit > auto-derive from branch ---
     if name is None:
@@ -575,7 +610,6 @@ def add_repo(
 ) -> None:
     """Add repos to an existing workspace."""
     cfg = config.require_config()
-    available = discover.find_all_repos(cfg.repo_dirs)
 
     # Resolve workspace
     if name is None:
@@ -591,22 +625,24 @@ def add_repo(
         raise typer.Exit(1)
 
     existing_names = {r.repo_name for r in ws.repos}
-    addable = {n: p for n, p in available.items() if n not in existing_names}
-
-    if not addable:
-        info("All repos are already in this workspace")
-        return
 
     if repos is not None:
+        available = discover.find_all_repos(cfg.repo_dirs)
         repo_names = [r.strip() for r in repos.split(",")]
         for rn in repo_names:
             if rn not in available:
                 error(f"Repo [bold]{rn}[/] not found")
                 raise typer.Exit(1)
+        selected = {rn: available[rn] for rn in repo_names}
     else:
-        repo_names = _pick_many("Select repos to add", sorted(addable.keys()))
-
-    selected = {rn: available[rn] for rn in repo_names}
+        # Interactive — deep scan with remote identity
+        discovered = discover.discover_repos(cfg.repo_dirs)
+        addable = {r.display_name: r for r in discovered if r.name not in existing_names}
+        if not addable:
+            info("All repos are already in this workspace")
+            return
+        picked = _pick_many("Select repos to add", sorted(addable.keys()))
+        selected = {addable[p].name: addable[p].path for p in picked}
     # Filter out already-present repos before calling workspace function
     actually_new = {rn: p for rn, p in selected.items() if rn not in existing_names}
     if not actually_new:
