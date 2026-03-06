@@ -1,18 +1,14 @@
-## Hotfix
+## What's New
 
-### Fix type-to-search in interactive menus
+### Smarter repo discovery
 
-Fixed a bug where menus required pressing `/` to enter search mode instead of filtering directly as you type.
+Repos are now identified by their git remote URL instead of folder name. The interactive picker shows `org/repo-name` derived from the remote, so same-named repos from different orgs are properly distinguished.
 
-### `gw list -s` flag
+Deep scanning is now the default in interactive mode — nested repos that were previously invisible to `gw create` are now available in the picker.
 
-Show a status summary alongside your workspaces:
+Repos with the same remote URL are automatically deduped (direct children preferred over nested copies).
 
-```bash
-gw list -s
-```
-
-`status --all` is now deprecated in favor of `list -s`.
+Non-interactive flags (`-r repo-name`) still use folder names for backward compatibility.
 
 ## Upgrading
 
