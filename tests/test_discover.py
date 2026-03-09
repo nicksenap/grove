@@ -2,10 +2,17 @@
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 from unittest.mock import patch
 
-from grove.discover import discover_repos, explore_repos, find_all_repos, find_repos
+from grove.discover import (
+    _batch_resolve_remotes,
+    discover_repos,
+    explore_repos,
+    find_all_repos,
+    find_repos,
+)
 
 
 def _make_repo(path: Path) -> None:
@@ -145,3 +152,103 @@ class TestDiscoverRepos:
             result = discover_repos([tmp_path])
         assert len(result) == 1
         assert result[0].display_name == "org/deep"
+
+
+class TestDiscoveryPerformance:
+    """Stress tests verifying parallel + cached discovery stays fast."""
+
+    REPO_COUNT = 200
+
+    def _make_many_repos(self, tmp_path: Path) -> Path:
+        """Create REPO_COUNT fake repos under tmp_path."""
+        for i in range(self.REPO_COUNT):
+            repo = tmp_path / f"repo-{i:03d}"
+            _make_repo(repo)
+            # Write a .git/config so the cache mtime key works
+            (repo / ".git" / "config").write_text(f"[remote]\nurl = fake-{i}\n")
+        return tmp_path
+
+    def test_parallel_discovery_faster_than_sequential(self, tmp_path: Path):
+        """With many repos, parallel batch should be significantly faster
+        than sequential subprocess calls."""
+        base = self._make_many_repos(tmp_path)
+
+        # Simulate a slow remote_url (20ms per call — realistic for git subprocess)
+        call_count = 0
+
+        def slow_remote(path, remote="origin"):
+            nonlocal call_count
+            call_count += 1
+            time.sleep(0.02)
+            return f"git@github.com:org/{path.name}.git"
+
+        with patch("grove.discover.remote_url", side_effect=slow_remote):
+            start = time.monotonic()
+            result = discover_repos([base])
+            elapsed = time.monotonic() - start
+
+        assert len(result) == self.REPO_COUNT
+        # Sequential would take 200 * 20ms = 4s minimum.
+        # Parallel with 16 threads should finish in well under 2s.
+        assert elapsed < 2.0, (
+            f"discover_repos took {elapsed:.1f}s for {self.REPO_COUNT} repos "
+            f"(expected < 2s with parallelism)"
+        )
+
+    def test_cached_discovery_skips_subprocesses(self, tmp_path: Path):
+        """Second call should use cache and make zero subprocess calls."""
+        base = self._make_many_repos(tmp_path)
+
+        def fast_remote(path, remote="origin"):
+            return f"git@github.com:org/{path.name}.git"
+
+        # First call populates cache
+        cache_dir = tmp_path / "cache"
+        cache_file = cache_dir / "r.json"
+        with (
+            patch("grove.discover._CACHE_DIR", cache_dir),
+            patch("grove.discover._REMOTE_CACHE_FILE", cache_file),
+            patch("grove.discover.remote_url", side_effect=fast_remote),
+        ):
+            discover_repos([base])
+
+        # Second call — remote_url should NOT be called
+        with (
+            patch("grove.discover._CACHE_DIR", cache_dir),
+            patch("grove.discover._REMOTE_CACHE_FILE", cache_file),
+            patch(
+                "grove.discover.remote_url",
+                side_effect=AssertionError("cache miss"),
+            ),
+        ):
+            result = discover_repos([base])
+
+        assert len(result) == self.REPO_COUNT
+
+    def test_batch_resolve_uses_threads(self, tmp_path: Path):
+        """_batch_resolve_remotes should run git calls in parallel."""
+        base = self._make_many_repos(tmp_path)
+        repo_paths = sorted(base.iterdir())
+
+        concurrent_peak = 0
+        active = 0
+
+        import threading
+
+        lock = threading.Lock()
+
+        def counting_remote(path, remote="origin"):
+            nonlocal concurrent_peak, active
+            with lock:
+                active += 1
+                concurrent_peak = max(concurrent_peak, active)
+            time.sleep(0.01)
+            with lock:
+                active -= 1
+            return f"git@github.com:org/{path.name}.git"
+
+        with patch("grove.discover.remote_url", side_effect=counting_remote):
+            _batch_resolve_remotes(repo_paths)
+
+        # Should have had multiple concurrent calls
+        assert concurrent_peak > 1, f"Peak concurrency was {concurrent_peak}, expected > 1"
