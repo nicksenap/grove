@@ -1,14 +1,21 @@
 ## What's New
 
-### Smarter repo discovery
+### `gw go --back` / `gw go --delete`
 
-Repos are now identified by their git remote URL instead of folder name. The interactive picker shows `org/repo-name` derived from the remote, so same-named repos from different orgs are properly distinguished.
+New flags for the `go` command to streamline workspace navigation:
 
-Deep scanning is now the default in interactive mode — nested repos that were previously invisible to `gw create` are now available in the picker.
+- `gw go -b` — jump back to the source repo directory of the current workspace
+- `gw go -d` — delete the current workspace after navigating away
+- `gw go -bd` — go back and clean up in one step
+- `gw go other-ws -d` — switch workspace and delete the old one
 
-Repos with the same remote URL are automatically deduped (direct children preferred over nested copies).
+Cleanup runs as a background process so the `cd` is instant. If anything goes wrong, `gw doctor` catches it.
 
-Non-interactive flags (`-r repo-name`) still use folder names for backward compatibility.
+When the workspace spans repos from different directories, a picker lets you choose which one to go back to.
+
+### Faster repo discovery
+
+Repo discovery now runs in parallel with a disk cache, making `gw create` and interactive pickers noticeably snappier on setups with many repos.
 
 ## Upgrading
 
