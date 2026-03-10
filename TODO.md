@@ -13,21 +13,9 @@ Add end-to-end tests that exercise the main flows against real git repos (not mo
 
 Deprecated in favor of `gw list -s`. Remove the `--all` flag from `gw status` after a few releases.
 
-## Background cleanup for `gw go --clean-up`
+## Background tasks
 
-Currently `gw go -c` runs workspace deletion synchronously — the shell waits for the full cleanup before `cd`ing. This is fine for now since `delete_workspace` is fast (parallel worktree removal), but if it becomes a UX bottleneck, consider spawning cleanup as a detached subprocess:
-
-```python
-print(dest)
-subprocess.Popen(
-    [sys.executable, "-m", "grove", "delete", "--force", name],
-    stdout=subprocess.DEVNULL,
-    stderr=subprocess.DEVNULL,
-    start_new_session=True,
-)
-```
-
-This lets the shell `cd` instantly while cleanup runs in the background. If the cleanup fails, `gw doctor` would catch the stale state.
+`gw go --delete` already uses a detached subprocess for cleanup — the shell `cd`s immediately while deletion runs in the background. If cleanup fails, `gw doctor` catches stale state.
 
 ### Other background task candidates
 
