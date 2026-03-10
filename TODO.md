@@ -9,27 +9,41 @@ Add end-to-end tests that exercise the main flows against real git repos (not mo
 - `gw create` → `gw run` (with actual processes, verify TUI launches)
 - Lifecycle hooks fire in correct order with real `.grove.toml` files
 
-## ~~Rethink init + repo discovery~~ (done)
-
-Implemented in multi-dir init PR:
-- Config stores `repo_dirs: list[Path]` instead of singular `repos_dir`
-- `gw init` sets up `~/.grove`, optionally accepts dirs upfront
-- `gw add-dir <path>` / `gw remove-dir <path>` to manage source directories
-- `gw explore` scans all configured dirs recursively (up to 3 levels deep), prints discovered repos grouped by source dir, highlights new finds
-- Discovery stays live — `create`/`add-repo` always scan fresh
-- Backward compat: old config with `repos_dir` (singular) treated as single-element list
-
 ## Remove `status --all`
 
 Deprecated in favor of `gw list -s`. Remove the `--all` flag from `gw status` after a few releases.
 
-## ~~Smarter repo discovery — identity by git remote~~ (done)
+## Background cleanup for `gw go --clean-up`
 
-Implemented: repos are now identified by `origin` remote URL instead of folder name.
-- Interactive pickers (`create`, `add-repo`, `explore`) do deep scans and show `org/repo` from remote
-- Same-named folders with different remotes are distinguished
-- Same remote across multiple paths is deduped (direct children preferred)
-- Non-interactive flags (`-r`) still use folder names for backward compat
+Currently `gw go -c` runs workspace deletion synchronously — the shell waits for the full cleanup before `cd`ing. This is fine for now since `delete_workspace` is fast (parallel worktree removal), but if it becomes a UX bottleneck, consider spawning cleanup as a detached subprocess:
+
+```python
+print(dest)
+subprocess.Popen(
+    [sys.executable, "-m", "grove", "delete", "--force", name],
+    stdout=subprocess.DEVNULL,
+    stderr=subprocess.DEVNULL,
+    start_new_session=True,
+)
+```
+
+This lets the shell `cd` instantly while cleanup runs in the background. If the cleanup fails, `gw doctor` would catch the stale state.
+
+### Other background task candidates
+
+- **`gw sync` fetch/rebase** — network I/O across multiple remotes is the slowest user-facing operation
+- **`gw create` setup hooks** — `.grove.toml` `setup` commands (`npm install`, `uv sync`) can be slow; user could `cd` into the workspace immediately while setup runs in the background
+- **`gw explore` deep scan** — recursive repo discovery could be slow on large filesystems; cache refresh could happen in background
+
+### Design: keep it simple, avoid a global "background mode"
+
+A global non-blocking config/env var would add `if background:` branches across every feature — too much surface area. Instead, start with a per-invocation flag:
+
+- `gw create --background-setup` — cd into workspace immediately, run `.grove.toml` setup hooks in background
+- Default stays synchronous (safe — user expects `npm install` to finish before they run `npm start`)
+- If the flag sees enough use, promote to `.grove.toml` config: `setup_background = true`
+
+This keeps the code simple: one flag, one branch, opt-in per invocation.
 
 ## `gw run` TUI enhancements
 

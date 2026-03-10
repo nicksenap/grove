@@ -889,6 +889,29 @@ def run(
 _BACK_TO_REPOS = "← back to repos dir"
 
 
+def _resolve_back_path(ws: Workspace) -> Path:
+    """Resolve the 'back' destination for a workspace.
+
+    1. Single repo → source_repo
+    2. Multi-repo, all in same parent dir → that parent dir
+    3. Multi-repo, different parent dirs → picker
+    """
+    source_dirs: list[Path] = []
+    seen: set[str] = set()
+    for repo_wt in ws.repos:
+        parent = repo_wt.source_repo.parent.resolve()
+        key = str(parent)
+        if key not in seen:
+            seen.add(key)
+            source_dirs.append(parent)
+
+    if len(source_dirs) == 1:
+        return source_dirs[0]
+
+    picked = _pick_one("Select repo directory", [str(d) for d in source_dirs])
+    return Path(picked)
+
+
 @app.command()
 def go(
     name: str | None = typer.Argument(
@@ -896,8 +919,25 @@ def go(
         help="Workspace name",
         autocompletion=complete_workspace_name,
     ),
+    back: bool = typer.Option(False, "--back", "-b", help="Go back to the source repo directory"),
+    clean_up: bool = typer.Option(
+        False, "--clean-up", "-c", help="Delete current workspace after navigating away"
+    ),
 ) -> None:
     """Print workspace path (use with shell function for cd)."""
+    current_ws = state.find_workspace_by_path(Path.cwd())
+
+    # --back: go to source repo dir of current workspace
+    if back:
+        if current_ws is None:
+            error("Not inside a workspace")
+            raise typer.Exit(1)
+        dest = _resolve_back_path(current_ws)
+        if clean_up:
+            workspace.delete_workspace(current_ws.name)
+        print(dest)
+        return
+
     # Interactive fallback
     if name is None:
         workspaces = state.load_workspaces()
@@ -905,7 +945,6 @@ def go(
             error("No workspaces. Create one first: gw create ...")
             raise typer.Exit(1)
 
-        current_ws = state.find_workspace_by_path(Path.cwd())
         choices = [
             f"{ws.name}  (current)" if current_ws and ws.name == current_ws.name else ws.name
             for ws in workspaces
@@ -935,6 +974,10 @@ def go(
     if ws is None:
         error(f"Workspace [bold]{name}[/] not found")
         raise typer.Exit(1)
+
+    # --clean-up: delete current workspace before navigating to target
+    if clean_up and current_ws and current_ws.name != ws.name:
+        workspace.delete_workspace(current_ws.name)
 
     # Print raw path for shell function to consume
     print(ws.path)
