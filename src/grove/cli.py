@@ -135,23 +135,52 @@ def _pick_one(prompt_text: str, choices: list[str]) -> str:
     return choices[_pick_one_idx(prompt_text, choices)]
 
 
+def _make_menu(
+    choices: list[str],
+    title: str,
+    *,
+    multi_select: bool = False,
+    type_to_search: bool = True,
+):
+    from simple_term_menu import TerminalMenu
+
+    kwargs: dict = {
+        "menu_cursor": "❯ ",
+        "menu_cursor_style": ("fg_cyan", "bold"),
+        "menu_highlight_style": ("fg_cyan", "bold"),
+        "search_highlight_style": ("fg_yellow", "bold"),
+    }
+    if multi_select:
+        kwargs.update(
+            multi_select=True,
+            multi_select_select_on_accept=False,
+            multi_select_keys=("tab",),
+        )
+    if type_to_search:
+        kwargs["search_key"] = None
+    return TerminalMenu(choices, title=title, **kwargs)
+
+
+def _show_menu(menu, choices: list[str], fallback_title: str, **kw):
+    """Show a menu, falling back to /-triggered search if the library crashes."""
+    try:
+        return menu.show()
+    except (ValueError, OSError):
+        # simple_term_menu can crash when search text exceeds terminal width;
+        # recover by retrying without live search
+        fallback = _make_menu(choices, fallback_title, type_to_search=False, **kw)
+        return fallback.show()
+
+
 def _pick_one_idx(prompt_text: str, choices: list[str]) -> int:
     """Arrow-key single selection with type-to-search, returns the chosen index."""
     if not sys.stdin.isatty():
         error("Interactive selection requires a terminal. Provide explicit flags instead.")
         raise typer.Exit(1)
-    from simple_term_menu import TerminalMenu
-
-    menu = TerminalMenu(
-        choices,
-        title=f"\n{prompt_text}\n  ↑/↓ navigate · type to search · enter confirm",
-        menu_cursor="❯ ",
-        menu_cursor_style=("fg_cyan", "bold"),
-        menu_highlight_style=("fg_cyan", "bold"),
-        search_highlight_style=("fg_yellow", "bold"),
-        search_key=None,
-    )
-    idx = menu.show()
+    title = f"\n{prompt_text}\n  ↑/↓ navigate · type to search · enter confirm"
+    fallback_title = f"\n{prompt_text}\n  ↑/↓ navigate · / to search · enter confirm"
+    menu = _make_menu(choices, title)
+    idx = _show_menu(menu, choices, fallback_title)
     if idx is None:
         raise typer.Abort()
     return idx
@@ -162,22 +191,11 @@ def _pick_many(prompt_text: str, choices: list[str]) -> list[str]:
     if not sys.stdin.isatty():
         error("Interactive selection requires a terminal. Provide explicit flags instead.")
         raise typer.Exit(1)
-    from simple_term_menu import TerminalMenu
-
     display = ["(all)", *choices]
-    menu = TerminalMenu(
-        display,
-        title=f"\n{prompt_text}\n  ↑/↓ navigate · tab select · type to search · enter confirm",
-        multi_select=True,
-        multi_select_select_on_accept=False,
-        multi_select_keys=("tab",),
-        menu_cursor="❯ ",
-        menu_cursor_style=("fg_cyan", "bold"),
-        menu_highlight_style=("fg_cyan", "bold"),
-        search_highlight_style=("fg_yellow", "bold"),
-        search_key=None,
-    )
-    result = menu.show()
+    title = f"\n{prompt_text}\n  ↑/↓ navigate · tab select · type to search · enter confirm"
+    fallback_title = f"\n{prompt_text}\n  ↑/↓ navigate · tab select · / to search · enter confirm"
+    menu = _make_menu(display, title, multi_select=True)
+    result = _show_menu(menu, display, fallback_title, multi_select=True)
     if result is None:
         raise typer.Abort()
     selected = menu.chosen_menu_entries
