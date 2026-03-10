@@ -146,6 +146,57 @@ Grove copies your `CLAUDE.md` into new workspaces, so your agent gets project co
 - Prevents duplicate worktrees for the same branch
 - Warns on startup when a newer version is available
 
+## Dashboard (`gw dash`)
+
+A Textual TUI for monitoring Claude Code agents across all your workspaces. Inspired by [Clorch](https://github.com/androsovm/clorch), rewritten in Python.
+
+```bash
+gw dash install   # install Claude Code hooks
+gw dash           # launch the dashboard
+gw dash uninstall # remove hooks
+```
+
+**Key bindings:**
+
+| Key | Action |
+|-----|--------|
+| `j` / `k` / `↑` / `↓` | Navigate agents |
+| `Enter` | Jump to agent's Zellij tab |
+| `y` / `n` | Approve / deny permission request |
+| `/` | Search / filter agents |
+| `Escape` | Clear search |
+| `r` | Refresh |
+| `q` | Quit |
+
+### How it works
+
+Claude Code hooks write agent state to `~/.grove/status/<session_id>.json` on every event. The dashboard polls these files every 500ms and renders a real-time view of all active agents.
+
+**Tracked events:** `SessionStart`, `PreToolUse`, `PostToolUse`, `PostToolUseFailure`, `Stop`, `PermissionRequest`, `Notification`, `SubagentStart`, `SubagentStop`, `PreCompact`, `TaskCompleted`, `SessionEnd`.
+
+**Collected data per agent:**
+- Status (idle, working, waiting permission, waiting answer, error)
+- Current working directory, git branch, dirty file count
+- Last tool used, tool call count, error count
+- Subagent count, compaction count
+- Activity sparkline (tool calls over time)
+- Permission request details (tool name + summary)
+
+### Zellij tab matching
+
+When you press `Enter` to jump to an agent, the dashboard finds the right Zellij tab using a 5-step strategy:
+
+| Priority | Strategy | Example |
+|----------|----------|---------|
+| 1 | Exact tab name = project name | `grove` → tab `grove` |
+| 2 | Case-insensitive tab name | `Grove` → tab `grove` |
+| 3 | Workspace name from CWD (`~/.grove/workspaces/<name>/...`) matched against tab names (exact, then substring in both directions) | CWD has `feat-voltagent-rewrite` → tab `voltagent` |
+| 4a | CWD path match via `zellij action dump-layout` — agent CWD is under tab CWD or vice versa | `/Users/nick/dev/grove` = tab CWD `/Users/nick/dev/grove` |
+| 4b | Project name matches a path **component** in tab's CWD (not substring) | `grove` matches `/dev/grove` but NOT `.grove` |
+| 5 | Project name substring in tab name | `api` → tab `public-api` |
+
+Relative CWDs in Zellij layouts are resolved against the layout's base `cwd` directive.
+
 ## Requirements
 
 Python 3.12+ (installed automatically by Homebrew)
