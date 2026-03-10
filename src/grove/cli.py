@@ -1020,6 +1020,89 @@ def go(
 
 
 # ---------------------------------------------------------------------------
+# Dashboard — agent monitoring
+# ---------------------------------------------------------------------------
+
+dash_app = typer.Typer(help="Agent dashboard and hooks.")
+app.add_typer(dash_app, name="dash")
+
+
+@dash_app.callback(invoke_without_command=True)
+def dash_main(ctx: typer.Context) -> None:
+    """Launch agent dashboard or manage hooks."""
+    if ctx.invoked_subcommand is None:
+        from grove.dash.app import run_dashboard
+
+        run_dashboard()
+
+
+@dash_app.command("install")
+def dash_install(
+    dry_run: bool = typer.Option(False, "--dry-run", help="Show what would change"),
+) -> None:
+    """Install Claude Code hooks for agent monitoring."""
+    from grove.dash.installer import install_hooks
+
+    actions = install_hooks(dry_run=dry_run)
+    if dry_run:
+        info("Dry run — no changes made")
+    else:
+        success("Hooks installed into ~/.claude/settings.json")
+    for event, acts in actions.items():
+        info(f"  {event}: {', '.join(acts)}")
+
+
+@dash_app.command("uninstall")
+def dash_uninstall() -> None:
+    """Remove Grove hooks from Claude Code settings."""
+    from grove.dash.installer import uninstall_hooks
+
+    removed = uninstall_hooks()
+    if removed:
+        success(f"Removed {removed} hook(s) from ~/.claude/settings.json")
+    else:
+        info("No Grove hooks found")
+
+
+@dash_app.command("status")
+def dash_status() -> None:
+    """Show a one-line summary of active agents."""
+    from grove.dash import manager
+
+    agents, summary = manager.scan()
+    if not agents:
+        info("No active agents")
+        return
+    console.print(f"{summary.status_line} | total:{summary.total}")
+
+
+@dash_app.command("list")
+def dash_list() -> None:
+    """List all active agents."""
+    from grove.dash import manager
+
+    agents, summary = manager.scan()
+    if not agents:
+        info("No active agents")
+        return
+
+    table = make_table("Status", "Project", "Branch", "Tool", "Tools", "Uptime")
+    for a in agents:
+        from grove.dash.constants import STATUS_STYLES
+
+        style, label = STATUS_STYLES.get(a.status, ("dim", "?"))
+        table.add_row(
+            f"[{style}]{label}[/]",
+            a.display_name or a.session_id[:12],
+            a.git_branch or "[dim]—[/]",
+            a.last_tool or "[dim]—[/]",
+            str(a.tool_count),
+            a.uptime or "[dim]—[/]",
+        )
+    console.print(table)
+
+
+# ---------------------------------------------------------------------------
 # Preset management
 # ---------------------------------------------------------------------------
 

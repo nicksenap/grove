@@ -1,21 +1,35 @@
-## What's New
+## Agent Dashboard (`gw dash`)
 
-### `gw go --back` / `gw go --delete`
+New Textual TUI for monitoring Claude Code agents across all your workspaces in real-time.
 
-New flags for the `go` command to streamline workspace navigation:
+### Features
 
-- `gw go -b` — jump back to the source repo directory of the current workspace
-- `gw go -d` — delete the current workspace after navigating away
-- `gw go -bd` — go back and clean up in one step
-- `gw go other-ws -d` — switch workspace and delete the old one
+- **Live agent monitoring** — polls `~/.grove/status/` every 500ms to show all active Claude Code agents with status, tools, activity sparklines, and error counts
+- **Zellij integration** — press `Enter` to jump to an agent's terminal tab using smart 5-level tab matching (exact name, workspace name, CWD path, substring)
+- **Permission management** — approve (`y`) or deny (`n`) permission requests directly from the dashboard
+- **Vim-style search** — press `/` to filter agents by name, branch, tool, or status
+- **Grove workspace awareness** — resolves agent CWDs to Grove workspaces, showing workspace name and repo list in the detail panel
+- **Gruvbox Dark theme** — consistent styling with proper Textual theme integration
 
-Cleanup runs as a background process so the `cd` is instant. If anything goes wrong, `gw doctor` catches it.
+### Agent data collected via hooks
 
-When the workspace spans repos from different directories, a picker lets you choose which one to go back to.
+- Status (idle, working, waiting permission, waiting answer, error)
+- Git branch and dirty file count
+- Tool call count, error count, subagent count and types
+- Activity sparkline, compaction count and trigger type
+- Permission mode, session source (startup/resume/compact)
+- Initial prompt, last agent response, last error message
+- Permission request details with diff-style summaries
 
-### Faster repo discovery
+### Setup
 
-Repo discovery now runs in parallel with a disk cache, making `gw create` and interactive pickers noticeably snappier on setups with many repos.
+```bash
+gw dash install   # install Claude Code hooks
+gw dash           # launch dashboard
+gw dash uninstall # remove hooks
+gw dash status    # check hook installation
+gw dash list      # list active agents (non-TUI)
+```
 
 ## Upgrading
 

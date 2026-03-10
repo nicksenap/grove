@@ -85,12 +85,7 @@ def main() -> None:
         if name.lower() in SKIP:
             continue
         url, sha = _pypi_sdist(name, ver)
-        blocks.append(
-            f'  resource "{name}" do\n'
-            f'    url "{url}"\n'
-            f'    sha256 "{sha}"\n'
-            f"  end"
-        )
+        blocks.append(f'  resource "{name}" do\n    url "{url}"\n    sha256 "{sha}"\n  end')
 
     print(
         TEMPLATE.format(
