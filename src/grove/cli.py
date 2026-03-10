@@ -119,6 +119,17 @@ def _validate_repo_names(repo_names: list[str], available: dict[str, Path]) -> d
     return selected
 
 
+def _prompt(label: str) -> str:
+    """Prompt the user for text input, handling encoding errors gracefully."""
+    from rich.prompt import Prompt
+
+    try:
+        return Prompt.ask(f"[bold]{label}[/]", console=console)
+    except UnicodeDecodeError:
+        error("Invalid input — check your terminal encoding")
+        raise typer.Exit(1) from None
+
+
 def _pick_one(prompt_text: str, choices: list[str]) -> str:
     """Arrow-key single selection."""
     return choices[_pick_one_idx(prompt_text, choices)]
@@ -363,9 +374,7 @@ def create(
         if not sys.stdin.isatty():
             error("--branch is required in non-interactive mode")
             raise typer.Exit(1)
-        from rich.prompt import Prompt
-
-        branch = Prompt.ask("[bold]Branch name[/]", console=console)
+        branch = _prompt("Branch name")
         if not branch:
             error("Branch name is required")
             raise typer.Exit(1)
@@ -423,9 +432,7 @@ def create(
             and len(selected) < len(repo_by_display)
             and typer.confirm("Save this selection as a preset?", default=False)
         ):
-            from rich.prompt import Prompt
-
-            preset_name = Prompt.ask("[bold]Preset name[/]", console=console)
+            preset_name = _prompt("Preset name")
             if preset_name:
                 cfg.presets[preset_name] = list(selected.keys())
                 config.save_config(cfg)
@@ -1041,9 +1048,7 @@ def preset_add(
 
     # Interactive: prompt for name
     if name is None:
-        from rich.prompt import Prompt
-
-        name = Prompt.ask("[bold]Preset name[/]", console=console)
+        name = _prompt("Preset name")
         if not name:
             error("Preset name is required")
             raise typer.Exit(1)
