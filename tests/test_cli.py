@@ -577,6 +577,137 @@ class TestGo:
         assert result.exit_code == 1
         assert "not found" in result.output
 
+    def test_back_single_repo(self, tmp_grove, sample_workspace):
+        from grove import state
+
+        state.add_workspace(sample_workspace)
+        with patch("grove.cli.state.find_workspace_by_path", return_value=sample_workspace):
+            result = runner.invoke(app, ["go", "--back"])
+        assert result.exit_code == 0
+        assert str(tmp_grove["repos_dir"]) in result.output
+
+    def test_back_not_in_workspace(self, tmp_grove):
+        result = runner.invoke(app, ["go", "--back"])
+        assert result.exit_code == 1
+        assert "Not inside a workspace" in result.output
+
+    def test_back_with_name_errors(self, tmp_grove, sample_workspace):
+        from grove import state
+
+        state.add_workspace(sample_workspace)
+        with patch("grove.cli.state.find_workspace_by_path", return_value=sample_workspace):
+            result = runner.invoke(app, ["go", "test-ws", "--back"])
+        assert result.exit_code == 1
+        assert "cannot be combined" in result.output
+
+    def test_back_multi_repo_same_dir(self, tmp_grove):
+        from grove import state
+
+        ws_path = tmp_grove["workspace_dir"] / "multi-ws"
+        ws_path.mkdir()
+        repos_dir = tmp_grove["repos_dir"]
+        ws = Workspace(
+            name="multi-ws",
+            path=ws_path,
+            branch="feat/x",
+            repos=[
+                RepoWorktree(
+                    repo_name="svc-auth",
+                    source_repo=repos_dir / "svc-auth",
+                    worktree_path=ws_path / "svc-auth",
+                    branch="feat/x",
+                ),
+                RepoWorktree(
+                    repo_name="svc-api",
+                    source_repo=repos_dir / "svc-api",
+                    worktree_path=ws_path / "svc-api",
+                    branch="feat/x",
+                ),
+            ],
+        )
+        state.add_workspace(ws)
+        with patch("grove.cli.state.find_workspace_by_path", return_value=ws):
+            result = runner.invoke(app, ["go", "--back"])
+        assert result.exit_code == 0
+        assert str(repos_dir) in result.output
+
+    def test_back_empty_repos(self, tmp_grove):
+        from grove import state
+
+        ws_path = tmp_grove["workspace_dir"] / "empty-ws"
+        ws_path.mkdir()
+        ws = Workspace(name="empty-ws", path=ws_path, branch="feat/x", repos=[])
+        state.add_workspace(ws)
+        with patch("grove.cli.state.find_workspace_by_path", return_value=ws):
+            result = runner.invoke(app, ["go", "--back"])
+        assert result.exit_code == 1
+        assert "no repos" in result.output
+
+    def test_delete_current_workspace(self, tmp_grove, sample_workspace):
+        from grove import state
+
+        ws_path2 = tmp_grove["workspace_dir"] / "other-ws"
+        ws_path2.mkdir()
+        other_ws = Workspace(
+            name="other-ws",
+            path=ws_path2,
+            branch="feat/other",
+            repos=[
+                RepoWorktree(
+                    repo_name="svc-api",
+                    source_repo=tmp_grove["repos_dir"] / "svc-api",
+                    worktree_path=ws_path2 / "svc-api",
+                    branch="feat/other",
+                ),
+            ],
+        )
+        state.add_workspace(sample_workspace)
+        state.add_workspace(other_ws)
+        with (
+            patch("grove.cli.state.find_workspace_by_path", return_value=sample_workspace),
+            patch("grove.cli.subprocess.Popen") as mock_popen,
+        ):
+            result = runner.invoke(app, ["go", "other-ws", "--delete"])
+        assert result.exit_code == 0
+        assert str(ws_path2) in result.output
+        mock_popen.assert_called_once()
+        assert "test-ws" in mock_popen.call_args[0][0]
+
+    def test_delete_same_workspace_warns(self, tmp_grove, sample_workspace):
+        from grove import state
+
+        state.add_workspace(sample_workspace)
+        with (
+            patch("grove.cli.state.find_workspace_by_path", return_value=sample_workspace),
+            patch("grove.cli.subprocess.Popen") as mock_popen,
+        ):
+            result = runner.invoke(app, ["go", "test-ws", "--delete"])
+        assert result.exit_code == 0
+        mock_popen.assert_not_called()
+        assert "skipped" in result.output
+
+    def test_back_and_delete(self, tmp_grove, sample_workspace):
+        from grove import state
+
+        state.add_workspace(sample_workspace)
+        with (
+            patch("grove.cli.state.find_workspace_by_path", return_value=sample_workspace),
+            patch("grove.cli.subprocess.Popen") as mock_popen,
+        ):
+            result = runner.invoke(app, ["go", "--back", "--delete"])
+        assert result.exit_code == 0
+        assert str(tmp_grove["repos_dir"]) in result.output
+        mock_popen.assert_called_once()
+        assert "test-ws" in mock_popen.call_args[0][0]
+
+    def test_delete_not_in_workspace_warns(self, tmp_grove, sample_workspace):
+        from grove import state
+
+        state.add_workspace(sample_workspace)
+        result = runner.invoke(app, ["go", "test-ws", "--delete"])
+        assert result.exit_code == 0
+        assert "no effect" in result.output
+
 
 class TestPreset:
     def _make_config(self, tmp_grove):

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -889,6 +890,48 @@ def run(
 _BACK_TO_REPOS = "← back to repos dir"
 
 
+def _resolve_back_path(ws: Workspace) -> Path:
+    """Resolve the 'back' destination for a workspace.
+
+    1. Single repo → parent directory of source_repo
+    2. Multi-repo, all in same parent dir → that shared parent dir
+    3. Multi-repo, different parent dirs → interactive picker
+    """
+    source_dirs: list[Path] = []
+    seen: set[str] = set()
+    for repo_wt in ws.repos:
+        parent = repo_wt.source_repo.parent.resolve()
+        key = str(parent)
+        if key not in seen:
+            seen.add(key)
+            source_dirs.append(parent)
+
+    if not source_dirs:
+        error("Workspace has no repos — cannot determine a source directory")
+        raise typer.Exit(1)
+
+    if len(source_dirs) == 1:
+        return source_dirs[0]
+
+    picked = _pick_one("Select repo directory", [str(d) for d in source_dirs])
+    return Path(picked)
+
+
+def _do_cleanup(ws_name: str) -> None:
+    """Spawn a detached subprocess to delete a workspace.
+
+    The subprocess runs independently so the shell function can cd
+    immediately without waiting for worktree removal to finish.
+    If cleanup fails, ``gw doctor`` will catch the stale state.
+    """
+    subprocess.Popen(
+        [sys.executable, "-m", "grove", "delete", "--force", ws_name],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+
+
 @app.command()
 def go(
     name: str | None = typer.Argument(
@@ -896,8 +939,29 @@ def go(
         help="Workspace name",
         autocompletion=complete_workspace_name,
     ),
+    back: bool = typer.Option(False, "--back", "-b", help="Go back to the source repo directory"),
+    delete: bool = typer.Option(
+        False, "--delete", "-d", help="Delete current workspace after navigating away"
+    ),
 ) -> None:
     """Print workspace path (use with shell function for cd)."""
+    if back and name is not None:
+        error("--back cannot be combined with a workspace name")
+        raise typer.Exit(1)
+
+    current_ws = state.find_workspace_by_path(Path.cwd())
+
+    # --back: go to source repo dir of current workspace
+    if back:
+        if current_ws is None:
+            error("Not inside a workspace")
+            raise typer.Exit(1)
+        dest = _resolve_back_path(current_ws)
+        if delete:
+            _do_cleanup(current_ws.name)
+        print(dest)
+        return
+
     # Interactive fallback
     if name is None:
         workspaces = state.load_workspaces()
@@ -905,7 +969,6 @@ def go(
             error("No workspaces. Create one first: gw create ...")
             raise typer.Exit(1)
 
-        current_ws = state.find_workspace_by_path(Path.cwd())
         choices = [
             f"{ws.name}  (current)" if current_ws and ws.name == current_ws.name else ws.name
             for ws in workspaces
@@ -935,6 +998,15 @@ def go(
     if ws is None:
         error(f"Workspace [bold]{name}[/] not found")
         raise typer.Exit(1)
+
+    # --delete: delete current workspace before navigating to target
+    if delete:
+        if current_ws is None:
+            warning("--delete has no effect: not inside a workspace")
+        elif current_ws.name == ws.name:
+            warning(f"--delete skipped: already in workspace [bold]{ws.name}[/]")
+        else:
+            _do_cleanup(current_ws.name)
 
     # Print raw path for shell function to consume
     print(ws.path)
