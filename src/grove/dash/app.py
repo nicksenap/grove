@@ -9,14 +9,19 @@ from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.theme import Theme
-from textual.widgets import DataTable, Input, Static
+from textual.widgets import Input, Static
 
 from grove.dash import manager
-from grove.dash.constants import CLEANUP_INTERVAL, STATE_POLL_INTERVAL
+from grove.dash.constants import CLEANUP_INTERVAL, STATE_POLL_INTERVAL, AgentStatus
 from grove.dash.models import AgentState
+from grove.dash.store import Task, TaskStore
 from grove.dash.widgets.agent_detail import AgentDetail
+from grove.dash.widgets.confirm_modal import ConfirmModal
 from grove.dash.widgets.header_bar import HeaderBar
-from grove.dash.widgets.session_list import SessionList, matches_filter
+from grove.dash.widgets.kanban_board import KanbanBoard
+from grove.dash.widgets.session_list import matches_filter
+from grove.dash.widgets.task_card import TaskCard
+from grove.dash.widgets.task_modal import TaskModal
 
 log = logging.getLogger("grove.dash")
 
@@ -43,7 +48,7 @@ GRUVBOX_DARK = Theme(
 class DashboardApp(App):
     """Grove agent dashboard."""
 
-    TITLE = "Grove Dashboard"
+    TITLE = "\u26a1\ufe0e gw dash"
 
     CSS = """
     Screen {
@@ -70,23 +75,9 @@ class DashboardApp(App):
         height: 1fr;
     }
 
-    #list-pane {
+    #board-pane {
         width: 2fr;
         height: 1fr;
-        border: round $panel;
-        border-title-color: $primary;
-        border-title-style: bold;
-        padding: 0;
-    }
-
-    #list-pane:focus-within {
-        border: round $primary;
-    }
-
-    SessionList {
-        height: 1fr;
-        min-height: 4;
-        background: $background;
     }
 
     #detail-pane {
@@ -120,9 +111,16 @@ class DashboardApp(App):
         Binding("q", "quit", "Quit"),
         Binding("j", "cursor_down", "Down", show=False),
         Binding("k", "cursor_up", "Up", show=False),
+        Binding("h", "cursor_left", "Left", show=False),
+        Binding("l", "cursor_right", "Right", show=False),
         Binding("enter", "jump_to_agent", "Jump", priority=True),
         Binding("y", "approve", "Approve"),
         Binding("n", "deny", "Deny"),
+        Binding("s", "start_task", "Start"),
+        Binding("c", "create_task", "Create"),
+        Binding("e", "edit_task", "Edit"),
+        Binding("d", "mark_done", "Done"),
+        Binding("x", "delete_task", "Delete"),
         Binding("r", "refresh", "Refresh"),
         Binding("/", "start_search", "Search", show=False),
         Binding("escape", "stop_search", "Clear search", show=False),
@@ -132,7 +130,10 @@ class DashboardApp(App):
         super().__init__()
         self._agents: list[AgentState] = []
         self._filtered: list[AgentState] = []
+        self._tasks: list[Task] = []
+        self._filtered_tasks: list[Task] = []
         self._search_query: str = ""
+        self._store = TaskStore()
 
     def on_mount(self) -> None:
         self.register_theme(GRUVBOX_DARK)
@@ -144,36 +145,54 @@ class DashboardApp(App):
     def compose(self) -> ComposeResult:
         yield HeaderBar(id="header")
         with Horizontal(id="main-split"):
-            with Vertical(id="list-pane") as pane:
-                pane.border_title = "Agents"
-                yield SessionList(id="session-list")
+            with Vertical(id="board-pane"):
+                yield KanbanBoard(id="kanban-board")
             with Vertical(id="detail-pane") as pane:
                 pane.border_title = "Detail"
                 yield AgentDetail()
         yield Static(
             "[dim]q[/] quit  "
-            "[dim]↑↓[/] select  "
+            "[dim]h/l[/] columns  "
+            "[dim]j/k[/] cards  "
             "[dim]enter[/] jump  "
             "[dim]y/n[/] approve/deny  "
-            "[dim]r[/] refresh  "
+            "[dim]s[/] start  "
+            "[dim]c[/] create  "
+            "[dim]e[/] edit  "
+            "[dim]d[/] done  "
+            "[dim]x[/] delete  "
             "[dim]/[/] search",
             id="status-line",
         )
 
+    # --- Polling ---
+
     def _poll_state(self) -> None:
         agents, summary = manager.scan()
         self._agents = agents
+        self._tasks = self._store.list_active()
         self._apply_filter()
 
         self.query_one(HeaderBar).update_summary(summary)
-        self.query_one(SessionList).update_agents(self._filtered)
+        board = self.query_one(KanbanBoard)
+        board.update_board(self._filtered, self._filtered_tasks)
         self._update_detail()
 
     def _apply_filter(self) -> None:
         if self._search_query:
+            q = self._search_query.lower()
             self._filtered = [a for a in self._agents if matches_filter(a, self._search_query)]
+            self._filtered_tasks = [
+                t
+                for t in self._tasks
+                if q in t.title.lower()
+                or q in t.branch.lower()
+                or q in t.description.lower()
+                or q in t.status.value.lower()
+            ]
         else:
             self._filtered = list(self._agents)
+            self._filtered_tasks = list(self._tasks)
 
     def _run_cleanup(self) -> None:
         manager.cleanup_stale()
@@ -181,43 +200,47 @@ class DashboardApp(App):
 
     def _update_detail(self) -> None:
         detail = self.query_one(AgentDetail)
-        session_list = self.query_one(SessionList)
-        idx = session_list.selected_index
-
-        if idx is not None and idx < len(self._filtered):
-            detail.show_agent(self._filtered[idx])
-        else:
-            detail.show_agent(None)
+        board = self.query_one(KanbanBoard)
+        agent = board.focused_agent
+        detail.show_agent(agent)
 
     def on_key(self, event) -> None:
         log.info("KEY: key=%r char=%r", event.key, event.character)
 
-    def on_data_table_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
-        self._update_detail()
+    def on_descendant_focus(self, event) -> None:
+        if isinstance(event.widget, TaskCard):
+            self._update_detail()
+
+    # --- Navigation ---
 
     def action_cursor_down(self) -> None:
-        self.query_one(SessionList).action_cursor_down()
+        self.query_one(KanbanBoard).focus_next_card()
 
     def action_cursor_up(self) -> None:
-        self.query_one(SessionList).action_cursor_up()
+        self.query_one(KanbanBoard).focus_prev_card()
+
+    def action_cursor_left(self) -> None:
+        self.query_one(KanbanBoard).focus_prev_column()
+
+    def action_cursor_right(self) -> None:
+        self.query_one(KanbanBoard).focus_next_column()
+
+    # --- Agent actions ---
 
     def action_jump_to_agent(self) -> None:
         """Jump to the selected agent's Zellij tab."""
-        # If search input is focused, treat enter as submit, not jump
         results = self.query("#search-input")
         if results and results.first().has_focus:
-            self._dismiss_search(clear=False)
+            self._handle_search_submit()
             return
 
         from grove.dash import zellij
 
-        session_list = self.query_one(SessionList)
-        idx = session_list.selected_index
-        log.info("JUMP: idx=%s, filtered_count=%d", idx, len(self._filtered))
-        if idx is None or idx >= len(self._filtered):
+        board = self.query_one(KanbanBoard)
+        agent = board.focused_agent
+        if agent is None:
             return
 
-        agent = self._filtered[idx]
         log.info(
             "JUMP: project=%r cwd=%r display=%r",
             agent.project_name,
@@ -228,23 +251,17 @@ class DashboardApp(App):
         log.info("JUMP: result=%s", result)
 
     def action_approve(self) -> None:
-        """Approve permission request for selected agent."""
         self._send_response(approve=True)
 
     def action_deny(self) -> None:
-        """Deny permission request for selected agent."""
         self._send_response(approve=False)
 
     def _send_response(self, *, approve: bool) -> None:
         from grove.dash import zellij
 
-        session_list = self.query_one(SessionList)
-        idx = session_list.selected_index
-        if idx is None or idx >= len(self._filtered):
-            return
-
-        agent = self._filtered[idx]
-        if agent.status.value != "WAITING_PERMISSION":
+        board = self.query_one(KanbanBoard)
+        agent = board.focused_agent
+        if agent is None or agent.status.value != "WAITING_PERMISSION":
             return
 
         if zellij.jump_to_agent(agent.project_name, agent.cwd or ""):
@@ -254,8 +271,139 @@ class DashboardApp(App):
                 zellij.deny()
             zellij.jump_to_agent("grove")
 
+    # --- Task actions ---
+
+    def action_start_task(self) -> None:
+        """Launch a planned task — provision workspace + open Zellij tab."""
+        board = self.query_one(KanbanBoard)
+        card = board.focused_card
+        if card is None or card.task_data is None:
+            return
+        task = card.task_data
+        if task.status not in ("PLANNED", "IDLE"):
+            log.info("START: task %r not in launchable status (%s)", task.title, task.status)
+            return
+        self.push_screen(
+            ConfirmModal(f"Start task [bold]{task.title}[/]?"),
+            lambda confirmed: self._on_start_confirmed(confirmed, task),
+        )
+
+    def _on_start_confirmed(self, confirmed: bool, task: Task) -> None:
+        if not confirmed:
+            return
+        from grove.dash.launcher import launch_task
+
+        self.run_worker(
+            lambda: launch_task(task),
+            name=f"launch-{task.id}",
+            thread=True,
+        )
+        self._poll_state()
+
+    def on_worker_state_changed(self, event) -> None:
+        """Refresh board when a background worker completes."""
+        if not event.worker.name or not event.worker.is_finished:
+            return
+        if event.worker.name.startswith("launch-"):
+            result = event.worker.result
+            if result:
+                ok, msg = result
+                log.info("LAUNCH: %s — %s", "success" if ok else "failed", msg)
+            self._poll_state()
+        elif event.worker.name.startswith("delete-"):
+            self._poll_state()
+
+    def action_create_task(self) -> None:
+        """Open create modal."""
+        self.push_screen(TaskModal(), self._on_task_created)
+
+    def _on_task_created(self, task: Task | None) -> None:
+        if task is None:
+            return
+        self._store.add(task)
+        log.info("TASK: created %r id=%s", task.title, task.id)
+        self._poll_state()
+
+    def action_edit_task(self) -> None:
+        """Open edit modal for focused task card."""
+        board = self.query_one(KanbanBoard)
+        card = board.focused_card
+        if card is None or card.task_data is None:
+            return
+        self.push_screen(TaskModal(existing=card.task_data), self._on_task_edited)
+
+    def _on_task_edited(self, task: Task | None) -> None:
+        if task is None:
+            return
+        import json
+
+        self._store.update_field(
+            task.id,
+            title=task.title,
+            branch=task.branch,
+            description=task.description,
+            repos=json.dumps(task.repos),
+        )
+        log.info("TASK: updated %r id=%s", task.title, task.id)
+        self._poll_state()
+
+    def action_mark_done(self) -> None:
+        board = self.query_one(KanbanBoard)
+        card = board.focused_card
+        if card is None or card.task_data is None:
+            return
+        self._store.update_status(card.task_data.id, AgentStatus.DONE)
+        self._poll_state()
+
+    def action_delete_task(self) -> None:
+        """Delete focused task with confirmation."""
+        board = self.query_one(KanbanBoard)
+        card = board.focused_card
+        if card is None or card.task_data is None:
+            return
+        task = card.task_data
+        msg = f"Delete task [bold]{task.title}[/]?"
+        if task.workspace:
+            msg += f"\nWorkspace [bold]{task.workspace}[/] will also be removed."
+        self.push_screen(
+            ConfirmModal(msg),
+            lambda confirmed: self._on_delete_confirmed(confirmed, task),
+        )
+
+    def _on_delete_confirmed(self, confirmed: bool, task: Task) -> None:
+        if not confirmed:
+            return
+        if task.workspace:
+            self.run_worker(
+                lambda: self._cleanup_workspace(task),
+                name=f"delete-{task.id}",
+                thread=True,
+            )
+        else:
+            self._store.delete(task.id)
+            log.info("TASK: deleted id=%s", task.id)
+            self._poll_state()
+
+    @staticmethod
+    def _cleanup_workspace(task: Task) -> tuple[str, str]:
+        """Delete workspace + task in a background thread."""
+        from grove import workspace as ws_mod
+        from grove.dash.store import TaskStore
+
+        store = TaskStore()
+        ws_name = task.workspace
+        ok = ws_mod.delete_workspace(ws_name)
+        if ok:
+            log.info("TASK: cleaned up workspace %r", ws_name)
+        else:
+            log.warning("TASK: workspace cleanup failed for %r", ws_name)
+        store.delete(task.id)
+        log.info("TASK: deleted id=%s", task.id)
+        return task.id, ws_name
+
+    # --- Search ---
+
     def action_start_search(self) -> None:
-        """Mount a search input and focus it."""
         log.info("SEARCH: action_start_search fired")
         results = self.query("#search-input")
         if results:
@@ -265,30 +413,31 @@ class DashboardApp(App):
         self.mount(search)
         search.focus()
 
+    def _handle_search_submit(self) -> None:
+        self._dismiss_search(clear=False)
+
     def _dismiss_search(self, *, clear: bool = False) -> None:
-        """Remove the search input widget."""
         results = self.query("#search-input")
         if results:
             results.first().remove()
         if clear:
             self._search_query = ""
             self._apply_filter()
-            self.query_one(SessionList).update_agents(self._filtered)
-        self.query_one(SessionList).focus()
+            board = self.query_one(KanbanBoard)
+            board.update_board(self._filtered, self._filtered_tasks)
 
     def action_stop_search(self) -> None:
-        """Hide search input, clear filter, refocus table."""
         self._dismiss_search(clear=True)
 
     def on_input_changed(self, event: Input.Changed) -> None:
-        """Filter agents as user types in search."""
-        self._search_query = event.value
-        self._apply_filter()
-        self.query_one(SessionList).update_agents(self._filtered)
+        if event.input.id == "search-input":
+            self._search_query = event.value
+            self._apply_filter()
+            self.query_one(KanbanBoard).update_board(self._filtered, self._filtered_tasks)
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
-        """On Enter in search, dismiss input but keep filter active."""
-        self._dismiss_search(clear=False)
+        if event.input.id == "search-input":
+            self._handle_search_submit()
 
     def action_refresh(self) -> None:
         self._poll_state()

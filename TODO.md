@@ -33,6 +33,14 @@ A global non-blocking config/env var would add `if background:` branches across 
 
 This keeps the code simple: one flag, one branch, opt-in per invocation.
 
+## Dashboard task modal UX
+
+The create/edit modal works but the interaction is clunky:
+- Preset picker (OptionList) and repo list (SelectionList) are inline but navigating between them isn't smooth
+- `/` search only activates when repo list is focused — not discoverable
+- Consider a custom widget that combines preset selection + repo toggling in one cohesive interaction
+- Investigate Textual's `on_key` override for modal-local keybindings that don't conflict with the app's `priority=True` enter binding
+
 ## `gw run` TUI enhancements
 
 - PTY allocation for subprocess output — some programs buffer stdout when not connected to a TTY (workaround: `stdbuf -oL` or tool-specific flags in `.grove.toml`)

@@ -25,7 +25,7 @@ class HeaderBar(Static):
 
     def update_summary(self, summary: StatusSummary) -> None:
         self._summary = summary
-        parts = [f"[bold {_FG}]Grove Dashboard[/]  "]
+        parts = [f"[bold {_FG}]\u26a1\ufe0e gw dash[/]  "]
 
         if summary.total == 0:
             parts.append(f"[{_GREY}]No agents[/]")
