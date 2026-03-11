@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import re
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -949,8 +950,13 @@ def _do_cleanup(ws_name: str) -> None:
     immediately without waiting for worktree removal to finish.
     If cleanup fails, ``gw doctor`` will catch the stale state.
     """
+    gw_path = shutil.which("gw")
+    if gw_path:
+        cmd = [gw_path, "delete", "--force", ws_name]
+    else:
+        cmd = [sys.executable, "-m", "grove", "delete", "--force", ws_name]
     subprocess.Popen(
-        [sys.executable, "-m", "grove", "delete", "--force", ws_name],
+        cmd,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
         start_new_session=True,
@@ -1052,6 +1058,22 @@ def dash_main(ctx: typer.Context) -> None:
         from grove.dash.app import run_dashboard
 
         run_dashboard()
+
+
+@app.command("_hook", hidden=True)
+def _hook_entrypoint(
+    event: str = typer.Option(..., "--event", help="Hook event type"),
+) -> None:
+    """Internal hook handler invoked by Claude Code. Not for direct use."""
+    import json as _json
+
+    from grove.dash.hook import handle_event
+
+    try:
+        input_data = _json.load(sys.stdin)
+    except (ValueError, _json.JSONDecodeError):
+        return
+    handle_event(event, input_data)
 
 
 @dash_app.command("install")
