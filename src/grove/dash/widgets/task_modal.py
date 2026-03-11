@@ -6,9 +6,9 @@ import logging
 
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.containers import Horizontal, Vertical
+from textual.containers import Vertical
 from textual.screen import ModalScreen
-from textual.widgets import Input, Label, SelectionList, Static, TextArea
+from textual.widgets import Input, Label, OptionList, SelectionList, TextArea
 
 from grove.dash.store import Task
 
@@ -34,7 +34,11 @@ def _load_repo_choices() -> tuple[list[str], dict[str, list[str]]]:
 
 
 class TaskModal(ModalScreen[Task | None]):
-    """Modal dialog for creating or editing a task card."""
+    """Modal dialog for creating or editing a task card.
+
+    Single-screen form with inline preset picker and repo selection.
+    Tab flows naturally through all fields.
+    """
 
     DEFAULT_CSS = """
     TaskModal {
@@ -44,7 +48,7 @@ class TaskModal(ModalScreen[Task | None]):
     #task-modal-container {
         width: 70;
         height: auto;
-        max-height: 30;
+        max-height: 38;
         border: round $primary;
         background: $surface;
         padding: 1 2;
@@ -79,29 +83,30 @@ class TaskModal(ModalScreen[Task | None]):
 
     #task-description {
         width: 100%;
-        height: 5;
+        height: 4;
         border: none;
         background: $background;
     }
 
-    #preset-bar {
+    #preset-list {
+        width: 100%;
+        height: auto;
+        max-height: 5;
+        border: none;
+        background: $background;
+    }
+
+    #repo-search {
         width: 100%;
         height: 1;
-        margin: 0;
-    }
-
-    .preset-btn {
-        min-width: 8;
-        height: 1;
         border: none;
-        background: $panel;
-        color: $text;
+        background: $background;
         padding: 0 1;
-        margin: 0 1 0 0;
+        display: none;
     }
 
-    .preset-btn:hover {
-        background: $primary;
+    #repo-search.visible {
+        display: block;
     }
 
     #repo-list {
@@ -120,13 +125,15 @@ class TaskModal(ModalScreen[Task | None]):
     """
 
     BINDINGS = [
-        Binding("escape", "cancel", "Cancel"),
+        Binding("escape", "cancel_or_search", "Cancel"),
+        Binding("slash", "start_search", "Search", show=False),
     ]
 
     def __init__(self, existing: Task | None = None) -> None:
         super().__init__()
         self._existing = existing
         self._repo_names, self._presets = _load_repo_choices()
+        self._searching = False
 
     def compose(self) -> ComposeResult:
         e = self._existing
@@ -154,28 +161,29 @@ class TaskModal(ModalScreen[Task | None]):
             yield TextArea(
                 e.description if e else "",
                 id="task-description",
+                tab_behavior="focus",
             )
 
             if self._repo_names:
-                yield Label("Repos", classes="field-label")
-
-                # Preset buttons
+                # Preset picker (tier 1)
                 if self._presets:
-                    with Horizontal(id="preset-bar"):
-                        for name in self._presets:
-                            yield Static(
-                                f"[dim]({name})[/]",
-                                classes="preset-btn",
-                                id=f"preset-{name}",
-                            )
+                    yield Label("Presets", classes="field-label")
+                    yield OptionList(
+                        *list(self._presets.keys()),
+                        id="preset-list",
+                    )
 
-                # Repo selection list
+                # Repo multi-select (tier 2) with search
+                yield Label("Repos [dim](/[/] search)", classes="field-label")
+                yield Input(placeholder="filter repos...", id="repo-search")
                 selections = [(repo, repo, repo in selected_repos) for repo in self._repo_names]
                 yield SelectionList(*selections, id="repo-list")
 
             yield Label(
                 "[dim]tab[/] next  "
-                "[dim]space[/] toggle repo  "
+                "[dim]enter[/] preset  "
+                "[dim]space[/] toggle  "
+                "[dim]/[/] filter  "
                 "[dim]ctrl+s[/] save  "
                 "[dim]esc[/] cancel",
                 id="task-modal-hint",
@@ -184,32 +192,88 @@ class TaskModal(ModalScreen[Task | None]):
     def on_mount(self) -> None:
         self.query_one("#task-title", Input).focus()
 
-    def on_static_click(self, event: Static.Click) -> None:
-        """Handle preset button clicks."""
-        widget = event.widget
-        if not widget.id or not widget.id.startswith("preset-"):
-            return
-        preset_name = widget.id[len("preset-") :]
+    # --- Preset selection ---
+
+    def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
+        preset_name = str(event.option.prompt)
         repos = self._presets.get(preset_name, [])
         if not repos:
             return
 
-        # Toggle the preset repos in the selection list
+        log.info("MODAL: preset selected %r -> %r", preset_name, repos)
+
         try:
-            repo_list = self.query_one("#repo-list", SelectionList)
+            sel = self.query_one("#repo-list", SelectionList)
         except Exception:
+            log.exception("Failed to find repo list")
             return
 
         repo_set = set(repos)
         for repo_name in self._repo_names:
             if repo_name in repo_set:
-                repo_list.select(repo_name)
+                sel.select(repo_name)
             else:
-                repo_list.deselect(repo_name)
+                sel.deselect(repo_name)
+
+    # --- Repo search ---
+
+    def action_start_search(self) -> None:
+        # Only activate when repo-list is focused
+        focused = self.app.focused
+        try:
+            repo_list = self.query_one("#repo-list", SelectionList)
+        except Exception:
+            return
+        if focused is not repo_list:
+            return
+
+        search = self.query_one("#repo-search", Input)
+        search.add_class("visible")
+        search.value = ""
+        search.focus()
+        self._searching = True
+        log.info("MODAL: search started")
+
+    def on_input_changed(self, event: Input.Changed) -> None:
+        if event.input.id != "repo-search":
+            return
+        self._filter_repos(event.value)
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        if event.input.id != "repo-search":
+            return
+        self._dismiss_search()
+
+    def _dismiss_search(self) -> None:
+        search = self.query_one("#repo-search", Input)
+        search.remove_class("visible")
+        self._searching = False
+        self.query_one("#repo-list", SelectionList).focus()
+        log.info("MODAL: search dismissed")
+
+    def _filter_repos(self, query: str) -> None:
+        sel = self.query_one("#repo-list", SelectionList)
+        q = query.lower().strip()
+
+        # Remember currently selected values before clearing
+        currently_selected = set(sel.selected)
+
+        sel.clear_options()
+        for repo in self._repo_names:
+            if not q or q in repo.lower():
+                sel.add_option((repo, repo, repo in currently_selected))
+
+    # --- Save / cancel ---
 
     def key_ctrl_s(self) -> None:
         """Save the task."""
         self._save()
+
+    def action_cancel_or_search(self) -> None:
+        if self._searching:
+            self._dismiss_search()
+        else:
+            self.dismiss(None)
 
     def _save(self) -> None:
         title = self.query_one("#task-title", Input).value.strip()
@@ -245,6 +309,3 @@ class TaskModal(ModalScreen[Task | None]):
             )
 
         self.dismiss(task)
-
-    def action_cancel(self) -> None:
-        self.dismiss(None)
