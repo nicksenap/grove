@@ -93,6 +93,57 @@ def deny() -> bool:
     return write_chars("n") and send_enter()
 
 
+def new_tab(
+    name: str,
+    cwd: str,
+    command: str | None = None,
+    command_args: list[str] | None = None,
+) -> bool:
+    """Open a new Zellij tab and send cd + command via write-chars.
+
+    Falls back to write-chars approach since Zellij --cwd and --layout
+    can behave unpredictably across versions.
+    """
+    import shlex
+    import time
+
+    try:
+        result = subprocess.run(
+            ["zellij", "action", "new-tab", "--name", name],
+            capture_output=True,
+            timeout=5,
+        )
+        if result.returncode != 0:
+            log.info("ZELLIJ new-tab failed: %s", result.stderr)
+            return False
+
+        # Wait for shell to initialize
+        time.sleep(1.0)
+
+        # cd into workspace
+        write_chars(f"cd {shlex.quote(cwd)}")
+        send_enter()
+        time.sleep(0.3)
+
+        # Run command if provided
+        if command:
+            cmd = command
+            if command_args:
+                cmd += " " + " ".join(shlex.quote(a) for a in command_args)
+            write_chars(cmd)
+            send_enter()
+
+            # Auto-accept the workspace trust prompt ("Yes, I trust this folder")
+            # which is pre-selected as option 1. Just send Enter after claude loads.
+            time.sleep(3.0)
+            send_enter()
+
+        return True
+    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+        log.exception("ZELLIJ new-tab error")
+        return False
+
+
 def _extract_workspace_name(cwd: str) -> str:
     """Extract Grove workspace name from a CWD path.
 

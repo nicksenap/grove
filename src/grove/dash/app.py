@@ -116,6 +116,7 @@ class DashboardApp(App):
         Binding("enter", "jump_to_agent", "Jump", priority=True),
         Binding("y", "approve", "Approve"),
         Binding("n", "deny", "Deny"),
+        Binding("s", "start_task", "Start"),
         Binding("c", "create_task", "Create"),
         Binding("e", "edit_task", "Edit"),
         Binding("d", "mark_done", "Done"),
@@ -155,6 +156,7 @@ class DashboardApp(App):
             "[dim]j/k[/] cards  "
             "[dim]enter[/] jump  "
             "[dim]y/n[/] approve/deny  "
+            "[dim]s[/] start  "
             "[dim]c[/] create  "
             "[dim]e[/] edit  "
             "[dim]d[/] done  "
@@ -271,6 +273,46 @@ class DashboardApp(App):
 
     # --- Task actions ---
 
+    def action_start_task(self) -> None:
+        """Launch a planned task — provision workspace + open Zellij tab."""
+        board = self.query_one(KanbanBoard)
+        card = board.focused_card
+        if card is None or card.task_data is None:
+            return
+        task = card.task_data
+        if task.status not in ("PLANNED", "IDLE"):
+            log.info("START: task %r not in launchable status (%s)", task.title, task.status)
+            return
+        self.push_screen(
+            ConfirmModal(f"Start task [bold]{task.title}[/]?"),
+            lambda confirmed: self._on_start_confirmed(confirmed, task),
+        )
+
+    def _on_start_confirmed(self, confirmed: bool, task: Task) -> None:
+        if not confirmed:
+            return
+        from grove.dash.launcher import launch_task
+
+        self.run_worker(
+            lambda: launch_task(task),
+            name=f"launch-{task.id}",
+            thread=True,
+        )
+        self._poll_state()
+
+    def on_worker_state_changed(self, event) -> None:
+        """Refresh board when a background worker completes."""
+        if not event.worker.name or not event.worker.is_finished:
+            return
+        if event.worker.name.startswith("launch-"):
+            result = event.worker.result
+            if result:
+                ok, msg = result
+                log.info("LAUNCH: %s — %s", "success" if ok else "failed", msg)
+            self._poll_state()
+        elif event.worker.name.startswith("delete-"):
+            self._poll_state()
+
     def action_create_task(self) -> None:
         """Open create modal."""
         self.push_screen(TaskModal(), self._on_task_created)
@@ -320,16 +362,44 @@ class DashboardApp(App):
         if card is None or card.task_data is None:
             return
         task = card.task_data
+        msg = f"Delete task [bold]{task.title}[/]?"
+        if task.workspace:
+            msg += f"\nWorkspace [bold]{task.workspace}[/] will also be removed."
         self.push_screen(
-            ConfirmModal(f"Delete task [bold]{task.title}[/]?"),
-            lambda confirmed: self._on_delete_confirmed(confirmed, task.id),
+            ConfirmModal(msg),
+            lambda confirmed: self._on_delete_confirmed(confirmed, task),
         )
 
-    def _on_delete_confirmed(self, confirmed: bool, task_id: str) -> None:
-        if confirmed:
-            self._store.delete(task_id)
-            log.info("TASK: deleted id=%s", task_id)
+    def _on_delete_confirmed(self, confirmed: bool, task: Task) -> None:
+        if not confirmed:
+            return
+        if task.workspace:
+            self.run_worker(
+                lambda: self._cleanup_workspace(task),
+                name=f"delete-{task.id}",
+                thread=True,
+            )
+        else:
+            self._store.delete(task.id)
+            log.info("TASK: deleted id=%s", task.id)
             self._poll_state()
+
+    @staticmethod
+    def _cleanup_workspace(task: Task) -> tuple[str, str]:
+        """Delete workspace + task in a background thread."""
+        from grove import workspace as ws_mod
+        from grove.dash.store import TaskStore
+
+        store = TaskStore()
+        ws_name = task.workspace
+        ok = ws_mod.delete_workspace(ws_name)
+        if ok:
+            log.info("TASK: cleaned up workspace %r", ws_name)
+        else:
+            log.warning("TASK: workspace cleanup failed for %r", ws_name)
+        store.delete(task.id)
+        log.info("TASK: deleted id=%s", task.id)
+        return task.id, ws_name
 
     # --- Search ---
 
