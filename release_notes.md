@@ -1,20 +1,16 @@
-## Kanban Dashboard
+## Bug Fix
 
-`gw dash` is now an interactive kanban board with task cards, replacing the read-only agent table.
+**Hooks no longer break after upgrading Grove.** Previously, `gw dash install` wrote hook commands that referenced the version-specific Python interpreter path (e.g. `Cellar/grove/0.12.0/libexec/bin/python3`). When Homebrew or uv upgraded Grove to a new version, that path stopped existing and all hooks silently failed.
 
-### New features
-- **Kanban board** with 5 columns: Planned, Active, Attention, Idle, Done
-- **Task cards**: create (`c`), edit (`e`), mark done (`d`), delete (`x`) with SQLite persistence
-- **Task launch** (alpha): press `s` on a planned card to provision a workspace, open a Zellij tab, and start Claude with the task prompt
-- **Workspace cleanup**: deleting a started task also removes the linked workspace
-- **Search**: `/` filters both live agents and task cards by title, branch, description, status
-- **Navigation**: `h/l` switches columns, `j/k` navigates cards
+Hook commands now use the stable `gw` entry point, which survives upgrades.
 
-### Known issues
-The launch flow (`s`) is experimental alpha — trust prompt timing, tab focus, and setup script output still need polish.
+### Upgrade action required
 
-## Upgrading
+After upgrading to 0.12.1, re-install your hooks:
 
-```bash
-brew upgrade grove
+```sh
+gw dash uninstall
+gw dash install
 ```
+
+This is a one-time step. Future upgrades will not require it.
