@@ -29,6 +29,9 @@ HOOK_EVENTS = [
 
 # Marker to identify our hooks
 _GROVE_MARKER = "gw _hook"
+# Legacy marker from pre-v0.13 (used sys.executable + python -m grove.dash).
+# Needed so uninstall can clean up old hooks. Safe to remove in v0.14+.
+_LEGACY_MARKER = "grove.dash"
 
 
 def _hook_command(event: str) -> str:
@@ -60,7 +63,7 @@ def _resolve_gw() -> str:
 def _is_grove_hook(hook: dict) -> bool:
     """Check if a hook entry belongs to Grove."""
     cmd = hook.get("command", "")
-    return _GROVE_MARKER in cmd
+    return _GROVE_MARKER in cmd or _LEGACY_MARKER in cmd
 
 
 def install_hooks(dry_run: bool = False) -> dict[str, list[str]]:
