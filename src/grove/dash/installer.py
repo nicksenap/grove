@@ -32,15 +32,35 @@ _GROVE_MARKER = "grove.dash"
 
 
 def _hook_command(event: str) -> str:
-    """Build the hook command string for a given event."""
-    python = sys.executable
-    return f"GROVE_EVENT={event} {python} -m grove.dash --event {event}"
+    """Build the hook command string for a given event.
+
+    Uses the ``gw`` console-script entry point (stable across upgrades)
+    rather than the versioned Python interpreter path, which breaks when
+    Homebrew or uv upgrades Grove to a new version.
+    """
+    gw = _resolve_gw()
+    return f"GROVE_EVENT={event} {gw} _hook --event {event}"
+
+
+def _resolve_gw() -> str:
+    """Find the stable ``gw`` binary path.
+
+    Prefers ``shutil.which`` so we get the canonical PATH entry (e.g.
+    /opt/homebrew/bin/gw) rather than a version-specific Cellar path.
+    Falls back to ``sys.executable -m grove.dash`` for editable/dev installs
+    where ``gw`` might not be on PATH.
+    """
+    gw_path = shutil.which("gw")
+    if gw_path:
+        return gw_path
+    # Fallback for dev installs
+    return f"{sys.executable} -m grove.cli"
 
 
 def _is_grove_hook(hook: dict) -> bool:
-    """Check if a hook entry belongs to Grove."""
+    """Check if a hook entry belongs to Grove (old or new format)."""
     cmd = hook.get("command", "")
-    return _GROVE_MARKER in cmd
+    return _GROVE_MARKER in cmd or "gw _hook" in cmd
 
 
 def install_hooks(dry_run: bool = False) -> dict[str, list[str]]:

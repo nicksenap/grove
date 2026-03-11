@@ -58,7 +58,7 @@ class TestInstallHooks:
         assert len(pre_rules) == 2
         all_cmds = [h["command"] for rule in pre_rules for h in rule.get("hooks", [])]
         assert "my-custom-hook" in all_cmds
-        assert any("grove.dash" in c for c in all_cmds)
+        assert any("grove.dash" in c or "gw _hook" in c for c in all_cmds)
 
         # Other settings preserved
         assert settings["other_setting"] is True
@@ -73,7 +73,10 @@ class TestInstallHooks:
         grove_rules = [
             rule
             for rule in pre_rules
-            if any("grove.dash" in h.get("command", "") for h in rule.get("hooks", []))
+            if any(
+                "grove.dash" in h.get("command", "") or "gw _hook" in h.get("command", "")
+                for h in rule.get("hooks", [])
+            )
         ]
         assert len(grove_rules) == 1
 
