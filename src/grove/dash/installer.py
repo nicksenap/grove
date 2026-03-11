@@ -27,8 +27,11 @@ HOOK_EVENTS = [
     "TaskCompleted",
 ]
 
-# Marker to identify our hooks
+# Markers to identify our hooks.
+# _GROVE_MARKER matches the legacy format (python -m grove.dash) used before v0.13.
+# Can be removed once all users have re-run `gw dash install`.
 _GROVE_MARKER = "grove.dash"
+_GROVE_HOOK_CMD = "gw _hook"
 
 
 def _hook_command(event: str) -> str:
@@ -53,14 +56,14 @@ def _resolve_gw() -> str:
     gw_path = shutil.which("gw")
     if gw_path:
         return gw_path
-    # Fallback for dev installs
-    return f"{sys.executable} -m grove.cli"
+    # Fallback for dev installs — multi-token string, interpreted by shell
+    return f"{sys.executable} -m grove.dash"
 
 
 def _is_grove_hook(hook: dict) -> bool:
     """Check if a hook entry belongs to Grove (old or new format)."""
     cmd = hook.get("command", "")
-    return _GROVE_MARKER in cmd or "gw _hook" in cmd
+    return _GROVE_MARKER in cmd or _GROVE_HOOK_CMD in cmd
 
 
 def install_hooks(dry_run: bool = False) -> dict[str, list[str]]:

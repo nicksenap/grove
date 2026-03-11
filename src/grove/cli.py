@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import re
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -949,8 +950,6 @@ def _do_cleanup(ws_name: str) -> None:
     immediately without waiting for worktree removal to finish.
     If cleanup fails, ``gw doctor`` will catch the stale state.
     """
-    import shutil
-
     gw_path = shutil.which("gw")
     if gw_path:
         cmd = [gw_path, "delete", "--force", ws_name]
