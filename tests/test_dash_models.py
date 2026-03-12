@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 
 from grove.dash.constants import AgentStatus
-from grove.dash.models import AgentState, StatusSummary, is_pid_alive
+from grove.dash.models import AgentState, ClaudeUsage, StatusSummary, is_pid_alive
 
 
 class TestAgentState:
@@ -83,6 +83,70 @@ class TestStatusSummary:
         s = StatusSummary(total=3, working=2, idle=1)
         assert "W:2" in s.status_line
         assert "I:1" in s.status_line
+
+
+class TestClaudeUsage:
+    def test_read_cache_valid(self, tmp_path: Path, monkeypatch: object) -> None:
+        cache = tmp_path / ".statusline-usage-cache"
+        cache.write_text(
+            "UTILIZATION=42\n"
+            "RESETS_AT=2026-03-12T22:00:00Z\n"
+            "TIMESTAMP=9999999999\n"
+            "PROFILE_NAME=Test Profile\n"
+        )
+        monkeypatch.setattr(ClaudeUsage, "_CACHE_PATH", cache)
+
+        usage = ClaudeUsage.read_cache()
+        assert usage is not None
+        assert usage.utilization == 42
+        assert usage.resets_at == "2026-03-12T22:00:00Z"
+        assert usage.profile_name == "Test Profile"
+        assert usage.stale is False
+
+    def test_read_cache_missing_file(self, tmp_path: Path, monkeypatch: object) -> None:
+        monkeypatch.setattr(ClaudeUsage, "_CACHE_PATH", tmp_path / "nonexistent")
+        assert ClaudeUsage.read_cache() is None
+
+    def test_read_cache_empty_file(self, tmp_path: Path, monkeypatch: object) -> None:
+        cache = tmp_path / "empty"
+        cache.write_text("")
+        monkeypatch.setattr(ClaudeUsage, "_CACHE_PATH", cache)
+        assert ClaudeUsage.read_cache() is None
+
+    def test_read_cache_malformed(self, tmp_path: Path, monkeypatch: object) -> None:
+        cache = tmp_path / "bad"
+        cache.write_text("just some garbage\nno equals here")
+        monkeypatch.setattr(ClaudeUsage, "_CACHE_PATH", cache)
+        assert ClaudeUsage.read_cache() is None
+
+    def test_read_cache_stale(self, tmp_path: Path, monkeypatch: object) -> None:
+        cache = tmp_path / "stale"
+        cache.write_text("UTILIZATION=10\nTIMESTAMP=1000000000\n")
+        monkeypatch.setattr(ClaudeUsage, "_CACHE_PATH", cache)
+
+        usage = ClaudeUsage.read_cache()
+        assert usage is not None
+        assert usage.stale is True
+
+    def test_bar(self) -> None:
+        usage = ClaudeUsage(utilization=45)
+        assert usage.bar == "▓▓▓▓░░░░░░"
+
+    def test_bar_zero(self) -> None:
+        usage = ClaudeUsage(utilization=0)
+        assert usage.bar == "░░░░░░░░░░"
+
+    def test_bar_full(self) -> None:
+        usage = ClaudeUsage(utilization=100)
+        assert usage.bar == "▓▓▓▓▓▓▓▓▓▓"
+
+    def test_reset_countdown_empty(self) -> None:
+        usage = ClaudeUsage()
+        assert usage.reset_countdown == ""
+
+    def test_reset_countdown_past(self) -> None:
+        usage = ClaudeUsage(resets_at="2020-01-01T00:00:00Z")
+        assert usage.reset_countdown == "now"
 
 
 class TestIsPidAlive:

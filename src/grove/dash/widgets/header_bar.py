@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from textual.widgets import Static
 
-from grove.dash.models import StatusSummary
+from grove.dash.models import ClaudeUsage, StatusSummary
 
 # Gruvbox dark palette
 _GREEN = "#b8bb26"
@@ -14,6 +14,18 @@ _YELLOW = "#fabd2f"
 _GREY = "#928374"
 _FG = "#fbf1c7"
 _ORANGE = "#fe8019"
+_PURPLE = "#d3869b"
+
+
+def _usage_color(pct: int) -> str:
+    """Pick a color based on utilization percentage."""
+    if pct < 50:
+        return _GREEN
+    if pct < 75:
+        return _YELLOW
+    if pct < 90:
+        return _ORANGE
+    return _RED
 
 
 class HeaderBar(Static):
@@ -41,5 +53,17 @@ class HeaderBar(Static):
                 parts.append(f"[{_ORANGE}][X]{summary.error}[/]  ")
             if summary.idle:
                 parts.append(f"[{_GREY}]---{summary.idle}[/]")
+
+        # Claude usage (from Usage Tracker cache)
+        usage = ClaudeUsage.read_cache()
+        if usage is not None:
+            color = _usage_color(usage.utilization)
+            stale = f" [{_GREY}]stale[/]" if usage.stale else ""
+            reset = f" → {usage.reset_countdown}" if usage.reset_countdown else ""
+            parts.append(
+                f"  [{_GREY}]│[/]  "
+                f"[{_GREY}]usage:[/] [{color}]{usage.utilization}% {usage.bar}{reset}[/]"
+                f"{stale}"
+            )
 
         self.update("".join(parts))

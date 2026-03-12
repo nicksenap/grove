@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -171,6 +172,72 @@ class StatusSummary:
         if self.idle:
             parts.append(f"I:{self.idle}")
         return " ".join(parts) if parts else "no agents"
+
+
+@dataclass
+class ClaudeUsage:
+    """Claude usage data from the Usage Tracker cache."""
+
+    utilization: int = 0  # 0–100%
+    resets_at: str = ""  # ISO timestamp
+    profile_name: str = ""
+    stale: bool = False  # True if cache is older than 10 minutes
+
+    _CACHE_PATH = Path.home() / ".claude" / ".statusline-usage-cache"
+    _STALE_SECONDS = 600  # 10 minutes
+
+    @classmethod
+    def read_cache(cls) -> ClaudeUsage | None:
+        """Read usage data from the Claude Usage Tracker cache file."""
+        try:
+            text = cls._CACHE_PATH.read_text()
+        except OSError:
+            return None
+
+        vals: dict[str, str] = {}
+        for line in text.strip().splitlines():
+            if "=" in line:
+                k, _, v = line.partition("=")
+                vals[k.strip()] = v.strip()
+
+        if "UTILIZATION" not in vals:
+            return None
+
+        ts = int(vals.get("TIMESTAMP", "0"))
+        stale = (time.time() - ts) > cls._STALE_SECONDS if ts else True
+
+        return cls(
+            utilization=int(vals.get("UTILIZATION", "0")),
+            resets_at=vals.get("RESETS_AT", ""),
+            profile_name=vals.get("PROFILE_NAME", ""),
+            stale=stale,
+        )
+
+    @property
+    def reset_countdown(self) -> str:
+        """Human-friendly countdown to reset, e.g. '1h32m'."""
+        if not self.resets_at:
+            return ""
+        try:
+            reset = datetime.fromisoformat(self.resets_at)
+            now = datetime.now(UTC)
+            delta = reset - now
+            secs = int(delta.total_seconds())
+            if secs <= 0:
+                return "now"
+            if secs < 60:
+                return f"{secs}s"
+            if secs < 3600:
+                return f"{secs // 60}m"
+            return f"{secs // 3600}h{(secs % 3600) // 60:02d}m"
+        except (ValueError, TypeError):
+            return ""
+
+    @property
+    def bar(self) -> str:
+        """10-block progress bar using block characters."""
+        filled = self.utilization // 10
+        return "▓" * filled + "░" * (10 - filled)
 
 
 def is_pid_alive(pid: int) -> bool:
