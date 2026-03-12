@@ -119,6 +119,21 @@ class TestClaudeUsage:
         monkeypatch.setattr(ClaudeUsage, "_CACHE_PATH", cache)
         assert ClaudeUsage.read_cache() is None
 
+    def test_read_cache_non_numeric_utilization(self, tmp_path: Path, monkeypatch: object) -> None:
+        cache = tmp_path / "bad_util"
+        cache.write_text("UTILIZATION=abc\nTIMESTAMP=123\n")
+        monkeypatch.setattr(ClaudeUsage, "_CACHE_PATH", cache)
+        assert ClaudeUsage.read_cache() is None
+
+    def test_read_cache_non_numeric_timestamp(self, tmp_path: Path, monkeypatch: object) -> None:
+        cache = tmp_path / "bad_ts"
+        cache.write_text("UTILIZATION=50\nTIMESTAMP=notanumber\n")
+        monkeypatch.setattr(ClaudeUsage, "_CACHE_PATH", cache)
+        usage = ClaudeUsage.read_cache()
+        assert usage is not None
+        assert usage.utilization == 50
+        assert usage.stale is True  # bad timestamp treated as 0 → stale
+
     def test_read_cache_stale(self, tmp_path: Path, monkeypatch: object) -> None:
         cache = tmp_path / "stale"
         cache.write_text("UTILIZATION=10\nTIMESTAMP=1000000000\n")
@@ -147,6 +162,16 @@ class TestClaudeUsage:
     def test_reset_countdown_past(self) -> None:
         usage = ClaudeUsage(resets_at="2020-01-01T00:00:00Z")
         assert usage.reset_countdown == "now"
+
+    def test_reset_countdown_naive_datetime(self) -> None:
+        """Naive datetime (no tz) should be treated as UTC, not raise."""
+        usage = ClaudeUsage(resets_at="2020-01-01T00:00:00")
+        assert usage.reset_countdown == "now"
+
+    def test_bar_negative(self) -> None:
+        usage = ClaudeUsage(utilization=-5)
+        assert usage.bar == "░░░░░░░░░░"
+        assert len(usage.bar) == 10
 
 
 class TestIsPidAlive:

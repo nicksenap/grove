@@ -8,6 +8,7 @@ import time
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import ClassVar
 
 from grove.dash.constants import ATTENTION_STATUSES, SPARK_CHARS, AgentStatus
 
@@ -183,8 +184,8 @@ class ClaudeUsage:
     profile_name: str = ""
     stale: bool = False  # True if cache is older than 10 minutes
 
-    _CACHE_PATH = Path.home() / ".claude" / ".statusline-usage-cache"
-    _STALE_SECONDS = 600  # 10 minutes
+    _CACHE_PATH: ClassVar[Path] = Path.home() / ".claude" / ".statusline-usage-cache"
+    _STALE_SECONDS: ClassVar[int] = 600  # 10 minutes
 
     @classmethod
     def read_cache(cls) -> ClaudeUsage | None:
@@ -203,11 +204,19 @@ class ClaudeUsage:
         if "UTILIZATION" not in vals:
             return None
 
-        ts = int(vals.get("TIMESTAMP", "0"))
+        try:
+            ts = int(vals.get("TIMESTAMP", "0"))
+        except ValueError:
+            ts = 0
         stale = (time.time() - ts) > cls._STALE_SECONDS if ts else True
 
+        try:
+            utilization = int(vals.get("UTILIZATION", "0"))
+        except ValueError:
+            return None
+
         return cls(
-            utilization=int(vals.get("UTILIZATION", "0")),
+            utilization=utilization,
             resets_at=vals.get("RESETS_AT", ""),
             profile_name=vals.get("PROFILE_NAME", ""),
             stale=stale,
@@ -220,6 +229,8 @@ class ClaudeUsage:
             return ""
         try:
             reset = datetime.fromisoformat(self.resets_at)
+            if reset.tzinfo is None:
+                reset = reset.replace(tzinfo=UTC)
             now = datetime.now(UTC)
             delta = reset - now
             secs = int(delta.total_seconds())
@@ -236,7 +247,7 @@ class ClaudeUsage:
     @property
     def bar(self) -> str:
         """10-block progress bar using block characters."""
-        filled = self.utilization // 10
+        filled = max(0, min(10, self.utilization // 10))
         return "▓" * filled + "░" * (10 - filled)
 
 

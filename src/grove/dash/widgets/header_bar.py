@@ -14,7 +14,6 @@ _YELLOW = "#fabd2f"
 _GREY = "#928374"
 _FG = "#fbf1c7"
 _ORANGE = "#fe8019"
-_PURPLE = "#d3869b"
 
 
 def _usage_color(pct: int) -> str:
