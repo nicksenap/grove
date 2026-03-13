@@ -178,19 +178,23 @@ def create_workspace(
 def _rehydrate_claude_memory(repos: list[RepoWorktree]) -> None:
     """Copy Claude Code memory from source repos into new worktrees."""
     for repo_wt in repos:
-        with contextlib.suppress(Exception):
+        try:
             n = claude.rehydrate_memory(repo_wt.source_repo, repo_wt.worktree_path)
             if n:
                 info(f"[{repo_wt.repo_name}] rehydrated {n} Claude memory file(s)")
+        except Exception as exc:
+            warning(f"[{repo_wt.repo_name}] Claude memory rehydrate failed: {exc}")
 
 
 def _harvest_claude_memory(repos: list[RepoWorktree]) -> None:
     """Copy Claude Code memory from worktrees back into source repos."""
     for repo_wt in repos:
-        with contextlib.suppress(Exception):
+        try:
             n = claude.harvest_memory(repo_wt.worktree_path, repo_wt.source_repo)
             if n:
                 info(f"[{repo_wt.repo_name}] harvested {n} Claude memory file(s)")
+        except Exception as exc:
+            warning(f"[{repo_wt.repo_name}] Claude memory harvest failed: {exc}")
 
 
 def _run_hook(repo_name: str, source_repo: Path, worktree_path: Path, hook: str) -> None:
@@ -701,6 +705,14 @@ def rename_workspace(old_name: str, new_name: str, config: Config) -> bool:
         with contextlib.suppress(Exception):
             git.worktree_repair(repo_wt.source_repo, repo_wt.worktree_path)
 
+    # Migrate Claude Code memory directories to the new paths (best-effort)
+    if config.claude_memory_sync:
+        for repo_wt, orig_wt_path in orig_wt_paths:
+            try:
+                claude.migrate_memory_dir(orig_wt_path, repo_wt.worktree_path)
+            except Exception as exc:
+                warning(f"[{repo_wt.repo_name}] Claude memory migration failed: {exc}")
+
     return True
 
 
@@ -724,9 +736,12 @@ def diagnose_workspaces(config: Config) -> list[DoctorIssue]:
     issues: list[DoctorIssue] = []
     workspaces = state.load_workspaces()
 
-    # Check for orphaned Claude Code memory directories
+    # Check for orphaned Claude Code memory directories.
+    # Only checks worktree paths known to state — if a workspace was fully
+    # deleted, its memory was already harvested during delete_workspace.
     if config.claude_memory_sync:
-        orphaned = claude.find_orphaned_memory_dirs(config.workspace_dir)
+        all_wt_paths = [repo_wt.worktree_path for ws in workspaces for repo_wt in ws.repos]
+        orphaned = claude.find_orphaned_memory_dirs(all_wt_paths)
         for orphan_dir in orphaned:
             issues.append(
                 DoctorIssue(

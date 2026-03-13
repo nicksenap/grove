@@ -82,46 +82,55 @@ def harvest_memory(worktree_path: Path, source_repo: Path) -> int:
     return copied
 
 
-def find_orphaned_memory_dirs(workspace_dir: Path) -> list[Path]:
-    """Find Claude memory dirs that look like Grove worktrees but no longer exist.
+def migrate_memory_dir(old_path: Path, new_path: Path) -> bool:
+    """Rename a Claude memory project dir from *old_path*'s encoding to *new_path*'s.
 
-    Builds a set of encoded paths for all *existing* workspace subdirectories,
-    then flags any Claude project dir under the workspace prefix that isn't in
-    that active set.  This avoids the lossy-decode problem entirely.
+    Used when a worktree is moved (e.g. workspace rename) so the memory
+    follows the new location. Returns True if a migration was performed.
+    """
+    old_dir = memory_dir_for(old_path).parent  # the project dir, not memory/
+    new_dir = memory_dir_for(new_path).parent
+    if not old_dir.is_dir():
+        return False
+    if new_dir.exists():
+        # Target already exists — merge instead of clobbering
+        old_mem = old_dir / "memory"
+        new_mem = new_dir / "memory"
+        if old_mem.is_dir():
+            new_mem.mkdir(parents=True, exist_ok=True)
+            for f in old_mem.iterdir():
+                if f.is_file():
+                    shutil.copy2(f, new_mem / f.name)
+            shutil.rmtree(old_dir, ignore_errors=True)
+        return True
+    new_dir.parent.mkdir(parents=True, exist_ok=True)
+    old_dir.rename(new_dir)
+    return True
+
+
+def find_orphaned_memory_dirs(active_worktree_paths: list[Path]) -> list[Path]:
+    """Find Claude memory dirs whose worktrees no longer exist on disk.
+
+    Takes the list of *all known worktree paths* (from workspace state) and
+    checks which ones have a Claude memory directory but no longer exist on
+    disk.  This is precise — it only looks at paths Grove created, avoiding
+    false positives from unrelated Claude projects.
 
     Returns a list of orphaned Claude project directories (the parent of ``memory/``).
     """
     if not CLAUDE_PROJECTS_DIR.is_dir():
         return []
 
-    prefix = encode_path(workspace_dir.resolve())
-
-    # Build set of encoded paths for all existing workspace dirs and their children
-    active_encoded: set[str] = set()
-    if workspace_dir.is_dir():
-        for ws_dir in workspace_dir.iterdir():
-            if not ws_dir.is_dir():
-                continue
-            active_encoded.add(encode_path(ws_dir.resolve()))
-            for child in ws_dir.iterdir():
-                if child.is_dir():
-                    active_encoded.add(encode_path(child.resolve()))
-
     orphaned: list[Path] = []
-    for entry in CLAUDE_PROJECTS_DIR.iterdir():
-        if not entry.is_dir():
+    for wt_path in active_worktree_paths:
+        project_dir = memory_dir_for(wt_path).parent
+        if not project_dir.is_dir():
             continue
-        if not entry.name.startswith(prefix):
+        if not (project_dir / "memory").is_dir():
             continue
-        # Must be a subdirectory of workspace_dir (not workspace_dir itself)
-        if entry.name == prefix:
-            continue
-        # Must have a memory/ subdir (otherwise it's not a Claude memory project)
-        if not (entry / "memory").is_dir():
-            continue
-        # If not in the active set, it's orphaned
-        if entry.name not in active_encoded:
-            orphaned.append(entry)
+        # The worktree is gone but the Claude memory dir remains
+        if not wt_path.exists():
+            orphaned.append(project_dir)
 
     return orphaned
 

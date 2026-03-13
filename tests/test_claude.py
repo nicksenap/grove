@@ -162,39 +162,41 @@ class TestHarvestMemory:
 class TestFindOrphanedMemoryDirs:
     def test_finds_orphaned_dirs(self, tmp_path):
         projects_dir = tmp_path / "projects"
-        workspace_dir = tmp_path / "workspaces"
-        workspace_dir.mkdir()
 
-        # Create a workspace that still exists
-        (workspace_dir / "active-ws" / "repo-a").mkdir(parents=True)
+        # Path that still exists
+        active_path = tmp_path / "workspaces" / "active-ws" / "repo-a"
+        active_path.mkdir(parents=True)
+        # Path that no longer exists
+        deleted_path = tmp_path / "workspaces" / "deleted-ws" / "repo-b"
 
-        # Create Claude memory dirs
-        active_encoded = claude.encode_path((workspace_dir / "active-ws" / "repo-a").resolve())
-        orphan_encoded = claude.encode_path((workspace_dir / "deleted-ws" / "repo-b").resolve())
-
-        (projects_dir / active_encoded / "memory").mkdir(parents=True)
-        (projects_dir / orphan_encoded / "memory").mkdir(parents=True)
-
+        # Create Claude memory dirs for both
         with patch.object(claude, "CLAUDE_PROJECTS_DIR", projects_dir):
-            orphans = claude.find_orphaned_memory_dirs(workspace_dir)
+            claude.memory_dir_for(active_path).mkdir(parents=True)
+            orphan_project_dir = claude.memory_dir_for(deleted_path).parent
+            (orphan_project_dir / "memory").mkdir(parents=True)
+
+            orphans = claude.find_orphaned_memory_dirs([active_path, deleted_path])
 
         assert len(orphans) == 1
-        assert orphans[0].name == orphan_encoded
+        assert orphans[0] == orphan_project_dir
 
     def test_no_claude_dir_returns_empty(self, tmp_path):
         with patch.object(claude, "CLAUDE_PROJECTS_DIR", tmp_path / "nonexistent"):
-            assert claude.find_orphaned_memory_dirs(tmp_path) == []
+            assert claude.find_orphaned_memory_dirs([tmp_path / "some-path"]) == []
 
-    def test_ignores_non_workspace_dirs(self, tmp_path):
+    def test_skips_paths_without_memory_dir(self, tmp_path):
         projects_dir = tmp_path / "projects"
-        workspace_dir = tmp_path / "workspaces"
-        workspace_dir.mkdir()
-
-        # Create a Claude dir that doesn't match workspace prefix
-        (projects_dir / "-Users-nick-dev-other" / "memory").mkdir(parents=True)
+        gone_path = tmp_path / "gone"
 
         with patch.object(claude, "CLAUDE_PROJECTS_DIR", projects_dir):
-            assert claude.find_orphaned_memory_dirs(workspace_dir) == []
+            # Create the project dir but not the memory subdir
+            (projects_dir / claude.encode_path(gone_path.resolve())).mkdir(parents=True)
+
+            assert claude.find_orphaned_memory_dirs([gone_path]) == []
+
+    def test_empty_list_returns_empty(self, tmp_path):
+        with patch.object(claude, "CLAUDE_PROJECTS_DIR", tmp_path):
+            assert claude.find_orphaned_memory_dirs([]) == []
 
 
 class TestCleanupOrphanedMemoryDirs:
@@ -214,5 +216,49 @@ class TestCleanupOrphanedMemoryDirs:
             assert not d.exists()
 
     def test_handles_already_missing(self, tmp_path):
-        removed = claude.cleanup_orphaned_memory_dirs([tmp_path / "nope"])
-        assert removed == 0
+        assert claude.cleanup_orphaned_memory_dirs([tmp_path / "nope"]) == 0
+
+
+class TestMigrateMemoryDir:
+    def test_renames_directory(self, tmp_path):
+        projects_dir = tmp_path / "projects"
+        old_wt = tmp_path / "workspaces" / "old-ws" / "repo"
+        new_wt = tmp_path / "workspaces" / "new-ws" / "repo"
+
+        with patch.object(claude, "CLAUDE_PROJECTS_DIR", projects_dir):
+            old_mem = claude.memory_dir_for(old_wt)
+            old_mem.mkdir(parents=True)
+            (old_mem / "context.md").write_text("important context")
+
+            result = claude.migrate_memory_dir(old_wt, new_wt)
+
+            assert result is True
+            assert not old_mem.parent.exists()
+            new_mem = claude.memory_dir_for(new_wt)
+            assert (new_mem / "context.md").read_text() == "important context"
+
+    def test_merges_when_target_exists(self, tmp_path):
+        projects_dir = tmp_path / "projects"
+        old_wt = tmp_path / "old"
+        new_wt = tmp_path / "new"
+
+        with patch.object(claude, "CLAUDE_PROJECTS_DIR", projects_dir):
+            old_mem = claude.memory_dir_for(old_wt)
+            old_mem.mkdir(parents=True)
+            (old_mem / "from_old.md").write_text("old data")
+
+            new_mem = claude.memory_dir_for(new_wt)
+            new_mem.mkdir(parents=True)
+            (new_mem / "existing.md").write_text("already here")
+
+            result = claude.migrate_memory_dir(old_wt, new_wt)
+
+            assert result is True
+            assert (new_mem / "from_old.md").read_text() == "old data"
+            assert (new_mem / "existing.md").read_text() == "already here"
+            assert not old_mem.parent.exists()
+
+    def test_no_source_returns_false(self, tmp_path):
+        projects_dir = tmp_path / "projects"
+        with patch.object(claude, "CLAUDE_PROJECTS_DIR", projects_dir):
+            assert claude.migrate_memory_dir(tmp_path / "nope", tmp_path / "new") is False
