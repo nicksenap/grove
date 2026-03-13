@@ -14,6 +14,7 @@ class Config:
     repo_dirs: list[Path]
     workspace_dir: Path
     presets: dict[str, list[str]] = field(default_factory=dict)
+    claude_memory_sync: bool = False
 
     def to_dict(self) -> dict:
         d: dict = {
@@ -42,6 +43,7 @@ class Config:
             repo_dirs=repo_dirs,
             workspace_dir=Path(data["workspace_dir"]),
             presets=presets,
+            claude_memory_sync=bool(data.get("claude_memory_sync", False)),
         )
 
 

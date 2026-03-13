@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from grove import git, state
+from grove import claude, config, git, state
 from grove.console import console, error, info, success, warning
 from grove.git import GitError
 from grove.models import Config, RepoWorktree, Workspace
@@ -168,7 +168,29 @@ def create_workspace(
         repos=created,
     )
     state.add_workspace(workspace)
+
+    if config.claude_memory_sync:
+        _rehydrate_claude_memory(created)
+
     return workspace
+
+
+def _rehydrate_claude_memory(repos: list[RepoWorktree]) -> None:
+    """Copy Claude Code memory from source repos into new worktrees."""
+    for repo_wt in repos:
+        with contextlib.suppress(Exception):
+            n = claude.rehydrate_memory(repo_wt.source_repo, repo_wt.worktree_path)
+            if n:
+                info(f"[{repo_wt.repo_name}] rehydrated {n} Claude memory file(s)")
+
+
+def _harvest_claude_memory(repos: list[RepoWorktree]) -> None:
+    """Copy Claude Code memory from worktrees back into source repos."""
+    for repo_wt in repos:
+        with contextlib.suppress(Exception):
+            n = claude.harvest_memory(repo_wt.worktree_path, repo_wt.source_repo)
+            if n:
+                info(f"[{repo_wt.repo_name}] harvested {n} Claude memory file(s)")
 
 
 def _run_hook(repo_name: str, source_repo: Path, worktree_path: Path, hook: str) -> None:
@@ -243,6 +265,11 @@ def delete_workspace(name: str) -> bool:
     if workspace is None:
         error(f"Workspace [bold]{name}[/] not found")
         return False
+
+    # Harvest Claude memory before removing worktrees
+    cfg = config.load_config()
+    if cfg and cfg.claude_memory_sync:
+        _harvest_claude_memory(workspace.repos)
 
     def _remove_one(_name: str, repo_wt: RepoWorktree) -> None:
         _teardown_and_remove(_name, repo_wt, force_cleanup=True)
@@ -566,6 +593,10 @@ def add_repo_to_workspace(
 
     ws.repos.extend(created)
     state.update_workspace(ws)
+
+    if config.claude_memory_sync:
+        _rehydrate_claude_memory(created)
+
     return created
 
 
@@ -590,6 +621,11 @@ def remove_repo_from_workspace(
     if not to_remove:
         warning("No repos to remove")
         return True
+
+    # Harvest Claude memory before removing worktrees
+    cfg = config.load_config()
+    if cfg and cfg.claude_memory_sync:
+        _harvest_claude_memory(to_remove)
 
     items = [(wt.repo_name, wt) for wt in to_remove]
     removed_names: set[str] = set()
@@ -688,6 +724,19 @@ def diagnose_workspaces(config: Config) -> list[DoctorIssue]:
     issues: list[DoctorIssue] = []
     workspaces = state.load_workspaces()
 
+    # Check for orphaned Claude Code memory directories
+    if config.claude_memory_sync:
+        orphaned = claude.find_orphaned_memory_dirs(config.workspace_dir)
+        for orphan_dir in orphaned:
+            issues.append(
+                DoctorIssue(
+                    workspace_name="[claude]",
+                    repo_name=orphan_dir.name,
+                    issue="orphaned Claude memory directory",
+                    suggested_action="remove orphaned Claude memory",
+                )
+            )
+
     for ws in workspaces:
         # Check: workspace directory exists
         if not ws.path.exists():
@@ -763,11 +812,18 @@ def fix_workspace_issues(issues: list[DoctorIssue]) -> int:
     # Group repo-level removals: workspace_name -> set of repo_names
     repos_to_remove: dict[str, set[str]] = {}
 
+    # Collect orphaned Claude memory dirs for cleanup
+    claude_orphans: list[Path] = []
+
     for issue in issues:
         if issue.repo_name is None and "remove stale state" in issue.suggested_action:
             ws_to_remove.add(issue.workspace_name)
         elif issue.repo_name is not None and "remove stale repo" in issue.suggested_action:
             repos_to_remove.setdefault(issue.workspace_name, set()).add(issue.repo_name)
+        elif "orphaned Claude memory" in issue.suggested_action and issue.repo_name:
+            orphan_path = claude.CLAUDE_PROJECTS_DIR / issue.repo_name
+            if orphan_path.is_dir():
+                claude_orphans.append(orphan_path)
 
     # Remove stale workspaces
     for ws_name in ws_to_remove:
@@ -784,5 +840,8 @@ def fix_workspace_issues(issues: list[DoctorIssue]) -> int:
         ws.repos = [r for r in ws.repos if r.repo_name not in repo_names]
         state.update_workspace(ws)
         fixed += len(repo_names)
+
+    # Clean up orphaned Claude memory directories
+    fixed += claude.cleanup_orphaned_memory_dirs(claude_orphans)
 
     return fixed

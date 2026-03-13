@@ -63,6 +63,8 @@ def save_config(config: Config) -> None:
         f"repo_dirs = [{quoted_dirs}]",
         f'workspace_dir = "{config.workspace_dir}"',
     ]
+    if config.claude_memory_sync:
+        lines.append("claude_memory_sync = true")
     for preset_name, repos in config.presets.items():
         lines.append("")
         quoted = ", ".join(f'"{r}"' for r in repos)
