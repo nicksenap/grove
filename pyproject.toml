@@ -1,6 +1,6 @@
 [project]
 name = "grove"
-version = "0.12.2"
+version = "0.12.3"
 description = "Git Worktree Workspace Orchestrator"
 readme = "README.md"
 authors = [
