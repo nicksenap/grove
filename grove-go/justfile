@@ -1,0 +1,58 @@
+set shell := ["bash", "-cu"]
+
+version := `git describe --tags --always --dirty 2>/dev/null || echo "dev"`
+
+# Build the gw binary
+build:
+    go build -ldflags "-X main.version={{version}}" -o gw ./cmd/gw
+
+# Run all tests
+test *args='':
+    go test ./... {{args}}
+
+# Run linter
+lint:
+    go vet ./...
+    @which golangci-lint > /dev/null 2>&1 && golangci-lint run || echo "golangci-lint not installed, skipping"
+
+# Format code
+fmt:
+    gofmt -w .
+
+# Check formatting
+fmt-check:
+    @test -z "$(gofmt -l .)" || (gofmt -l . && exit 1)
+
+# Lint + format check + tests
+check: lint fmt-check test
+
+# Install gw globally to GOBIN (replaces any existing gw on PATH if ~/go/bin is first)
+install:
+    go install -ldflags "-X main.version={{version}}" ./cmd/gw
+
+# Install gw globally for development (same as install — rebuild to pick up changes)
+dev-global:
+    go install -ldflags "-X main.version={{version}}-dev" ./cmd/gw
+    @GOBIN="$(go env GOPATH)/bin"; \
+    echo "Installed gw (Go) to $GOBIN/gw"; \
+    if ! echo "$PATH" | tr ':' '\n' | grep -qx "$GOBIN"; then \
+        echo ""; \
+        echo "⚠ $GOBIN is not in your PATH. Add this to ~/.zshrc:"; \
+        echo ""; \
+        echo "  export PATH=\"\$HOME/go/bin:\$PATH\""; \
+        echo ""; \
+        echo "Then: source ~/.zshrc"; \
+    fi
+
+# Remove Go-installed gw so the Homebrew/Python version takes over
+undev:
+    rm -f "$(go env GOPATH)/bin/gw"
+    @echo "Removed Go gw — Homebrew/Python gw is now active (if installed)"
+
+# Clean build artifacts
+clean:
+    rm -f gw
+
+# Run with verbose test output
+test-v:
+    go test ./... -v

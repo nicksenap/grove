@@ -1,0 +1,47 @@
+version: 2
+
+project_name: grove
+
+builds:
+  - id: gw
+    main: ./cmd/gw
+    binary: gw
+    ldflags:
+      - -s -w -X main.version={{.Version}}
+    goos:
+      - darwin
+      - linux
+    goarch:
+      - amd64
+      - arm64
+
+archives:
+  - id: default
+    formats:
+      - tar.gz
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+
+brews:
+  - repository:
+      owner: nicksenap
+      name: homebrew-tap
+    name: grove
+    homepage: "https://github.com/nicksenap/grove"
+    description: "Git Worktree Workspace Orchestrator"
+    install: |
+      bin.install "gw"
+
+checksum:
+  name_template: "checksums.txt"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+
+release:
+  github:
+    owner: nicksenap
+    name: grove
