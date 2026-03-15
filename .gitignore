@@ -12,3 +12,9 @@ wheels/
 # Tool caches
 .pytest_cache/
 .ruff_cache/
+
+# Go build artifacts
+grove-go/gw
+
+# macOS
+.DS_Store
