@@ -11,11 +11,13 @@ from pathlib import Path
 
 import typer
 
-from grove import __version__, config, discover, state, workspace
+from grove import __version__, config, discover, log, state, workspace
 from grove.console import console, error, info, make_table, success, warning
 from grove.git import pr_status as git_pr_status
 from grove.models import Workspace
 from grove.update import get_newer_version
+
+_log = log.get_logger(__name__)
 
 
 def _version_callback(value: bool) -> None:
@@ -42,8 +44,16 @@ def main(
         callback=_version_callback,
         is_eager=True,
     ),
+    verbose: bool = typer.Option(
+        False,
+        "--verbose",
+        help="Enable debug logging to ~/.grove/grove.log",
+    ),
 ) -> None:
     """Grove — Git Worktree Workspace Orchestrator."""
+    log.setup(verbose=verbose)
+    _log.info("gw %s", ctx.invoked_subcommand or "(no subcommand)")
+
     # Non-blocking update check (reads cache, refreshes in background)
     newer = get_newer_version(__version__)
     if newer:
@@ -468,7 +478,9 @@ def create(
 
     ws = workspace.create_workspace(name, selected, branch, cfg)
     if ws is None:
+        _log.error("workspace create failed: %s", name)
         raise typer.Exit(1)
+    _log.info("workspace created: %s (branch=%s, repos=%s)", name, branch, list(selected.keys()))
 
     # --- Copy CLAUDE.md from repos dir if present ---
     claude_md = next((d / "CLAUDE.md" for d in cfg.repo_dirs if (d / "CLAUDE.md").is_file()), None)
@@ -556,6 +568,7 @@ def delete(
     failed = False
     for n in names:
         if workspace.delete_workspace(n):
+            _log.info("workspace deleted: %s", n)
             success(f"Workspace [bold]{n}[/] deleted")
         else:
             failed = True

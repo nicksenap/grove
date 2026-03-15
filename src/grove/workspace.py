@@ -14,7 +14,10 @@ from typing import Any
 from grove import claude, config, git, state
 from grove.console import console, error, info, success, warning
 from grove.git import GitError
+from grove.log import get_logger
 from grove.models import Config, RepoWorktree, Workspace
+
+_log = get_logger(__name__)
 
 
 def _parallel(
@@ -157,8 +160,10 @@ def create_workspace(
 
     workspace_path.mkdir(parents=True, exist_ok=True)
 
+    _log.info("creating workspace %r (branch=%s, repos=%s)", name, branch, list(repo_paths.keys()))
     created = _provision_worktrees(repo_paths, branch, workspace_path)
     if created is None:
+        _log.error("workspace creation failed for %r — rolled back", name)
         return None
 
     workspace = Workspace(
@@ -172,6 +177,7 @@ def create_workspace(
     if config.claude_memory_sync:
         _rehydrate_claude_memory(created)
 
+    _log.info("workspace %r created at %s", name, workspace_path)
     return workspace
 
 
@@ -181,8 +187,10 @@ def _rehydrate_claude_memory(repos: list[RepoWorktree]) -> None:
         try:
             n = claude.rehydrate_memory(repo_wt.source_repo, repo_wt.worktree_path)
             if n:
+                _log.info("rehydrated %d Claude memory file(s) for %s", n, repo_wt.repo_name)
                 info(f"[{repo_wt.repo_name}] rehydrated {n} Claude memory file(s)")
         except Exception as exc:
+            _log.warning("Claude memory rehydrate failed for %s: %s", repo_wt.repo_name, exc)
             warning(f"[{repo_wt.repo_name}] Claude memory rehydrate failed: {exc}")
 
 
@@ -192,8 +200,10 @@ def _harvest_claude_memory(repos: list[RepoWorktree]) -> None:
         try:
             n = claude.harvest_memory(repo_wt.worktree_path, repo_wt.source_repo)
             if n:
+                _log.info("harvested %d Claude memory file(s) for %s", n, repo_wt.repo_name)
                 info(f"[{repo_wt.repo_name}] harvested {n} Claude memory file(s)")
         except Exception as exc:
+            _log.warning("Claude memory harvest failed for %s: %s", repo_wt.repo_name, exc)
             warning(f"[{repo_wt.repo_name}] Claude memory harvest failed: {exc}")
 
 
@@ -270,6 +280,8 @@ def delete_workspace(name: str) -> bool:
         error(f"Workspace [bold]{name}[/] not found")
         return False
 
+    _log.info("deleting workspace %r", name)
+
     # Harvest Claude memory before removing worktrees
     cfg = config.load_config()
     if cfg and cfg.claude_memory_sync:
@@ -291,6 +303,7 @@ def delete_workspace(name: str) -> bool:
         shutil.rmtree(workspace.path, ignore_errors=True)
 
     if failures and workspace.path.exists():
+        _log.warning("workspace %r: %d worktree(s) failed to remove", name, failures)
         warning(
             f"{failures} worktree(s) could not be removed. "
             "Run [bold]gw doctor --fix[/] to clean up."
@@ -298,6 +311,7 @@ def delete_workspace(name: str) -> bool:
         return False
 
     state.remove_workspace(name)
+    _log.info("workspace %r deleted", name)
     return True
 
 
@@ -370,6 +384,7 @@ def sync_workspace(workspace: Workspace) -> list[dict[str, str]]:
 
     Returns list of ``{repo, base, result}`` dicts.
     """
+    _log.info("syncing workspace %r", workspace.name)
     items = [(wt.repo_name, wt) for wt in workspace.repos]
     results: list[dict[str, str]] = []
     for _name, result, exc in _parallel(_sync_one_repo, items, "Syncing"):
@@ -377,6 +392,7 @@ def sync_workspace(workspace: Workspace) -> list[dict[str, str]]:
             results.append({"repo": _name, "base": "?", "result": f"error: {exc}"})
         else:
             results.append(result)
+    _log.info("sync results: %s", {r["repo"]: r["result"] for r in results})
     return results
 
 
