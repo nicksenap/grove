@@ -478,9 +478,7 @@ def create(
 
     ws = workspace.create_workspace(name, selected, branch, cfg)
     if ws is None:
-        _log.error("workspace create failed: %s", name)
         raise typer.Exit(1)
-    _log.info("workspace created: %s (branch=%s, repos=%s)", name, branch, list(selected.keys()))
 
     # --- Copy CLAUDE.md from repos dir if present ---
     claude_md = next((d / "CLAUDE.md" for d in cfg.repo_dirs if (d / "CLAUDE.md").is_file()), None)
@@ -568,7 +566,6 @@ def delete(
     failed = False
     for n in names:
         if workspace.delete_workspace(n):
-            _log.info("workspace deleted: %s", n)
             success(f"Workspace [bold]{n}[/] deleted")
         else:
             failed = True

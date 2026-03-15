@@ -7,16 +7,18 @@ from unittest.mock import patch
 
 import pytest
 
-from grove import git
+from grove import git, log
 from grove.models import Config, RepoWorktree, Workspace
 
 
 @pytest.fixture(autouse=True)
 def _clear_grove_config_cache():
-    """Clear the ``read_grove_config`` LRU cache between tests."""
+    """Clear the ``read_grove_config`` LRU cache and log state between tests."""
     git.read_grove_config.cache_clear()
+    log._initialized = False
     yield
     git.read_grove_config.cache_clear()
+    log._initialized = False
 
 
 @pytest.fixture()
