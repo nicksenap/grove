@@ -45,7 +45,7 @@ STATUS_DISPLAY: dict[AgentStatus, tuple[str, str]] = {
     AgentStatus.DONE: (GREEN, "DONE"),
 }
 
-# Legacy alias used by cli.py `gw agents`
+# Rich markup styles used by `gw dash list`
 STATUS_STYLES = {
     AgentStatus.PROVISIONING: ("cyan", "PROV"),
     AgentStatus.IDLE: ("dim", "idle"),
