@@ -34,7 +34,7 @@ wheels = [
 
 [[package]]
 name = "grove"
-version = "0.12.4"
+version = "0.12.5"
 source = { editable = "." }
 dependencies = [
     { name = "rich" },
