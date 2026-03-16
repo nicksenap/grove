@@ -7,7 +7,6 @@ import logging
 from textual.containers import VerticalScroll
 
 from grove.dash.models import AgentState
-from grove.dash.store import Task
 from grove.dash.widgets.task_card import TaskCard
 
 log = logging.getLogger("grove.dash")
@@ -46,42 +45,34 @@ class KanbanColumn(VerticalScroll):
     def update_items(
         self,
         agents: list[AgentState] | None = None,
-        tasks: list[Task] | None = None,
     ) -> None:
-        """Sync cards to match given agents and tasks."""
+        """Sync cards to match given agents."""
         agents = agents or []
-        tasks = tasks or []
 
-        # Build ordered list of (key, agent_or_none, task_or_none)
-        items: list[tuple[str, AgentState | None, Task | None]] = []
-        for t in tasks:
-            items.append((f"task-{t.id}", None, t))
+        items: list[tuple[str, AgentState]] = []
         for a in agents:
-            items.append((f"agent-{a.session_id}", a, None))
+            items.append((f"agent-{a.session_id}", a))
 
         new_keys = [item[0] for item in items]
         cards = list(self.query(TaskCard))
 
         if new_keys == self._item_keys and len(cards) == len(items):
             # Same items — update in place
-            for i, (_key, agent, task) in enumerate(items):
+            for i, (_key, agent) in enumerate(items):
                 try:
-                    if agent:
-                        cards[i].update_agent(agent)
-                    elif task:
-                        cards[i].update_task(task)
+                    cards[i].update_agent(agent)
                 except Exception:
                     log.exception("Failed to update card %d in %s", i, self.column_id)
         else:
-            # Structural change — remove all, then mount fresh (no IDs)
+            # Structural change — remove all, then mount fresh
             self._item_keys = new_keys
             for card in cards:
                 try:
                     card.remove()
                 except Exception:
                     log.exception("Failed to remove card in %s", self.column_id)
-            for _key, agent, task in items:
-                self.mount(TaskCard(agent=agent, task_data=task))
+            for _key, agent in items:
+                self.mount(TaskCard(agent=agent))
 
         # Update column title with count
         count = len(items)

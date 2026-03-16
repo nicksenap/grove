@@ -1,4 +1,4 @@
-"""TaskCard widget — a kanban card for an agent session or a planned task."""
+"""TaskCard widget — a kanban card for an agent session."""
 
 from __future__ import annotations
 
@@ -16,7 +16,6 @@ from grove.dash.constants import (
     AgentStatus,
 )
 from grove.dash.models import AgentState
-from grove.dash.store import Task
 
 
 def _idle_ago(seconds: float) -> str:
@@ -30,7 +29,7 @@ def _idle_ago(seconds: float) -> str:
 
 
 class TaskCard(Static, can_focus=True):
-    """A kanban card for a single agent session or planned task."""
+    """A kanban card for a single agent session."""
 
     DEFAULT_CSS = """
     TaskCard {
@@ -61,9 +60,6 @@ class TaskCard(Static, can_focus=True):
     TaskCard.status-idle {
         border-left: outer #928374;
     }
-    TaskCard.status-planned {
-        border-left: outer #83a598;
-    }
     TaskCard.status-provisioning {
         border-left: outer #8ec07c;
     }
@@ -87,39 +83,21 @@ class TaskCard(Static, can_focus=True):
         border: round #fe8019;
         border-left: outer #fe8019;
     }
-    TaskCard:focus.status-planned {
-        border: round #83a598;
-        border-left: outer #83a598;
-    }
     """
 
-    def __init__(
-        self,
-        agent: AgentState | None = None,
-        task_data: Task | None = None,
-        **kwargs: object,
-    ) -> None:
+    def __init__(self, agent: AgentState, **kwargs: object) -> None:
         super().__init__(**kwargs)
         self.agent = agent
-        self.task_data = task_data
         self._apply_status_class()
 
     @property
     def status(self) -> AgentStatus:
-        if self.agent:
-            return self.agent.status
-        if self.task_data:
-            return self.task_data.status
-        return AgentStatus.IDLE
+        return self.agent.status
 
     @property
     def card_id(self) -> str:
-        """Unique ID for this card (agent session_id or task id)."""
-        if self.agent:
-            return self.agent.session_id
-        if self.task_data:
-            return self.task_data.id
-        return ""
+        """Unique ID for this card (agent session_id)."""
+        return self.agent.session_id
 
     def _apply_status_class(self) -> None:
         """Set CSS class based on status."""
@@ -135,25 +113,11 @@ class TaskCard(Static, can_focus=True):
         self._apply_status_class()
         self.update(self._render_card())
 
-    def update_task(self, task_data: Task) -> None:
-        """Update the card with new task data."""
-        self.task_data = task_data
-        self._apply_status_class()
-        self.update(self._render_card())
-
     def on_mount(self) -> None:
         self.update(self._render_card())
 
     def _render_card(self) -> str:
-        if self.agent:
-            return self._render_agent_card()
-        if self.task_data:
-            return self._render_task_card()
-        return f"[{GREY}]Empty card[/]"
-
-    def _render_agent_card(self) -> str:
         a = self.agent
-        assert a is not None
         color, label = STATUS_DISPLAY.get(a.status, (GREY, "?"))
 
         # Line 1: Name + status badge
@@ -202,29 +166,5 @@ class TaskCard(Static, can_focus=True):
 
         if a.notification_message:
             lines.append(f"[{PURPLE}]{a.notification_message[:60]}[/]")
-
-        return "\n".join(lines)
-
-    def _render_task_card(self) -> str:
-        t = self.task_data
-        assert t is not None
-        color, label = STATUS_DISPLAY.get(t.status, (GREY, "?"))
-
-        # Line 1: Title + status
-        lines = [f"[bold {FG}]{t.title}[/]  [{color}]{label}[/]"]
-
-        # Line 2: Branch
-        if t.branch:
-            lines.append(f"[{AQUA}]{t.branch}[/]")
-
-        # Line 3: Repos
-        if t.repos:
-            repos = ", ".join(t.repos[:3])
-            lines.append(f"[{GREY}]{repos}[/]")
-
-        # Line 4: Description snippet
-        if t.description:
-            desc = t.description.replace("\n", " ")[:80]
-            lines.append(f"[{GREY}]{desc}[/]")
 
         return "\n".join(lines)

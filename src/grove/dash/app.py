@@ -12,16 +12,13 @@ from textual.theme import Theme
 from textual.widgets import Input, Static
 
 from grove.dash import manager
-from grove.dash.constants import CLEANUP_INTERVAL, STATE_POLL_INTERVAL, AgentStatus
+from grove.dash.constants import CLEANUP_INTERVAL, STATE_POLL_INTERVAL
 from grove.dash.models import AgentState
-from grove.dash.store import Task, TaskStore
 from grove.dash.widgets.agent_detail import AgentDetail
-from grove.dash.widgets.confirm_modal import ConfirmModal
 from grove.dash.widgets.header_bar import HeaderBar
 from grove.dash.widgets.kanban_board import KanbanBoard
 from grove.dash.widgets.session_list import matches_filter
 from grove.dash.widgets.task_card import TaskCard
-from grove.dash.widgets.task_modal import TaskModal
 
 log = logging.getLogger("grove.dash")
 
@@ -116,11 +113,6 @@ class DashboardApp(App):
         Binding("enter", "jump_to_agent", "Jump", priority=True),
         Binding("y", "approve", "Approve"),
         Binding("n", "deny", "Deny"),
-        Binding("s", "start_task", "Start"),
-        Binding("c", "create_task", "Create"),
-        Binding("e", "edit_task", "Edit"),
-        Binding("d", "mark_done", "Done"),
-        Binding("x", "delete_task", "Delete"),
         Binding("r", "refresh", "Refresh"),
         Binding("/", "start_search", "Search", show=False),
         Binding("escape", "stop_search", "Clear search", show=False),
@@ -130,10 +122,7 @@ class DashboardApp(App):
         super().__init__()
         self._agents: list[AgentState] = []
         self._filtered: list[AgentState] = []
-        self._tasks: list[Task] = []
-        self._filtered_tasks: list[Task] = []
         self._search_query: str = ""
-        self._store = TaskStore()
 
     def on_mount(self) -> None:
         self.register_theme(GRUVBOX_DARK)
@@ -156,11 +145,7 @@ class DashboardApp(App):
             "[dim]j/k[/] cards  "
             "[dim]enter[/] jump  "
             "[dim]y/n[/] approve/deny  "
-            "[dim]s[/] start  "
-            "[dim]c[/] create  "
-            "[dim]e[/] edit  "
-            "[dim]d[/] done  "
-            "[dim]x[/] delete  "
+            "[dim]r[/] refresh  "
             "[dim]/[/] search",
             id="status-line",
         )
@@ -170,29 +155,18 @@ class DashboardApp(App):
     def _poll_state(self) -> None:
         agents, summary = manager.scan()
         self._agents = agents
-        self._tasks = self._store.list_active()
         self._apply_filter()
 
         self.query_one(HeaderBar).update_summary(summary)
         board = self.query_one(KanbanBoard)
-        board.update_board(self._filtered, self._filtered_tasks)
+        board.update_board(self._filtered)
         self._update_detail()
 
     def _apply_filter(self) -> None:
         if self._search_query:
-            q = self._search_query.lower()
             self._filtered = [a for a in self._agents if matches_filter(a, self._search_query)]
-            self._filtered_tasks = [
-                t
-                for t in self._tasks
-                if q in t.title.lower()
-                or q in t.branch.lower()
-                or q in t.description.lower()
-                or q in t.status.value.lower()
-            ]
         else:
             self._filtered = list(self._agents)
-            self._filtered_tasks = list(self._tasks)
 
     def _run_cleanup(self) -> None:
         manager.cleanup_stale()
@@ -271,136 +245,6 @@ class DashboardApp(App):
                 zellij.deny()
             zellij.jump_to_agent("grove")
 
-    # --- Task actions ---
-
-    def action_start_task(self) -> None:
-        """Launch a planned task — provision workspace + open Zellij tab."""
-        board = self.query_one(KanbanBoard)
-        card = board.focused_card
-        if card is None or card.task_data is None:
-            return
-        task = card.task_data
-        if task.status not in ("PLANNED", "IDLE"):
-            log.info("START: task %r not in launchable status (%s)", task.title, task.status)
-            return
-        self.push_screen(
-            ConfirmModal(f"Start task [bold]{task.title}[/]?"),
-            lambda confirmed: self._on_start_confirmed(confirmed, task),
-        )
-
-    def _on_start_confirmed(self, confirmed: bool, task: Task) -> None:
-        if not confirmed:
-            return
-        from grove.dash.launcher import launch_task
-
-        self.run_worker(
-            lambda: launch_task(task),
-            name=f"launch-{task.id}",
-            thread=True,
-        )
-        self._poll_state()
-
-    def on_worker_state_changed(self, event) -> None:
-        """Refresh board when a background worker completes."""
-        if not event.worker.name or not event.worker.is_finished:
-            return
-        if event.worker.name.startswith("launch-"):
-            result = event.worker.result
-            if result:
-                ok, msg = result
-                log.info("LAUNCH: %s — %s", "success" if ok else "failed", msg)
-            self._poll_state()
-        elif event.worker.name.startswith("delete-"):
-            self._poll_state()
-
-    def action_create_task(self) -> None:
-        """Open create modal."""
-        self.push_screen(TaskModal(), self._on_task_created)
-
-    def _on_task_created(self, task: Task | None) -> None:
-        if task is None:
-            return
-        self._store.add(task)
-        log.info("TASK: created %r id=%s", task.title, task.id)
-        self._poll_state()
-
-    def action_edit_task(self) -> None:
-        """Open edit modal for focused task card."""
-        board = self.query_one(KanbanBoard)
-        card = board.focused_card
-        if card is None or card.task_data is None:
-            return
-        self.push_screen(TaskModal(existing=card.task_data), self._on_task_edited)
-
-    def _on_task_edited(self, task: Task | None) -> None:
-        if task is None:
-            return
-        import json
-
-        self._store.update_field(
-            task.id,
-            title=task.title,
-            branch=task.branch,
-            description=task.description,
-            repos=json.dumps(task.repos),
-        )
-        log.info("TASK: updated %r id=%s", task.title, task.id)
-        self._poll_state()
-
-    def action_mark_done(self) -> None:
-        board = self.query_one(KanbanBoard)
-        card = board.focused_card
-        if card is None or card.task_data is None:
-            return
-        self._store.update_status(card.task_data.id, AgentStatus.DONE)
-        self._poll_state()
-
-    def action_delete_task(self) -> None:
-        """Delete focused task with confirmation."""
-        board = self.query_one(KanbanBoard)
-        card = board.focused_card
-        if card is None or card.task_data is None:
-            return
-        task = card.task_data
-        msg = f"Delete task [bold]{task.title}[/]?"
-        if task.workspace:
-            msg += f"\nWorkspace [bold]{task.workspace}[/] will also be removed."
-        self.push_screen(
-            ConfirmModal(msg),
-            lambda confirmed: self._on_delete_confirmed(confirmed, task),
-        )
-
-    def _on_delete_confirmed(self, confirmed: bool, task: Task) -> None:
-        if not confirmed:
-            return
-        if task.workspace:
-            self.run_worker(
-                lambda: self._cleanup_workspace(task),
-                name=f"delete-{task.id}",
-                thread=True,
-            )
-        else:
-            self._store.delete(task.id)
-            log.info("TASK: deleted id=%s", task.id)
-            self._poll_state()
-
-    @staticmethod
-    def _cleanup_workspace(task: Task) -> tuple[str, str]:
-        """Delete workspace + task in a background thread."""
-        from grove import workspace as ws_mod
-        from grove.dash.store import TaskStore
-
-        store = TaskStore()
-        ws_name = task.workspace
-        ok = ws_mod.delete_workspace(ws_name)
-        if ok:
-            log.info("TASK: cleaned up workspace %r", ws_name)
-        else:
-            log.warning("TASK: workspace cleanup failed for %r", ws_name)
-        store.delete(task.id)
-        log.info("TASK: deleted id=%s", task.id)
-        return task.id, ws_name
-
     # --- Search ---
 
     def action_start_search(self) -> None:
@@ -424,7 +268,7 @@ class DashboardApp(App):
             self._search_query = ""
             self._apply_filter()
             board = self.query_one(KanbanBoard)
-            board.update_board(self._filtered, self._filtered_tasks)
+            board.update_board(self._filtered)
 
     def action_stop_search(self) -> None:
         self._dismiss_search(clear=True)
@@ -433,7 +277,7 @@ class DashboardApp(App):
         if event.input.id == "search-input":
             self._search_query = event.value
             self._apply_filter()
-            self.query_one(KanbanBoard).update_board(self._filtered, self._filtered_tasks)
+            self.query_one(KanbanBoard).update_board(self._filtered)
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
         if event.input.id == "search-input":

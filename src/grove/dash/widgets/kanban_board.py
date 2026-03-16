@@ -8,7 +8,6 @@ from textual.containers import Horizontal
 
 from grove.dash.constants import KANBAN_COLUMNS
 from grove.dash.models import AgentState
-from grove.dash.store import Task
 from grove.dash.widgets.kanban_column import KanbanColumn
 from grove.dash.widgets.task_card import TaskCard
 
@@ -35,23 +34,11 @@ class KanbanBoard(Horizontal):
             self._columns[col_id] = col
             yield col
 
-    def update_board(
-        self,
-        agents: list[AgentState],
-        tasks: list[Task] | None = None,
-    ) -> None:
-        """Distribute agents and tasks across columns by status."""
-        tasks = tasks or []
-
-        # Build linked set: session_ids that have a task
-        linked_sessions = {t.session_id for t in tasks if t.session_id}
-
+    def update_board(self, agents: list[AgentState]) -> None:
+        """Distribute agents across columns by status."""
         # Bucket agents
         agent_buckets: dict[str, list[AgentState]] = {col_id: [] for col_id, _, _ in KANBAN_COLUMNS}
         for agent in agents:
-            # Skip agents that are linked to a task (task card takes priority)
-            if agent.session_id in linked_sessions:
-                continue
             placed = False
             for col_id, _title, statuses in KANBAN_COLUMNS:
                 if agent.status in statuses:
@@ -61,32 +48,9 @@ class KanbanBoard(Horizontal):
             if not placed:
                 agent_buckets["idle"].append(agent)
 
-        # Bucket tasks
-        task_buckets: dict[str, list[Task]] = {col_id: [] for col_id, _, _ in KANBAN_COLUMNS}
-        for task in tasks:
-            placed = False
-            # If task is linked to a running agent, use agent's status for column
-            effective_status = task.status
-            if task.session_id:
-                for agent in agents:
-                    if agent.session_id == task.session_id:
-                        effective_status = agent.status
-                        break
-
-            for col_id, _title, statuses in KANBAN_COLUMNS:
-                if effective_status in statuses:
-                    task_buckets[col_id].append(task)
-                    placed = True
-                    break
-            if not placed:
-                task_buckets["idle"].append(task)
-
         # Update each column
         for col_id, col in self._columns.items():
-            col.update_items(
-                agents=agent_buckets[col_id],
-                tasks=task_buckets[col_id],
-            )
+            col.update_items(agents=agent_buckets[col_id])
 
     # Backward compat
     def update_agents(self, agents: list[AgentState]) -> None:
@@ -106,14 +70,6 @@ class KanbanBoard(Horizontal):
         card = self.focused_card
         if card:
             return card.agent
-        return None
-
-    @property
-    def focused_task(self) -> Task | None:
-        """Return the Task of the currently focused card."""
-        card = self.focused_card
-        if card:
-            return card.task_data
         return None
 
     def focus_next_card(self) -> None:

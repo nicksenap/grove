@@ -6,7 +6,6 @@ from enum import StrEnum
 
 
 class AgentStatus(StrEnum):
-    PLANNED = "PLANNED"
     PROVISIONING = "PROVISIONING"
     IDLE = "IDLE"
     WORKING = "WORKING"
@@ -14,7 +13,6 @@ class AgentStatus(StrEnum):
     WAITING_ANSWER = "WAITING_ANSWER"
     ERROR = "ERROR"
     DONE = "DONE"
-    ARCHIVED = "ARCHIVED"
 
 
 # Statuses that require user attention
@@ -40,7 +38,6 @@ BG_LIGHT = "#3c3836"
 BLUE = "#83a598"
 
 STATUS_DISPLAY: dict[AgentStatus, tuple[str, str]] = {
-    AgentStatus.PLANNED: (BLUE, "PLAN"),
     AgentStatus.PROVISIONING: (AQUA, "PROV"),
     AgentStatus.IDLE: (GREY, "IDLE"),
     AgentStatus.WORKING: (GREEN, "WORK"),
@@ -48,7 +45,6 @@ STATUS_DISPLAY: dict[AgentStatus, tuple[str, str]] = {
     AgentStatus.WAITING_ANSWER: (YELLOW, "WAIT"),
     AgentStatus.ERROR: (ORANGE, "ERR"),
     AgentStatus.DONE: (GREEN, "DONE"),
-    AgentStatus.ARCHIVED: (GREY, "ARCH"),
 }
 
 # Legacy alias kept for existing code
@@ -73,7 +69,6 @@ STALE_TIMEOUT = 1800  # 30 minutes
 
 # Kanban column definitions: (column_id, title, statuses)
 KANBAN_COLUMNS: list[tuple[str, str, set[AgentStatus]]] = [
-    ("planned", "Planned", {AgentStatus.PLANNED}),
     ("active", "Active", {AgentStatus.WORKING, AgentStatus.PROVISIONING}),
     (
         "attention",
@@ -81,5 +76,5 @@ KANBAN_COLUMNS: list[tuple[str, str, set[AgentStatus]]] = [
         {AgentStatus.WAITING_PERMISSION, AgentStatus.WAITING_ANSWER, AgentStatus.ERROR},
     ),
     ("idle", "Idle", {AgentStatus.IDLE}),
-    ("done", "Done", {AgentStatus.DONE, AgentStatus.ARCHIVED}),
+    ("done", "Done", {AgentStatus.DONE}),
 ]
