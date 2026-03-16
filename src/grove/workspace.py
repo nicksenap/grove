@@ -277,17 +277,27 @@ def _teardown_and_remove(
 
 
 def _try_delete_branch(repo_wt: RepoWorktree) -> None:
-    """Delete the local branch if it's safe to do so."""
+    """Delete the local branch if it's safe to do so.
+
+    Uses ``git branch -d`` (safe mode) so branches with unmerged commits
+    are left intact.  Covers both grove workspaces and manually created
+    worktrees via the git-level worktree check.
+    """
     branch = repo_wt.branch
     repo = repo_wt.source_repo
     try:
-        if not git.branch_exists(repo, branch):
+        if not branch or not git.branch_exists(repo, branch):
             return
-        # Don't delete if another worktree is still using this branch
         if git.worktree_has_branch(repo, branch):
             return
-        git.delete_branch(repo, branch, force=True)
-        _log.info("deleted branch %r in %s", branch, repo)
+        try:
+            git.delete_branch(repo, branch, force=False)
+            _log.info("deleted branch %r in %s", branch, repo)
+        except GitError:
+            warning(
+                f"[{repo_wt.repo_name}] branch {branch!r} has unmerged commits "
+                "— not deleted. Remove it manually when ready."
+            )
     except Exception:
         _log.warning("failed to delete branch %r in %s", branch, repo, exc_info=True)
 
