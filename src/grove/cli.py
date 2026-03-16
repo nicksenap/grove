@@ -1114,44 +1114,6 @@ def dash_uninstall() -> None:
         info("No Grove hooks found")
 
 
-@dash_app.command("status")
-def dash_status() -> None:
-    """Show a one-line summary of active agents."""
-    from grove.dash import manager
-
-    agents, summary = manager.scan()
-    if not agents:
-        info("No active agents")
-        return
-    console.print(f"{summary.status_line} | total:{summary.total}")
-
-
-@dash_app.command("list")
-def dash_list() -> None:
-    """List all active agents."""
-    from grove.dash import manager
-
-    agents, summary = manager.scan()
-    if not agents:
-        info("No active agents")
-        return
-
-    table = make_table("Status", "Project", "Branch", "Tool", "Tools", "Uptime")
-    for a in agents:
-        from grove.dash.constants import STATUS_STYLES
-
-        style, label = STATUS_STYLES.get(a.status, ("dim", "?"))
-        table.add_row(
-            f"[{style}]{label}[/]",
-            a.display_name or a.session_id[:12],
-            a.git_branch or "[dim]—[/]",
-            a.last_tool or "[dim]—[/]",
-            str(a.tool_count),
-            a.uptime or "[dim]—[/]",
-        )
-    console.print(table)
-
-
 # ---------------------------------------------------------------------------
 # Preset management
 # ---------------------------------------------------------------------------

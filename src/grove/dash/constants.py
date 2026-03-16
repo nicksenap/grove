@@ -45,16 +45,6 @@ STATUS_DISPLAY: dict[AgentStatus, tuple[str, str]] = {
     AgentStatus.DONE: (GREEN, "DONE"),
 }
 
-# Rich markup styles used by `gw dash list`
-STATUS_STYLES = {
-    AgentStatus.PROVISIONING: ("cyan", "PROV"),
-    AgentStatus.IDLE: ("dim", "idle"),
-    AgentStatus.WORKING: ("green", "working"),
-    AgentStatus.WAITING_PERMISSION: ("yellow bold", "PERM"),
-    AgentStatus.WAITING_ANSWER: ("cyan bold", "INPUT"),
-    AgentStatus.ERROR: ("red bold", "ERROR"),
-    AgentStatus.DONE: ("green", "done"),
-}
 
 # Sparkline characters (braille-based, 0–8)
 SPARK_CHARS = " ▁▂▃▄▅▆▇█"
