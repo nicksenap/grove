@@ -52,10 +52,6 @@ class KanbanBoard(Horizontal):
         for col_id, col in self._columns.items():
             col.update_items(agents=agent_buckets[col_id])
 
-    # Backward compat
-    def update_agents(self, agents: list[AgentState]) -> None:
-        self.update_board(agents)
-
     @property
     def focused_card(self) -> TaskCard | None:
         """Return the currently focused TaskCard."""

@@ -83,6 +83,18 @@ class TaskCard(Static, can_focus=True):
         border: round #fe8019;
         border-left: outer #fe8019;
     }
+    TaskCard:focus.status-idle {
+        border: round #928374;
+        border-left: outer #928374;
+    }
+    TaskCard:focus.status-provisioning {
+        border: round #8ec07c;
+        border-left: outer #8ec07c;
+    }
+    TaskCard:focus.status-done {
+        border: round #b8bb26;
+        border-left: outer #b8bb26;
+    }
     """
 
     def __init__(self, agent: AgentState, **kwargs: object) -> None:

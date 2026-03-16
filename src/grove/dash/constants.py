@@ -35,8 +35,6 @@ BG = "#282828"
 BG_LIGHT = "#3c3836"
 
 # Status display: (color, short_label)
-BLUE = "#83a598"
-
 STATUS_DISPLAY: dict[AgentStatus, tuple[str, str]] = {
     AgentStatus.PROVISIONING: (AQUA, "PROV"),
     AgentStatus.IDLE: (GREY, "IDLE"),
@@ -47,13 +45,15 @@ STATUS_DISPLAY: dict[AgentStatus, tuple[str, str]] = {
     AgentStatus.DONE: (GREEN, "DONE"),
 }
 
-# Legacy alias kept for existing code
+# Legacy alias used by cli.py `gw agents`
 STATUS_STYLES = {
+    AgentStatus.PROVISIONING: ("cyan", "PROV"),
     AgentStatus.IDLE: ("dim", "idle"),
     AgentStatus.WORKING: ("green", "working"),
     AgentStatus.WAITING_PERMISSION: ("yellow bold", "PERM"),
     AgentStatus.WAITING_ANSWER: ("cyan bold", "INPUT"),
     AgentStatus.ERROR: ("red bold", "ERROR"),
+    AgentStatus.DONE: ("green", "done"),
 }
 
 # Sparkline characters (braille-based, 0–8)

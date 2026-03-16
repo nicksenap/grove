@@ -44,10 +44,9 @@ class KanbanColumn(VerticalScroll):
 
     def update_items(
         self,
-        agents: list[AgentState] | None = None,
+        agents: list[AgentState],
     ) -> None:
         """Sync cards to match given agents."""
-        agents = agents or []
 
         items: list[tuple[str, AgentState]] = []
         for a in agents:
@@ -77,10 +76,6 @@ class KanbanColumn(VerticalScroll):
         # Update column title with count
         count = len(items)
         self.border_title = f"{self.column_title} ({count})" if count else self.column_title
-
-    # Keep backward compat
-    def update_agents(self, agents: list[AgentState]) -> None:
-        self.update_items(agents=agents)
 
     @property
     def card_count(self) -> int:
