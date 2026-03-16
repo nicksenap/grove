@@ -141,6 +141,12 @@ def create_branch(repo: Path, branch: str, start_point: str | None = None) -> No
     _run(cmd, cwd=repo)
 
 
+def delete_branch(repo: Path, branch: str, *, force: bool = False) -> None:
+    """Delete a local branch. Use *force* for unmerged branches."""
+    flag = "-D" if force else "-d"
+    _run(["branch", flag, branch], cwd=repo)
+
+
 def worktree_add(repo: Path, worktree_path: Path, branch: str) -> None:
     """Add a git worktree at the given path on the given branch."""
     _run(["worktree", "add", str(worktree_path), branch], cwd=repo)

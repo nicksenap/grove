@@ -249,11 +249,13 @@ def _teardown_and_remove(
     repo_wt: RepoWorktree,
     *,
     force_cleanup: bool = False,
+    delete_branch: bool = False,
 ) -> None:
     """Run teardown hook then remove worktree. The shared removal primitive.
 
     *force_cleanup*: if True, fall back to ``shutil.rmtree`` when git fails.
     When force cleanup succeeds, the error is swallowed (directory is gone).
+    *delete_branch*: if True, delete the local branch after removing the worktree.
     """
     if repo_wt.worktree_path.exists():
         with contextlib.suppress(Exception):
@@ -264,8 +266,30 @@ def _teardown_and_remove(
         if force_cleanup and repo_wt.worktree_path.exists():
             shutil.rmtree(repo_wt.worktree_path, ignore_errors=True)
             if not repo_wt.worktree_path.exists():
-                return  # directory cleaned up — don't propagate the error
+                # Worktree dir gone — still try to clean up the branch
+                if delete_branch:
+                    _try_delete_branch(repo_wt)
+                return
         raise  # re-raise so _parallel records the error
+
+    if delete_branch:
+        _try_delete_branch(repo_wt)
+
+
+def _try_delete_branch(repo_wt: RepoWorktree) -> None:
+    """Delete the local branch if it's safe to do so."""
+    branch = repo_wt.branch
+    repo = repo_wt.source_repo
+    try:
+        if not git.branch_exists(repo, branch):
+            return
+        # Don't delete if another worktree is still using this branch
+        if git.worktree_has_branch(repo, branch):
+            return
+        git.delete_branch(repo, branch, force=True)
+        _log.info("deleted branch %r in %s", branch, repo)
+    except Exception:
+        _log.warning("failed to delete branch %r in %s", branch, repo, exc_info=True)
 
 
 def delete_workspace(name: str) -> bool:
@@ -288,7 +312,7 @@ def delete_workspace(name: str) -> bool:
         _harvest_claude_memory(workspace.repos)
 
     def _remove_one(_name: str, repo_wt: RepoWorktree) -> None:
-        _teardown_and_remove(_name, repo_wt, force_cleanup=True)
+        _teardown_and_remove(_name, repo_wt, force_cleanup=True, delete_branch=True)
 
     items = [(wt.repo_name, wt) for wt in workspace.repos]
     failures = 0
@@ -647,9 +671,12 @@ def remove_repo_from_workspace(
     if cfg and cfg.claude_memory_sync:
         _harvest_claude_memory(to_remove)
 
+    def _remove_one(_name: str, repo_wt: RepoWorktree) -> None:
+        _teardown_and_remove(_name, repo_wt, delete_branch=True)
+
     items = [(wt.repo_name, wt) for wt in to_remove]
     removed_names: set[str] = set()
-    for name, _result, exc in _parallel(_teardown_and_remove, items, "Removing"):
+    for name, _result, exc in _parallel(_remove_one, items, "Removing"):
         if exc is not None:
             warning(f"Could not remove worktree for {name}: {exc}")
         else:
