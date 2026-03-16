@@ -41,24 +41,30 @@ This enables `gw go` to change your working directory and auto-cds into new work
 
 ```bash
 # Setup — register one or more directories containing your repos
-gw init ~/dev ~/work/microservices                     # initialize with repo directories
-gw add-dir ~/other/repos                               # add another directory later
-gw remove-dir ~/old/repos                              # remove a directory
+gw init ~/dev ~/work/microservices
+gw add-dir ~/other/repos
+gw remove-dir ~/old/repos
 gw explore                                             # deep-scan for repos (2–3 levels)
 
-# Day-to-day
+# Workspaces
 gw create my-feature -r svc-a,svc-b -b feat/login     # create workspace
 gw list                                                # list workspaces
 gw list -s                                             # list with git status summary
 gw status my-feature                                   # git status across repos
 gw sync my-feature                                     # rebase all repos onto base branch
 gw go my-feature                                       # cd into workspace
-gw run my-feature                                      # run dev processes (TUI with per-repo logs)
+gw run my-feature                                      # run dev processes (TUI)
 gw add-repo my-feature -r svc-c                        # add a repo to existing workspace
 gw remove-repo my-feature -r svc-a                     # remove a repo from workspace
 gw rename my-feature --to new-name                     # rename a workspace
 gw doctor                                              # diagnose workspace health issues
-gw delete my-feature                                   # clean up
+gw delete my-feature                                   # clean up (worktrees + branches)
+
+# Presets — save repo groups for quick workspace creation
+gw preset add backend -r svc-auth,svc-api,svc-worker
+gw preset list
+gw preset remove backend
+gw create my-feature -p backend                        # use a preset instead of -r
 ```
 
 All interactive menus support **type-to-search** filtering, arrow-key navigation (single-select), or arrow + tab (multi-select) with an `(all)` shortcut.
@@ -89,20 +95,18 @@ Hook failures are warnings — they never block the operation they're attached t
 
 ### Design philosophy
 
-The hook system follows the npm-style `pre`/`post` convention: one primitive (`run`, `sync`) with optional `pre_` and `post_` counterparts that fire around it. Instead of building special-purpose features (secret injection, dependency installs, container management), Grove gives you generic hook points and gets out of the way. You compose what you need:
+The hook system follows the npm-style `pre`/`post` convention: one primitive (`run`, `sync`) with optional `pre_` and `post_` counterparts that fire around it. Instead of building special-purpose features (secret injection, dependency installs, container management), Grove gives you generic hook points and gets out of the way.
 
 | When | Hooks | Example use |
 |------|-------|-------------|
 | Worktree created | `setup` | `pnpm install`, inject secrets, seed DB |
 | Worktree removed | `teardown` | `rm -rf node_modules`, revoke temp creds |
 | Before/after rebase | `pre_sync`, `post_sync` | Type-check before rebase, reinstall after |
-| Dev session | `pre_run`, `run`, `post_run` | Pull containers, start dev server, tear down containers |
+| Dev session | `pre_run`, `run`, `post_run` | Pull containers, start dev server, tear down |
 
 ### `gw run`
 
 `gw run` launches a [Textual](https://github.com/Textualize/textual) TUI that manages `run` hooks across all repos. Each repo gets its own log pane with a sidebar showing status indicators (green = running, yellow = starting, red = exited with error).
-
-**Key bindings:**
 
 | Key | Action |
 |-----|--------|
@@ -114,41 +118,9 @@ The hook system follows the npm-style `pre`/`post` convention: one primitive (`r
 
 Pre-run hooks fire before the TUI launches, post-run hooks fire after it exits.
 
-## Works great with AI coding tools
-
-Worktrees mean isolation. That makes Grove a natural fit for tools like [Claude Code](https://docs.anthropic.com/en/docs/claude-code) — spin up a workspace, let your AI agent work across repos without touching anything else, clean up when done:
-
-```bash
-gw create -p backend -b fix/auth-bug
-claude "fix the auth token expiry bug across svc-auth and api-gateway"
-gw delete fix-auth-bug
-```
-
-Grove copies your `CLAUDE.md` into new workspaces, so your agent gets project context from the start.
-
-## What it does
-
-- **Multiple repo directories** — configure as many source directories as you need with `gw add-dir`
-- `gw explore` deep-scans directories (2–3 levels) to find repos you haven't registered yet
-- Fetches latest from remotes before creating worktrees
-- Creates new branches from the default remote branch (`origin/main`)
-- Creates git worktrees from multiple repos into `~/.grove/workspaces/<name>/`
-- Add or remove repos from existing workspaces without recreating them
-- Rename workspaces (directory, state, and git linkage updated automatically)
-- Lifecycle hooks: `setup`, `teardown`, `pre_sync`, `post_sync` per repo
-- `gw run` launches a Textual TUI with per-repo log panes, status indicators, vim keybindings, and restart controls
-- `gw status --all` for a cross-workspace overview at a glance
-- `gw doctor` to diagnose and auto-fix stale state entries
-- Offers saved presets during interactive workspace creation
-- Copies `CLAUDE.md` from your repos directory into new workspaces
-- Auto-creates branches if they don't exist
-- Rolls back on partial failure
-- Prevents duplicate worktrees for the same branch
-- Warns on startup when a newer version is available
-
 ## Dashboard (`gw dash`)
 
-A Textual TUI for monitoring Claude Code agents across all your workspaces. Inspired by [Clorch](https://github.com/androsovm/clorch), rewritten in Python.
+A Textual TUI for monitoring Claude Code agents across all your workspaces. Agents are sorted into a kanban board with four columns — **Active**, **Attention**, **Idle**, **Done** — based on live status. Inspired by [Clorch](https://github.com/androsovm/clorch).
 
 ```bash
 gw dash install   # install Claude Code hooks
@@ -156,11 +128,10 @@ gw dash           # launch the dashboard
 gw dash uninstall # remove hooks
 ```
 
-**Key bindings:**
-
 | Key | Action |
 |-----|--------|
-| `j` / `k` / `↑` / `↓` | Navigate agents |
+| `h` / `l` | Navigate columns |
+| `j` / `k` | Navigate cards |
 | `Enter` | Jump to agent's Zellij tab |
 | `y` / `n` | Approve / deny permission request |
 | `/` | Search / filter agents |
@@ -170,32 +141,33 @@ gw dash uninstall # remove hooks
 
 ### How it works
 
-Claude Code hooks write agent state to `~/.grove/status/<session_id>.json` on every event. The dashboard polls these files every 500ms and renders a real-time view of all active agents.
+Claude Code hooks write agent state to `~/.grove/status/<session_id>.json` on every event. The dashboard polls these files every 500ms and renders a real-time kanban view of all active agents.
 
-**Tracked events:** `SessionStart`, `PreToolUse`, `PostToolUse`, `PostToolUseFailure`, `Stop`, `PermissionRequest`, `Notification`, `SubagentStart`, `SubagentStop`, `PreCompact`, `TaskCompleted`, `SessionEnd`.
-
-**Collected data per agent:**
-- Status (idle, working, waiting permission, waiting answer, error)
-- Current working directory, git branch, dirty file count
-- Last tool used, tool call count, error count
-- Subagent count, compaction count
-- Activity sparkline (tool calls over time)
-- Permission request details (tool name + summary)
+**Tracked per agent:** status, working directory, git branch, dirty file count, last tool used, tool/error/subagent counts, activity sparkline, permission request details, and initial prompt.
 
 ### Zellij tab matching
 
-When you press `Enter` to jump to an agent, the dashboard finds the right Zellij tab using a 5-step strategy:
+When you press `Enter` to jump to an agent, the dashboard finds the right Zellij tab using a multi-step strategy:
 
 | Priority | Strategy | Example |
 |----------|----------|---------|
 | 1 | Exact tab name = project name | `grove` → tab `grove` |
 | 2 | Case-insensitive tab name | `Grove` → tab `grove` |
-| 3 | Workspace name from CWD (`~/.grove/workspaces/<name>/...`) matched against tab names (exact, then substring in both directions) | CWD has `feat-voltagent-rewrite` → tab `voltagent` |
-| 4a | CWD path match via `zellij action dump-layout` — agent CWD is under tab CWD or vice versa | `/Users/nick/dev/grove` = tab CWD `/Users/nick/dev/grove` |
-| 4b | Project name matches a path **component** in tab's CWD (not substring) | `grove` matches `/dev/grove` but NOT `.grove` |
+| 3 | Workspace name from CWD matched against tab names | CWD has `feat-rewrite` → tab matching |
+| 4 | CWD path match via `zellij action dump-layout` | Agent CWD under tab CWD or vice versa |
 | 5 | Project name substring in tab name | `api` → tab `public-api` |
 
-Relative CWDs in Zellij layouts are resolved against the layout's base `cwd` directive.
+## Works with AI coding tools
+
+Worktrees mean isolation. That makes Grove a natural fit for tools like [Claude Code](https://docs.anthropic.com/en/docs/claude-code) — spin up a workspace, let your AI agent work across repos without touching anything else, clean up when done:
+
+```bash
+gw create -p backend -b fix/auth-bug
+claude "fix the auth token expiry bug across svc-auth and api-gateway"
+gw delete fix-auth-bug   # removes worktrees, branches, and workspace
+```
+
+Grove copies your `CLAUDE.md` into new workspaces, so your agent gets project context from the start.
 
 ## Requirements
 
