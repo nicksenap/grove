@@ -89,7 +89,9 @@ def _format_duration(seconds: float) -> str:
         return f"{days}d {hours}h"
     if hours > 0:
         return f"{hours}h {minutes}m"
-    return f"{minutes}m"
+    if minutes > 0:
+        return f"{minutes}m"
+    return "<1m"
 
 
 def compute_stats() -> dict:
@@ -242,6 +244,9 @@ def build_heatmap(weeks: int = 52) -> list[str]:
         current += timedelta(days=1)
 
     num_cols = max(len(row) for row in grid) if grid else 0
+    # Ensure week_dates covers all columns (last partial week may be missing)
+    while len(week_dates) < num_cols:
+        week_dates.append(week_dates[-1] + timedelta(weeks=1) if week_dates else start)
     # Pad all rows to same length
     for row in grid:
         while len(row) < num_cols:

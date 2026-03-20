@@ -161,7 +161,8 @@ def test_corrupt_stats_file(tmp_grove):
 
 
 def test_format_duration():
-    """Duration formatting covers days, hours, and minutes."""
+    """Duration formatting covers days, hours, minutes, and sub-minute."""
+    assert stats._format_duration(30) == "<1m"
     assert stats._format_duration(60) == "1m"
     assert stats._format_duration(3661) == "1h 1m"
     assert stats._format_duration(90061) == "1d 1h"

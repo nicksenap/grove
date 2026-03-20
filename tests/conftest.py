@@ -45,6 +45,7 @@ def tmp_grove(tmp_path: Path):
         patch("grove.config.DEFAULT_WORKSPACE_DIR", workspace_dir),
         patch("grove.state.GROVE_DIR", grove_dir),
         patch("grove.state.STATE_PATH", state_path),
+        patch("grove.stats.GROVE_DIR", grove_dir),
         patch("grove.stats.STATS_PATH", grove_dir / "stats.json"),
     ):
         yield {
