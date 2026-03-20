@@ -1,28 +1,15 @@
 ## What's New
 
-### Dashboard focused on monitoring
+### `gw stats` — usage statistics with contribution heatmap
+Track your workspace activity over time. Shows a GitHub-style 52-week heatmap, summary metrics (total created, active, avg lifetime), and most-used repos. Data is stored locally in `~/.grove/stats.json`.
 
-The dashboard (`gw dash`) has been stripped down to a pure agent monitor. Removed the SQLite task store, task cards, launch flow, and planning features. The kanban board now has 4 columns — Active, Attention, Idle, Done — driven entirely by live agent state files.
+### `gw list <name>` — workspace detail view
+Pass a workspace name to `gw list` to see full details: branch, path, creation date, and a table of each repo with its worktree and source paths.
 
-Also removed `gw dash list` and `gw dash status` subcommands. Use `gw dash` for the full TUI.
+### Performance improvements
+- Lazy `__version__` loading saves ~15ms on every invocation
+- Branch-exists checks during `gw create` now run in parallel (saves 200-500ms with multiple repos)
+- PR status fetch in `gw status --pr` now runs in parallel (saves seconds with multiple repos)
 
-### Automatic branch cleanup on workspace deletion
-
-`gw delete` now automatically deletes the local branches it created when removing workspaces. Uses safe mode (`git branch -d`) so branches with unmerged commits are preserved with a warning.
-
-#### Cleaning up branches from older versions
-
-Branches created by Grove versions before 0.12.5 won't be cleaned up automatically. To find and remove them manually:
-
-```sh
-# Preview stale branches across your repos (dry run)
-for repo in ~/dev/repos/*/; do
-  echo "=== $(basename $repo) ==="
-  git -C "$repo" branch --merged | grep -v '^\*\|main\|master\|stage'
-done
-
-# Then delete them (remove --dry-run when ready)
-for repo in ~/dev/repos/*/; do
-  git -C "$repo" branch --merged | grep -v '^\*\|main\|master\|stage' | xargs -r git -C "$repo" branch -d
-done
-```
+### Bug fixes
+- Exceptions in non-critical paths (stats recording, PR fetch, version lookup) are now logged to `~/.grove/grove.log` instead of silently suppressed
