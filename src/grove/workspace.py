@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from grove import claude, config, git, state
+from grove import claude, config, git, state, stats
 from grove.console import console, error, info, success, warning
 from grove.git import GitError
 from grove.log import get_logger
@@ -173,6 +173,9 @@ def create_workspace(
         repos=created,
     )
     state.add_workspace(workspace)
+
+    with contextlib.suppress(Exception):
+        stats.record_created(name, branch, list(repo_paths.keys()))
 
     if config.claude_memory_sync:
         _rehydrate_claude_memory(created)
@@ -345,6 +348,10 @@ def delete_workspace(name: str) -> bool:
         return False
 
     state.remove_workspace(name)
+
+    with contextlib.suppress(Exception):
+        stats.record_deleted(name, workspace.branch, [wt.repo_name for wt in workspace.repos])
+
     _log.info("workspace %r deleted", name)
     return True
 

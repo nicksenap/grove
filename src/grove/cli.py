@@ -606,6 +606,43 @@ def doctor(
 
 
 @app.command()
+def stats() -> None:
+    """Show workspace usage statistics."""
+    from grove.stats import build_heatmap, compute_stats
+
+    data = compute_stats()
+
+    if data["total_created"] == 0:
+        info("No stats yet — create a workspace to start tracking.")
+        return
+
+    # Heatmap
+    console.print()
+    for line in build_heatmap():
+        console.print(line)
+    console.print()
+
+    # Summary line
+    parts = [
+        f"[bold]{data['total_created']}[/] created",
+        f"[bold]{data['active_count']}[/] active",
+        f"[bold]{data['created_this_week']}[/] this week",
+        f"[bold]{data['created_this_month']}[/] this month",
+    ]
+    if data["avg_lifetime_human"]:
+        parts.append(f"avg lifetime [bold]{data['avg_lifetime_human']}[/]")
+    console.print("  " + "  ·  ".join(parts))
+
+    # Top repos
+    if data["top_repos"]:
+        console.print()
+        repo_table = make_table("Top Repos", "Times used")
+        for repo_name, count in data["top_repos"]:
+            repo_table.add_row(repo_name, str(count))
+        console.print(repo_table)
+
+
+@app.command()
 def rename(
     name: str | None = typer.Argument(
         None,
