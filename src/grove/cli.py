@@ -895,7 +895,11 @@ def status(
         with ThreadPoolExecutor() as pool:
             futures = {pool.submit(git_pr_status, ws.path / r["repo"]): r["repo"] for r in results}
             for future in as_completed(futures):
-                pr_results[futures[future]] = future.result()
+                repo = futures[future]
+                try:
+                    pr_results[repo] = future.result()
+                except Exception:
+                    pr_results[repo] = None
 
     columns = ["Repo", "Branch", "↑↓", "Status"]
     if show_pr:

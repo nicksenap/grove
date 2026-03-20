@@ -3,9 +3,12 @@
 
 def __getattr__(name: str) -> str:
     if name == "__version__":
-        from importlib.metadata import version
+        try:
+            from importlib.metadata import version
 
-        v = version("grove")
+            v = version("grove")
+        except Exception:
+            v = "unknown"
         globals()["__version__"] = v
         return v
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
