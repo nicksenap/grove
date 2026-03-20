@@ -503,9 +503,34 @@ def create(
 
 @app.command("list")
 def list_workspaces(
+    name: str | None = typer.Argument(
+        None,
+        help="Workspace name to show details for",
+        autocompletion=complete_workspace_name,
+    ),
     show_status: bool = typer.Option(False, "--status", "-s", help="Include git status summary"),
 ) -> None:
-    """List all workspaces."""
+    """List all workspaces, or show details for a specific one."""
+    # Detail view for a single workspace
+    if name is not None:
+        ws = state.get_workspace(name)
+        if ws is None:
+            error(f"Workspace [bold]{name}[/] not found")
+            raise typer.Exit(1)
+
+        console.print(f"[bold]Name:[/]      {ws.name}")
+        console.print(f"[bold]Branch:[/]    {ws.branch}")
+        console.print(f"[bold]Path:[/]      {ws.path}")
+        console.print(f"[bold]Created:[/]   {ws.created_at[:19]}")
+        console.print(f"[bold]Repos:[/]     {len(ws.repos)}")
+        console.print()
+
+        table = make_table("Repo", "Branch", "Worktree Path", "Source Repo")
+        for r in ws.repos:
+            table.add_row(r.repo_name, r.branch, str(r.worktree_path), str(r.source_repo))
+        console.print(table)
+        return
+
     if show_status:
         summaries = workspace.all_workspaces_summary()
         if not summaries:
@@ -862,6 +887,16 @@ def status(
 
     results = workspace.workspace_status(ws)
 
+    # Fetch PR status in parallel (each call hits the GitHub API)
+    pr_results: dict[str, dict | None] = {}
+    if show_pr:
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
+        with ThreadPoolExecutor() as pool:
+            futures = {pool.submit(git_pr_status, ws.path / r["repo"]): r["repo"] for r in results}
+            for future in as_completed(futures):
+                pr_results[futures[future]] = future.result()
+
     columns = ["Repo", "Branch", "↑↓", "Status"]
     if show_pr:
         columns.append("PR")
@@ -881,8 +916,7 @@ def status(
 
         row = [r["repo"], r["branch"], drift, display]
         if show_pr:
-            pr_info = git_pr_status(ws.path / r["repo"])
-            row.append(_format_pr(pr_info))
+            row.append(_format_pr(pr_results.get(r["repo"])))
 
         table.add_row(*row)
     console.print(table)

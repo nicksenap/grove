@@ -69,6 +69,41 @@ class TestCreateWorkspace:
             ws = workspace.create_workspace("test", {"svc-api": repo_path}, "feat/taken", cfg)
             assert ws is None
 
+    def test_duplicate_branch_multi_repo(self, tmp_grove):
+        """Branch check catches conflict even when only one of multiple repos has it."""
+        repo1 = tmp_grove["repos_dir"] / "repo1"
+        repo2 = tmp_grove["repos_dir"] / "repo2"
+        repo1.mkdir()
+        repo2.mkdir()
+
+        # Only repo2 has the branch checked out in a worktree
+        def selective_has_branch(path, branch):
+            return path == repo2
+
+        with patch("grove.workspace.git.worktree_has_branch", side_effect=selective_has_branch):
+            cfg = Config(
+                repo_dirs=[tmp_grove["repos_dir"]],
+                workspace_dir=tmp_grove["workspace_dir"],
+            )
+            ws = workspace.create_workspace("test", {"repo1": repo1, "repo2": repo2}, "feat/x", cfg)
+            assert ws is None
+
+    def test_branch_check_error_fails(self, tmp_grove):
+        """Branch check failure (e.g. git error) aborts workspace creation."""
+        repo_path = tmp_grove["repos_dir"] / "svc-api"
+        repo_path.mkdir()
+
+        def raise_error(_path, _branch):
+            raise RuntimeError("git broke")
+
+        with patch("grove.workspace.git.worktree_has_branch", side_effect=raise_error):
+            cfg = Config(
+                repo_dirs=[tmp_grove["repos_dir"]],
+                workspace_dir=tmp_grove["workspace_dir"],
+            )
+            ws = workspace.create_workspace("test", {"svc-api": repo_path}, "feat/x", cfg)
+            assert ws is None
+
     def test_rollback_on_worktree_failure(self, tmp_grove):
         cfg = Config(
             repo_dirs=[tmp_grove["repos_dir"]],

@@ -496,6 +496,66 @@ class TestStatus:
             result = runner.invoke(app, ["status", "test-ws", "--pr"])
         assert result.exit_code == 0
 
+    def test_pr_flag_multi_repo(self, tmp_grove):
+        """PR status is fetched for all repos (in parallel) and displayed correctly."""
+        from grove import state
+        from grove.models import RepoWorktree, Workspace
+
+        ws_path = tmp_grove["workspace_dir"] / "multi-ws"
+        ws_path.mkdir()
+        ws = Workspace(
+            name="multi-ws",
+            path=ws_path,
+            branch="feat/x",
+            repos=[
+                RepoWorktree(
+                    repo_name="repo-a",
+                    source_repo=tmp_grove["repos_dir"] / "repo-a",
+                    worktree_path=ws_path / "repo-a",
+                    branch="feat/x",
+                ),
+                RepoWorktree(
+                    repo_name="repo-b",
+                    source_repo=tmp_grove["repos_dir"] / "repo-b",
+                    worktree_path=ws_path / "repo-b",
+                    branch="feat/x",
+                ),
+            ],
+        )
+        state.add_workspace(ws)
+
+        def mock_pr_by_path(path):
+            if "repo-a" in str(path):
+                return {"number": 10, "state": "OPEN", "reviewDecision": "APPROVED"}
+            return {"number": 20, "state": "MERGED"}
+
+        with (
+            patch("grove.cli.workspace.workspace_status") as mock_status,
+            patch("grove.cli.git_pr_status", side_effect=mock_pr_by_path),
+        ):
+            mock_status.return_value = [
+                {
+                    "repo": "repo-a",
+                    "branch": "feat/x",
+                    "status": "clean",
+                    "ahead": "0",
+                    "behind": "0",
+                },
+                {
+                    "repo": "repo-b",
+                    "branch": "feat/x",
+                    "status": "clean",
+                    "ahead": "0",
+                    "behind": "0",
+                },
+            ]
+            result = runner.invoke(app, ["status", "multi-ws", "--pr"])
+        assert result.exit_code == 0
+        assert "#10" in result.output
+        assert "#20" in result.output
+        assert "approved" in result.output
+        assert "merged" in result.output
+
 
 class TestSync:
     def test_success_up_to_date(self, tmp_grove, sample_workspace):

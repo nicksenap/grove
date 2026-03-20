@@ -71,9 +71,18 @@ def _provision_worktrees(
     Returns the created RepoWorktree list, or None on failure (with rollback).
     This is the shared primitive used by both create and add-repo.
     """
-    # Check for duplicate branch usage (git worktree limitation)
-    for repo_name, repo_path in repo_paths.items():
-        if git.worktree_has_branch(repo_path, branch):
+
+    # Check for duplicate branch usage (git worktree limitation) — parallel
+    def _check_branch(_name: str, repo_path: Path) -> bool:
+        return git.worktree_has_branch(repo_path, branch)
+
+    for repo_name, has_branch, exc in _parallel(
+        _check_branch, list(repo_paths.items()), "Checking"
+    ):
+        if exc is not None:
+            error(f"Could not check branch in {repo_name}: {exc}")
+            return None
+        if has_branch:
             error(
                 f"Branch [bold]{branch}[/] already has a worktree in "
                 f"[bold]{repo_name}[/] — git only allows one worktree per branch"
