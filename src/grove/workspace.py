@@ -183,8 +183,10 @@ def create_workspace(
     )
     state.add_workspace(workspace)
 
-    with contextlib.suppress(Exception):
+    try:
         stats.record_created(name, branch, list(repo_paths.keys()))
+    except Exception:
+        _log.warning("failed to record stats for workspace creation", exc_info=True)
 
     if config.claude_memory_sync:
         _rehydrate_claude_memory(created)
@@ -358,8 +360,10 @@ def delete_workspace(name: str) -> bool:
 
     state.remove_workspace(name)
 
-    with contextlib.suppress(Exception):
+    try:
         stats.record_deleted(name, workspace.branch, [wt.repo_name for wt in workspace.repos])
+    except Exception:
+        _log.warning("failed to record stats for workspace deletion", exc_info=True)
 
     _log.info("workspace %r deleted", name)
     return True

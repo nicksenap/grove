@@ -8,6 +8,9 @@ def __getattr__(name: str) -> str:
 
             v = version("grove")
         except Exception:
+            import logging
+
+            logging.getLogger("grove").debug("could not read package version", exc_info=True)
             v = "unknown"
         globals()["__version__"] = v
         return v

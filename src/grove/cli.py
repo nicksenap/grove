@@ -899,6 +899,7 @@ def status(
                 try:
                     pr_results[repo] = future.result()
                 except Exception:
+                    _log.warning("PR status fetch failed for %s", repo, exc_info=True)
                     pr_results[repo] = None
 
     columns = ["Repo", "Branch", "↑↓", "Status"]
