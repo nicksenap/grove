@@ -1,5 +1,28 @@
 # TODO
 
+## `gw temp` — temporary workspaces for quick investigation
+
+Spin up a disposable workspace for non-coding tasks (DLQ investigation, code review, log analysis). Key ideas:
+
+- **Detached HEAD** — no branch creation, just checkout at `origin/main` tip after a parallel fetch
+- **Skip setup hooks** — no `npm install` etc., we're just reading
+- **Auto-cleanup** — delete workspace when done
+- **Optional claude integration** — launch an interactive claude session in the temp workspace
+- **Shell wrapper** handles cd + cleanup lifecycle (same `GROVE_CD_FILE` pattern as `gw create`)
+
+### Open questions
+
+- Should the prompt arg launch claude interactively (user can follow up) or non-interactively (`-p`, one-shot)?
+  Interactive is probably better UX — `-p` exits immediately and auto-deletes before you can follow up.
+- Zellij integration: `zellij action new-tab` doesn't support running commands, `zellij run` opens a pane not a tab.
+  Simplest approach: just run everything in the current shell, no multiplexer awareness.
+- Should `gw temp` reuse the `create_workspace` path or have its own lightweight `create_temp_workspace`?
+  Own path is cleaner — skips branch checks, hook execution, and uses `git worktree add --detach`.
+
+### Refactoring
+
+- Move `shell/grove.sh` into the Python package and load via `importlib.resources` to eliminate the duplicated inline `_SHELL_FUNCTION` fallback in `cli.py`.
+
 ## Integration tests
 
 Add end-to-end tests that exercise the main flows against real git repos (not mocks):

@@ -70,6 +70,22 @@ def write_chars(text: str) -> bool:
         return False
 
 
+def close_pane() -> bool:
+    """Close the current Zellij pane.
+
+    If it's the last pane in the tab, Zellij automatically closes the tab too.
+    """
+    try:
+        result = subprocess.run(
+            ["zellij", "action", "close-pane"],
+            capture_output=True,
+            timeout=3,
+        )
+        return result.returncode == 0
+    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+        return False
+
+
 def send_enter() -> bool:
     """Send Enter key (carriage return) to the focused pane."""
     try:

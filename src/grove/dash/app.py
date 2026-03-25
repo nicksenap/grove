@@ -208,7 +208,7 @@ class DashboardApp(App):
             self._handle_search_submit()
             return
 
-        from grove.dash import zellij
+        from grove import zellij
 
         board = self.query_one(KanbanBoard)
         agent = board.focused_agent
@@ -231,7 +231,7 @@ class DashboardApp(App):
         self._send_response(approve=False)
 
     def _send_response(self, *, approve: bool) -> None:
-        from grove.dash import zellij
+        from grove import zellij
 
         board = self.query_one(KanbanBoard)
         agent = board.focused_agent

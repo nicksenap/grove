@@ -1049,6 +1049,18 @@ def _do_cleanup(ws_name: str) -> None:
     )
 
 
+def _maybe_close_zellij_tab(close_tab: bool) -> None:
+    """Close current Zellij tab if requested and running inside Zellij."""
+    if not close_tab:
+        return
+    from grove.zellij import close_pane, is_available
+
+    if not is_available():
+        warning("--close-tab ignored: not running inside Zellij")
+        return
+    close_pane()
+
+
 @app.command()
 def go(
     name: str | None = typer.Argument(
@@ -1060,13 +1072,29 @@ def go(
     delete: bool = typer.Option(
         False, "--delete", "-d", help="Delete current workspace after navigating away"
     ),
+    close_tab: bool = typer.Option(
+        False, "--close-tab", "-c", help="Close the current Zellij pane/tab (combine with -d)"
+    ),
 ) -> None:
     """Print workspace path (use with shell function for cd)."""
+    current_ws = state.find_workspace_by_path(Path.cwd())
+
+    # --close-tab: delete workspace (if -d) and close the Zellij tab, then exit.
+    # No navigation needed since the tab is going away.
+    if close_tab:
+        if name is not None or back:
+            warning("--close-tab closes the tab; ignoring workspace target")
+        if delete:
+            if current_ws is None:
+                warning("--delete has no effect: not inside a workspace")
+            else:
+                _do_cleanup(current_ws.name)
+        _maybe_close_zellij_tab(close_tab)
+        return
+
     if back and name is not None:
         error("--back cannot be combined with a workspace name")
         raise typer.Exit(1)
-
-    current_ws = state.find_workspace_by_path(Path.cwd())
 
     # --back: go to source repo dir of current workspace
     if back:
