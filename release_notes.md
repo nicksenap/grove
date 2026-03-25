@@ -1,7 +1,9 @@
 ## What's New
 
-### `gw go -c` — close Zellij pane/tab when leaving
-Close the current Zellij pane when navigating away from a workspace. If it's the last pane in the tab, the tab closes too. Combine with `-d` to delete the workspace: `gw go -dc`.
-
-### Internal
-- Moved `zellij` module from `grove.dash` to top-level `grove.zellij` since it's used outside the dashboard
+### `--json` flag for `list`, `status`, and `doctor`
+Machine-readable JSON output via `-j`/`--json` on the commands that produce tabular data:
+- `gw list -j` — all workspaces as JSON array
+- `gw list <name> -j` — single workspace detail
+- `gw list -sj` — workspace summaries with git status
+- `gw status -j` — repo status for current workspace
+- `gw doctor -j` — health issues as JSON array

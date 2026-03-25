@@ -509,14 +509,21 @@ def list_workspaces(
         autocompletion=complete_workspace_name,
     ),
     show_status: bool = typer.Option(False, "--status", "-s", help="Include git status summary"),
+    as_json: bool = typer.Option(False, "--json", "-j", help="Output as JSON"),
 ) -> None:
     """List all workspaces, or show details for a specific one."""
+    import json
+
     # Detail view for a single workspace
     if name is not None:
         ws = state.get_workspace(name)
         if ws is None:
             error(f"Workspace [bold]{name}[/] not found")
             raise typer.Exit(1)
+
+        if as_json:
+            print(json.dumps(ws.to_dict(), indent=2))
+            return
 
         console.print(f"[bold]Name:[/]      {ws.name}")
         console.print(f"[bold]Branch:[/]    {ws.branch}")
@@ -536,6 +543,9 @@ def list_workspaces(
         if not summaries:
             info("No workspaces. Create one with: gw create <name> -r repo1,repo2 -b branch")
             return
+        if as_json:
+            print(json.dumps(summaries, indent=2))
+            return
         table = make_table("Name", "Branch", "Repos", "Status", "Path")
         for s in summaries:
             table.add_row(s["name"], s["branch"], s["repos"], s["status"], s["path"])
@@ -545,6 +555,10 @@ def list_workspaces(
     workspaces = state.load_workspaces()
     if not workspaces:
         info("No workspaces. Create one with: gw create <name> -r repo1,repo2 -b branch")
+        return
+
+    if as_json:
+        print(json.dumps([ws.to_dict() for ws in workspaces], indent=2))
         return
 
     table = make_table("Name", "Branch", "Repos", "Path", "Created")
@@ -601,10 +615,30 @@ def delete(
 @app.command()
 def doctor(
     fix: bool = typer.Option(False, "--fix", help="Auto-fix stale state entries"),
+    as_json: bool = typer.Option(False, "--json", "-j", help="Output as JSON"),
 ) -> None:
     """Diagnose workspace health issues."""
+    import json
+
     cfg = config.require_config()
     issues = workspace.diagnose_workspaces(cfg)
+
+    if as_json:
+        print(
+            json.dumps(
+                [
+                    {
+                        "workspace": i.workspace_name,
+                        "repo": i.repo_name,
+                        "issue": i.issue,
+                        "suggested_action": i.suggested_action,
+                    }
+                    for i in issues
+                ],
+                indent=2,
+            )
+        )
+        return
 
     if not issues:
         success("All workspaces healthy")
@@ -863,8 +897,11 @@ def status(
     verbose: bool = typer.Option(False, "--verbose", "-V", help="Show full git status output"),
     show_pr: bool = typer.Option(False, "--pr", "-P", help="Show GitHub PR status (requires gh)"),
     show_all: bool = typer.Option(False, "--all", "-a", help="Show summary of all workspaces"),
+    as_json: bool = typer.Option(False, "--json", "-j", help="Output as JSON"),
 ) -> None:
     """Show git status across a workspace's repos."""
+    import json
+
     if show_all:
         warning("--all is deprecated, use: gw list -s")
         if name is not None:
@@ -874,6 +911,9 @@ def status(
         if not summaries:
             info("No workspaces. Create one with: gw create <name> -r repo1,repo2 -b branch")
             return
+        if as_json:
+            print(json.dumps(summaries, indent=2))
+            return
         table = make_table("Workspace", "Branch", "Repos", "Status")
         for s in summaries:
             table.add_row(s["name"], s["branch"], s["repos"], s["status"])
@@ -881,10 +921,6 @@ def status(
         return
 
     ws = _resolve_workspace(name)
-
-    console.print(f"[bold]Workspace:[/] {ws.name}  [dim]({ws.path})[/]")
-    console.print()
-
     results = workspace.workspace_status(ws)
 
     # Fetch PR status in parallel (each call hits the GitHub API)
@@ -901,6 +937,16 @@ def status(
                 except Exception:
                     _log.warning("PR status fetch failed for %s", repo, exc_info=True)
                     pr_results[repo] = None
+
+    if as_json:
+        for r in results:
+            if show_pr and r["repo"] in pr_results:
+                r["pr"] = pr_results[r["repo"]]
+        print(json.dumps({"workspace": ws.name, "path": str(ws.path), "repos": results}, indent=2))
+        return
+
+    console.print(f"[bold]Workspace:[/] {ws.name}  [dim]({ws.path})[/]")
+    console.print()
 
     columns = ["Repo", "Branch", "↑↓", "Status"]
     if show_pr:
