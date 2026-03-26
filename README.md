@@ -169,9 +169,8 @@ When you press `Enter` to jump to an agent, the dashboard finds the right Zellij
 
 Grove integrates with [Zellij](https://zellij.dev/) for tab management. When running inside Zellij:
 
-- **`gw go`** jumps to the workspace's Zellij tab, or opens a new one if it doesn't exist
 - **`gw go --close-tab`** closes the current Zellij tab (useful when you're done with a workspace)
-- **`gw dash`** lets you press `Enter` to jump directly to an agent's Zellij tab
+- **`gw dash`** lets you press `Enter` to jump directly to an agent's Zellij tab, and `y`/`n` to approve or deny permission requests
 
 Support for tmux and other terminal multiplexers is planned.
 
