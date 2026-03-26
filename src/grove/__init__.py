@@ -6,7 +6,10 @@ def __getattr__(name: str) -> str:
         try:
             from importlib.metadata import version
 
-            v = version("grove")
+            try:
+                v = version("gw-cli")
+            except Exception:
+                v = version("grove")
         except Exception:
             import logging
 

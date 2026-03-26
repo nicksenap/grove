@@ -57,7 +57,13 @@ def main(
     # Non-blocking update check (reads cache, refreshes in background)
     newer = get_newer_version(__version__)
     if newer:
-        warning(f"New version available: {__version__} → {newer} — run: brew upgrade grove")
+        try:
+            from importlib.metadata import version
+            version("gw-cli")
+            upgrade_cmd = "pipx upgrade gw-cli"
+        except Exception:
+            upgrade_cmd = "brew upgrade grove"
+        warning(f"New version available: {__version__} → {newer} — run: {upgrade_cmd}")
 
     if ctx.invoked_subcommand is None and not version:
         # No subcommand and no --version: show help

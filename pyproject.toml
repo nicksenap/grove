@@ -1,6 +1,6 @@
 [project]
 name = "gw-cli"
-version = "0.12.11"
+version = "0.12.12"
 description = "Git Worktree Workspace Orchestrator"
 readme = "README.md"
 authors = [
