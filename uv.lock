@@ -34,7 +34,7 @@ wheels = [
 
 [[package]]
 name = "gw-cli"
-version = "0.12.10"
+version = "0.12.11"
 source = { editable = "." }
 dependencies = [
     { name = "rich" },

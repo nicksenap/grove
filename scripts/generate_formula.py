@@ -5,8 +5,9 @@ Usage:
     pip install .
     python3 scripts/generate_formula.py <tarball_url> <tarball_sha256>
 
-Reads installed packages from the current environment, fetches sdist
-URLs and SHA256s from PyPI, and writes a complete Formula/grove.rb to stdout.
+Reads installed packages from the current environment, fetches artifact
+URLs and SHA256s from PyPI (preferring wheels over sdists), and writes
+a complete Formula/grove.rb to stdout.
 """
 
 from __future__ import annotations
@@ -16,7 +17,7 @@ import subprocess
 import sys
 import urllib.request
 
-SKIP = {"grove", "gw-cli", "pip", "setuptools", "wheel"}
+SKIP = {"grove", "gw-cli", "pip", "setuptools", "wheel", "build", "pyproject-hooks"}
 
 TEMPLATE = """\
 class Grove < Formula
@@ -60,15 +61,26 @@ def _get_installed_packages() -> list[dict[str, str]]:
     return json.loads(result.stdout)
 
 
-def _pypi_sdist(name: str, version: str) -> tuple[str, str]:
-    """Return (url, sha256) for the sdist of *name*==*version*."""
+def _pypi_artifact(name: str, version: str) -> tuple[str, str]:
+    """Return (url, sha256) for a PyPI artifact of *name*==*version*.
+
+    Prefers pure-Python wheels (no build deps needed) over sdists.
+    """
     api_url = f"https://pypi.org/pypi/{name}/{version}/json"
     with urllib.request.urlopen(api_url) as resp:
         data = json.loads(resp.read())
+
+    # Prefer a pure-Python wheel (py3-none-any) — no build deps needed
+    for entry in data["urls"]:
+        if entry["packagetype"] == "bdist_wheel" and entry["filename"].endswith("-py3-none-any.whl"):
+            return entry["url"], entry["digests"]["sha256"]
+
+    # Fall back to sdist
     for entry in data["urls"]:
         if entry["packagetype"] == "sdist":
             return entry["url"], entry["digests"]["sha256"]
-    raise RuntimeError(f"No sdist found for {name}=={version}")
+
+    raise RuntimeError(f"No artifact found for {name}=={version}")
 
 
 def main() -> None:
@@ -84,7 +96,7 @@ def main() -> None:
         name, ver = pkg["name"], pkg["version"]
         if name.lower() in SKIP:
             continue
-        url, sha = _pypi_sdist(name, ver)
+        url, sha = _pypi_artifact(name, ver)
         blocks.append(f'  resource "{name}" do\n    url "{url}"\n    sha256 "{sha}"\n  end')
 
     print(
