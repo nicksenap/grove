@@ -165,6 +165,16 @@ When you press `Enter` to jump to an agent, the dashboard finds the right Zellij
 | 4 | CWD path match via `zellij action dump-layout` | Agent CWD under tab CWD or vice versa |
 | 5 | Project name substring in tab name | `api` → tab `public-api` |
 
+## Terminal multiplexer integration
+
+Grove integrates with [Zellij](https://zellij.dev/) for tab management. When running inside Zellij:
+
+- **`gw go`** jumps to the workspace's Zellij tab, or opens a new one if it doesn't exist
+- **`gw go --close-tab`** closes the current Zellij tab (useful when you're done with a workspace)
+- **`gw dash`** lets you press `Enter` to jump directly to an agent's Zellij tab
+
+Support for tmux and other terminal multiplexers is planned.
+
 ## Works with AI coding tools
 
 Worktrees mean isolation. That makes Grove a natural fit for tools like [Claude Code](https://docs.anthropic.com/en/docs/claude-code) — spin up a workspace, let your AI agent work across repos without touching anything else, clean up when done:
