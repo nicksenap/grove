@@ -23,6 +23,14 @@ brew tap nicksenap/grove
 brew install grove
 ```
 
+### PyPI
+
+```bash
+pipx install gw-cli
+# or
+pip install gw-cli
+```
+
 ### From source
 
 ```bash

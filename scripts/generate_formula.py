@@ -16,7 +16,7 @@ import subprocess
 import sys
 import urllib.request
 
-SKIP = {"grove", "pip", "setuptools", "wheel"}
+SKIP = {"grove", "gw-cli", "pip", "setuptools", "wheel"}
 
 TEMPLATE = """\
 class Grove < Formula
