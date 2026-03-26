@@ -59,6 +59,7 @@ def main(
     if newer:
         try:
             from importlib.metadata import version
+
             version("gw-cli")
             upgrade_cmd = "pipx upgrade gw-cli"
         except Exception:
