@@ -3,8 +3,23 @@
 from __future__ import annotations
 
 import functools
+import os
 import subprocess
 from pathlib import Path
+
+_NO_PROMPT_ENV: dict[str, str] | None = None
+
+
+def _git_env() -> dict[str, str]:
+    """Return an env dict that prevents git/SSH from prompting for input."""
+    global _NO_PROMPT_ENV
+    if _NO_PROMPT_ENV is None:
+        _NO_PROMPT_ENV = {
+            **os.environ,
+            "GIT_TERMINAL_PROMPT": "0",
+            "GIT_SSH_COMMAND": "ssh -o BatchMode=yes",
+        }
+    return _NO_PROMPT_ENV
 
 
 class GitError(Exception):
@@ -20,9 +35,34 @@ def _run(args: list[str], cwd: Path | None = None) -> subprocess.CompletedProces
             capture_output=True,
             text=True,
             check=True,
+            stdin=subprocess.DEVNULL,
+            env=_git_env(),
         )
     except subprocess.CalledProcessError as e:
-        raise GitError(e.stderr.strip() or e.stdout.strip()) from e
+        stderr = e.stderr.strip() or e.stdout.strip()
+        if _is_auth_error(stderr):
+            raise GitError(
+                f"Authentication failed — grove runs git non-interactively "
+                f"and cannot prompt for passwords.\n"
+                f"To fix, do one of:\n"
+                f"  • ssh-add          (unlocks your key for this session)\n"
+                f"  • ssh-add -K       (macOS: stores passphrase in Keychain)\n"
+                f"  • Use a credential helper for HTTPS repos\n"
+                f"Original error: {stderr}"
+            ) from e
+        raise GitError(stderr) from e
+
+
+def _is_auth_error(stderr: str) -> bool:
+    markers = [
+        "Permission denied (publickey",
+        "Host key verification failed",
+        "Could not read from remote repository",
+        "terminal prompts disabled",
+        "connection closed by remote host",
+    ]
+    lower = stderr.lower()
+    return any(m.lower() in lower for m in markers)
 
 
 def remote_url(path: Path, remote: str = "origin") -> str | None:

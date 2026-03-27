@@ -251,3 +251,44 @@ class TestRunIntegration:
             mock_sub.side_effect = subprocess.CalledProcessError(1, "git", stderr="fatal: error")
             with pytest.raises(GitError, match="fatal: error"):
                 git._run(["status"], cwd=Path("/tmp"))
+
+    def test_uses_devnull_stdin_and_no_prompt_env(self):
+        with patch("subprocess.run") as mock_sub:
+            mock_sub.return_value = MagicMock()
+            git._run(["status"], cwd=Path("/tmp"))
+            call_kwargs = mock_sub.call_args.kwargs
+            assert call_kwargs["stdin"] == subprocess.DEVNULL
+            assert call_kwargs["env"]["GIT_TERMINAL_PROMPT"] == "0"
+            assert "BatchMode=yes" in call_kwargs["env"]["GIT_SSH_COMMAND"]
+
+    def test_auth_error_gives_helpful_message(self):
+        with patch("subprocess.run") as mock_sub:
+            mock_sub.side_effect = subprocess.CalledProcessError(
+                128, "git", stderr="Permission denied (publickey)."
+            )
+            with pytest.raises(GitError, match="ssh-add") as exc_info:
+                git._run(["fetch", "--all"], cwd=Path("/tmp"))
+            assert "non-interactively" in str(exc_info.value)
+
+    def test_terminal_prompts_disabled_gives_helpful_message(self):
+        with patch("subprocess.run") as mock_sub:
+            mock_sub.side_effect = subprocess.CalledProcessError(
+                128, "git", stderr="terminal prompts disabled"
+            )
+            with pytest.raises(GitError, match="ssh-add") as exc_info:
+                git._run(["fetch", "--all"], cwd=Path("/tmp"))
+            assert "credential helper" in str(exc_info.value)
+
+
+class TestIsAuthError:
+    def test_permission_denied(self):
+        assert git._is_auth_error("Permission denied (publickey).") is True
+
+    def test_host_key_verification(self):
+        assert git._is_auth_error("Host key verification failed") is True
+
+    def test_terminal_prompts_disabled(self):
+        assert git._is_auth_error("terminal prompts disabled") is True
+
+    def test_unrelated_error(self):
+        assert git._is_auth_error("fatal: not a git repository") is False
