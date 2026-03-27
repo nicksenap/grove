@@ -247,6 +247,7 @@ def _write_mcp_config(ws: Workspace) -> None:
             try:
                 existing = json.loads(mcp_file.read_text())
             except (json.JSONDecodeError, OSError):
+                _log.warning("corrupt .mcp.json at %s — overwriting", mcp_file)
                 existing = {}
 
         servers = existing.get("mcpServers", {})

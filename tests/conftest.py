@@ -47,6 +47,7 @@ def tmp_grove(tmp_path: Path):
         patch("grove.state.STATE_PATH", state_path),
         patch("grove.stats.GROVE_DIR", grove_dir),
         patch("grove.stats.STATS_PATH", grove_dir / "stats.json"),
+        patch("grove.mcp_store.DB_PATH", grove_dir / "messages.db"),
     ):
         yield {
             "grove_dir": grove_dir,

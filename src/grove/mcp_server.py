@@ -97,6 +97,8 @@ def list_workspaces() -> list[dict]:
 
 def run_server(workspace_id: str) -> None:
     """Start the MCP server. Called from the CLI."""
+    if not workspace_id:
+        raise ValueError("workspace_id must not be empty")
     global _workspace_id  # noqa: PLW0603
     _workspace_id = workspace_id
     mcp.run(transport="stdio")

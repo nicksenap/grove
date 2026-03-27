@@ -85,7 +85,7 @@ class TestRemoveMcpConfig:
         _write_mcp_config(ws)
         _remove_mcp_config(ws)
 
-        for path in [ws.path, ws.repos[0].worktree_path]:
+        for path in [ws.path, ws.repos[0].worktree_path, ws.repos[1].worktree_path]:
             mcp_file = path / ".mcp.json"
             assert not mcp_file.exists()
 
