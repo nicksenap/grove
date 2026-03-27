@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import json
 import shutil
 import subprocess
 from collections.abc import Callable
@@ -191,6 +192,11 @@ def create_workspace(
     if config.claude_memory_sync:
         _rehydrate_claude_memory(created)
 
+    try:
+        _write_mcp_config(workspace)
+    except Exception:
+        _log.warning("failed to write MCP config for %r", name, exc_info=True)
+
     _log.info("workspace %r created at %s", name, workspace_path)
     return workspace
 
@@ -219,6 +225,58 @@ def _harvest_claude_memory(repos: list[RepoWorktree]) -> None:
         except Exception as exc:
             _log.warning("Claude memory harvest failed for %s: %s", repo_wt.repo_name, exc)
             warning(f"[{repo_wt.repo_name}] Claude memory harvest failed: {exc}")
+
+
+def _mcp_server_entry(workspace_name: str) -> dict:
+    """Return the .mcp.json server entry for a workspace."""
+    return {
+        "command": "gw",
+        "args": ["mcp-serve", "--workspace", workspace_name],
+    }
+
+
+def _write_mcp_config(ws: Workspace) -> None:
+    """Write or merge a .mcp.json into each worktree and the workspace root."""
+    entry = _mcp_server_entry(ws.name)
+    paths = [ws.path] + [r.worktree_path for r in ws.repos]
+
+    for path in paths:
+        mcp_file = path / ".mcp.json"
+        existing: dict = {}
+        if mcp_file.exists():
+            try:
+                existing = json.loads(mcp_file.read_text())
+            except (json.JSONDecodeError, OSError):
+                existing = {}
+
+        servers = existing.get("mcpServers", {})
+        servers["grove"] = entry
+        existing["mcpServers"] = servers
+
+        mcp_file.write_text(json.dumps(existing, indent=2) + "\n")
+
+
+def _remove_mcp_config(ws: Workspace) -> None:
+    """Remove the grove entry from .mcp.json in each worktree and workspace root."""
+    paths = [ws.path] + [r.worktree_path for r in ws.repos]
+
+    for path in paths:
+        mcp_file = path / ".mcp.json"
+        if not mcp_file.exists():
+            continue
+        try:
+            data = json.loads(mcp_file.read_text())
+        except (json.JSONDecodeError, OSError):
+            continue
+
+        servers = data.get("mcpServers", {})
+        servers.pop("grove", None)
+
+        if not servers:
+            mcp_file.unlink(missing_ok=True)
+        else:
+            data["mcpServers"] = servers
+            mcp_file.write_text(json.dumps(data, indent=2) + "\n")
 
 
 def _run_hook(repo_name: str, source_repo: Path, worktree_path: Path, hook: str) -> None:
@@ -334,6 +392,11 @@ def delete_workspace(name: str) -> bool:
     cfg = config.load_config()
     if cfg and cfg.claude_memory_sync:
         _harvest_claude_memory(workspace.repos)
+
+    try:
+        _remove_mcp_config(workspace)
+    except Exception:
+        _log.warning("failed to clean up MCP config for %r", name, exc_info=True)
 
     def _remove_one(_name: str, repo_wt: RepoWorktree) -> None:
         _teardown_and_remove(_name, repo_wt, force_cleanup=True, delete_branch=True)
@@ -670,6 +733,11 @@ def add_repo_to_workspace(
 
     if config.claude_memory_sync:
         _rehydrate_claude_memory(created)
+
+    try:
+        _write_mcp_config(ws)
+    except Exception:
+        _log.warning("failed to write MCP config after add-repo", exc_info=True)
 
     return created
 

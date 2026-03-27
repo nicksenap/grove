@@ -1211,6 +1211,24 @@ def go(
 
 
 # ---------------------------------------------------------------------------
+# MCP server
+# ---------------------------------------------------------------------------
+
+
+@app.command("mcp-serve", hidden=True)
+def mcp_serve(
+    workspace: str = typer.Option(..., "--workspace", "-w", help="Workspace name"),
+) -> None:
+    """Start the MCP server for cross-workspace communication.
+
+    Invoked automatically by Claude Code via .mcp.json — not for direct use.
+    """
+    from grove.mcp_server import run_server
+
+    run_server(workspace)
+
+
+# ---------------------------------------------------------------------------
 # Dashboard — agent monitoring
 # ---------------------------------------------------------------------------
 

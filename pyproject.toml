@@ -12,6 +12,7 @@ dependencies = [
     "rich>=13.0",
     "simple-term-menu>=1.6.6",
     "textual>=1.0",
+    "mcp>=1.0",
 ]
 
 [project.scripts]
