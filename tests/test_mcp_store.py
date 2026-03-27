@@ -39,6 +39,8 @@ class TestInsertAnnouncement:
         assert rows[0]["message"] == "hello world"
         assert rows[0]["workspace_id"] == "ws-1"
         assert rows[0]["category"] == "info"
+        # URL is stored normalized
+        assert rows[0]["repo_url"] == "org/repo"
 
     def test_invalid_category_raises(self, db):
         with pytest.raises(ValueError, match="Invalid category"):
@@ -103,3 +105,74 @@ class TestQueryAnnouncements:
         rows = mcp_store.query_announcements(db, "repo-a")
         assert rows[0]["message"] == "second"
         assert rows[1]["message"] == "first"
+
+
+class TestNormalizeRepoUrl:
+    def test_ssh_url(self):
+        assert mcp_store.normalize_repo_url("git@github.com:org/repo.git") == "org/repo"
+
+    def test_https_url(self):
+        assert mcp_store.normalize_repo_url("https://github.com/org/repo.git") == "org/repo"
+
+    def test_https_no_git_suffix(self):
+        assert mcp_store.normalize_repo_url("https://github.com/org/repo") == "org/repo"
+
+    def test_unparseable_falls_back(self):
+        assert mcp_store.normalize_repo_url("just-a-string") == "just-a-string"
+
+    def test_ssh_and_https_match(self, db):
+        """Announcements via SSH URL are visible when querying via HTTPS URL."""
+        mcp_store.insert_announcement(db, "ws-1", "git@github.com:org/repo.git", "info", "ssh msg")
+        rows = mcp_store.query_announcements(db, "https://github.com/org/repo.git")
+        assert len(rows) == 1
+        assert rows[0]["message"] == "ssh msg"
+
+    def test_https_and_ssh_match(self, db):
+        """Announcements via HTTPS URL are visible when querying via SSH URL."""
+        mcp_store.insert_announcement(
+            db, "ws-1", "https://github.com/org/repo", "warning", "https msg"
+        )
+        rows = mcp_store.query_announcements(db, "git@github.com:org/repo.git")
+        assert len(rows) == 1
+        assert rows[0]["message"] == "https msg"
+
+
+class TestRetention:
+    def test_prunes_old_announcements_on_open(self, tmp_path):
+        """Announcements older than _RETENTION_DAYS are pruned on open_db."""
+        db_path = tmp_path / "prune.db"
+        conn = mcp_store.open_db(db_path)
+
+        # Insert an announcement dated 60 days ago
+        conn.execute(
+            "INSERT INTO announcements (workspace_id, repo_url, category, message, created_at) "
+            "VALUES (?, ?, ?, ?, datetime('now', '-60 days'))",
+            ("ws-1", "repo-a", "info", "ancient"),
+        )
+        # Insert a recent one
+        mcp_store.insert_announcement(conn, "ws-1", "repo-a", "info", "recent")
+        conn.close()
+
+        # Re-open — should prune the old one
+        conn2 = mcp_store.open_db(db_path)
+        rows = mcp_store.query_announcements(conn2, "repo-a")
+        assert len(rows) == 1
+        assert rows[0]["message"] == "recent"
+        conn2.close()
+
+    def test_keeps_recent_announcements(self, tmp_path):
+        db_path = tmp_path / "keep.db"
+        conn = mcp_store.open_db(db_path)
+
+        conn.execute(
+            "INSERT INTO announcements (workspace_id, repo_url, category, message, created_at) "
+            "VALUES (?, ?, ?, ?, datetime('now', '-5 days'))",
+            ("ws-1", "repo-a", "info", "five days ago"),
+        )
+        conn.commit()
+        conn.close()
+
+        conn2 = mcp_store.open_db(db_path)
+        rows = mcp_store.query_announcements(conn2, "repo-a")
+        assert len(rows) == 1
+        conn2.close()
