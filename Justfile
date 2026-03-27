@@ -31,9 +31,10 @@ test *args:
 test-v *args:
     uv run pytest tests/ -v {{ args }}
 
-# Install gw as editable for development (local venv only)
+# Set up dev environment (editable install + git hooks)
 dev:
     uv pip install -e .
+    git config core.hooksPath .githooks
 
 # Install gw globally, linked to local source (changes reflect immediately)
 dev-global:
@@ -51,6 +52,11 @@ install:
 # Reinstall and reload shell integration
 reload: install
     @echo 'Run: eval "$(gw shell-init)"'
+
+# Build and run e2e tests in Docker
+e2e:
+    docker build -t grove-e2e -f e2e/Dockerfile .
+    docker run --rm grove-e2e
 
 # Tag a new release (usage: just release 0.4.0)
 release version:

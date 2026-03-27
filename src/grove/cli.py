@@ -547,11 +547,11 @@ def list_workspaces(
 
     if show_status:
         summaries = workspace.all_workspaces_summary()
-        if not summaries:
-            info("No workspaces. Create one with: gw create <name> -r repo1,repo2 -b branch")
-            return
         if as_json:
             print(json.dumps(summaries, indent=2))
+            return
+        if not summaries:
+            info("No workspaces. Create one with: gw create <name> -r repo1,repo2 -b branch")
             return
         table = make_table("Name", "Branch", "Repos", "Status", "Path")
         for s in summaries:
@@ -560,12 +560,13 @@ def list_workspaces(
         return
 
     workspaces = state.load_workspaces()
-    if not workspaces:
-        info("No workspaces. Create one with: gw create <name> -r repo1,repo2 -b branch")
-        return
 
     if as_json:
         print(json.dumps([ws.to_dict() for ws in workspaces], indent=2))
+        return
+
+    if not workspaces:
+        info("No workspaces. Create one with: gw create <name> -r repo1,repo2 -b branch")
         return
 
     table = make_table("Name", "Branch", "Repos", "Path", "Created")
