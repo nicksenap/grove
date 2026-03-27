@@ -14,10 +14,11 @@ def _git_env() -> dict[str, str]:
     """Return an env dict that prevents git/SSH from prompting for input."""
     global _NO_PROMPT_ENV
     if _NO_PROMPT_ENV is None:
+        base_ssh = os.environ.get("GIT_SSH_COMMAND", "ssh")
         _NO_PROMPT_ENV = {
             **os.environ,
             "GIT_TERMINAL_PROMPT": "0",
-            "GIT_SSH_COMMAND": "ssh -o BatchMode=yes",
+            "GIT_SSH_COMMAND": f"{base_ssh} -o BatchMode=yes",
         }
     return _NO_PROMPT_ENV
 
@@ -45,8 +46,8 @@ def _run(args: list[str], cwd: Path | None = None) -> subprocess.CompletedProces
                 f"Authentication failed — grove runs git non-interactively "
                 f"and cannot prompt for passwords.\n"
                 f"To fix, do one of:\n"
-                f"  • ssh-add          (unlocks your key for this session)\n"
-                f"  • ssh-add -K       (macOS: stores passphrase in Keychain)\n"
+                f"  • ssh-add                    (unlocks your key for this session)\n"
+                f"  • ssh-add --apple-use-keychain  (macOS: stores in Keychain)\n"
                 f"  • Use a credential helper for HTTPS repos\n"
                 f"Original error: {stderr}"
             ) from e
@@ -55,14 +56,12 @@ def _run(args: list[str], cwd: Path | None = None) -> subprocess.CompletedProces
 
 def _is_auth_error(stderr: str) -> bool:
     markers = [
-        "Permission denied (publickey",
-        "Host key verification failed",
-        "Could not read from remote repository",
+        "permission denied (publickey",
+        "host key verification failed",
         "terminal prompts disabled",
-        "connection closed by remote host",
     ]
     lower = stderr.lower()
-    return any(m.lower() in lower for m in markers)
+    return any(m in lower for m in markers)
 
 
 def remote_url(path: Path, remote: str = "origin") -> str | None:

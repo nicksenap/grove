@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -253,6 +254,7 @@ class TestRunIntegration:
                 git._run(["status"], cwd=Path("/tmp"))
 
     def test_uses_devnull_stdin_and_no_prompt_env(self):
+        git._NO_PROMPT_ENV = None
         with patch("subprocess.run") as mock_sub:
             mock_sub.return_value = MagicMock()
             git._run(["status"], cwd=Path("/tmp"))
@@ -260,6 +262,18 @@ class TestRunIntegration:
             assert call_kwargs["stdin"] == subprocess.DEVNULL
             assert call_kwargs["env"]["GIT_TERMINAL_PROMPT"] == "0"
             assert "BatchMode=yes" in call_kwargs["env"]["GIT_SSH_COMMAND"]
+
+    def test_preserves_existing_git_ssh_command(self):
+        git._NO_PROMPT_ENV = None
+        with (
+            patch.dict(os.environ, {"GIT_SSH_COMMAND": "ssh -i ~/.ssh/special_key"}),
+            patch("subprocess.run") as mock_sub,
+        ):
+            mock_sub.return_value = MagicMock()
+            git._run(["status"], cwd=Path("/tmp"))
+            ssh_cmd = mock_sub.call_args.kwargs["env"]["GIT_SSH_COMMAND"]
+            assert "-i ~/.ssh/special_key" in ssh_cmd
+            assert "BatchMode=yes" in ssh_cmd
 
     def test_auth_error_gives_helpful_message(self):
         with patch("subprocess.run") as mock_sub:
@@ -292,3 +306,9 @@ class TestIsAuthError:
 
     def test_unrelated_error(self):
         assert git._is_auth_error("fatal: not a git repository") is False
+
+    def test_could_not_read_remote_is_not_auth(self):
+        assert git._is_auth_error("Could not read from remote repository") is False
+
+    def test_connection_closed_is_not_auth(self):
+        assert git._is_auth_error("connection closed by remote host") is False
