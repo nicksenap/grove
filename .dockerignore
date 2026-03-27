@@ -1,0 +1,6 @@
+# Keep the image lean, but preserve .git for e2e tests
+reddit_*
+*.txt
+__pycache__
+*.pyc
+.ruff_cache

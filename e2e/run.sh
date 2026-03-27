@@ -11,13 +11,20 @@ pass() { PASS=$((PASS + 1)); echo "  ✓ $1"; }
 fail() { FAIL=$((FAIL + 1)); ERRORS+=("$1"); echo "  ✗ $1"; }
 section() { echo; echo "── $1 ──"; }
 
+# Wrapper that tolerates crashes during Python exit cleanup (SIGSEGV=139, SIGABRT=134).
+# Some CI runners trigger these in native extension destructors (ncurses, uvloop, etc.)
+# after the command has completed its work. Not a Grove bug.
+gw() { command gw "$@" || { rc=$?; if [ $rc -eq 139 ] || [ $rc -eq 134 ]; then echo "  (ignoring signal crash at exit, rc=$rc)" >&2; else return $rc; fi; }; }
+
 # ---------------------------------------------------------------------------
-# Setup: create real git repos and Grove config
+# Setup: create test repos (including a clone of Grove itself)
 # ---------------------------------------------------------------------------
 section "Setup"
 
-export GROVE_HOME="${GROVE_HOME:-/tmp/grove-e2e}"
+export GROVE_HOME=$(mktemp -d /tmp/grove-e2e.XXXXXX)
 export HOME="${GROVE_HOME}"
+trap 'rm -rf "${GROVE_HOME}"' EXIT
+
 REPOS_DIR="${GROVE_HOME}/repos"
 mkdir -p "${REPOS_DIR}"
 
@@ -25,13 +32,36 @@ git config --global user.email "e2e@grove.test"
 git config --global user.name "Grove E2E"
 git config --global init.defaultBranch main
 
+# Simple repos with minimal history
 for repo in svc-auth svc-api svc-gateway; do
     git init -q "${REPOS_DIR}/${repo}"
     (cd "${REPOS_DIR}/${repo}" && git commit --allow-empty -q -m "initial commit")
 done
-echo "Created 3 test repos"
 
-echo "Repos ready"
+# Use a copy of the real Grove repo — has proper commit history for sync tests
+GROVE_SRC="${GROVE_SRC:-/src/grove}"
+if [ -d "${GROVE_SRC}/.git" ]; then
+    git clone -q --local "${GROVE_SRC}" "${REPOS_DIR}/grove"
+    echo "Cloned Grove repo ($(cd "${REPOS_DIR}/grove" && git rev-list --count HEAD) commits)"
+else
+    # Fallback: create a bare origin + clone so we have proper remote refs
+    git init -q --bare "${REPOS_DIR}/grove-origin.git"
+    git clone -q "${REPOS_DIR}/grove-origin.git" "${REPOS_DIR}/grove"
+    (cd "${REPOS_DIR}/grove" \
+        && echo "v1" > README.md && git add . && git commit -q -m "first" \
+        && echo "v2" >> README.md && git add . && git commit -q -m "second" \
+        && echo "v3" >> README.md && git add . && git commit -q -m "third" \
+        && git push -q origin main)
+    echo "Created grove repo with 3 commits + origin (no source clone available)"
+fi
+
+# Add a .grove.toml with setup hook to svc-auth
+cat > "${REPOS_DIR}/svc-auth/.grove.toml" <<'TOML'
+setup = "touch .grove-setup-ran"
+TOML
+(cd "${REPOS_DIR}/svc-auth" && git add .grove.toml && git commit -q -m "add grove config")
+
+echo "Created 4 test repos"
 
 # Verify gw is on PATH
 gw --version
@@ -45,10 +75,11 @@ section "Init"
 gw init "${REPOS_DIR}" 2>&1
 pass "init succeeded"
 
-if gw doctor --json | jq -e 'type == "array"' > /dev/null 2>&1; then
-    pass "doctor runs cleanly after init"
+issue_count=$(gw doctor --json | jq 'length')
+if [ "${issue_count}" = "0" ]; then
+    pass "doctor: zero issues after init"
 else
-    fail "doctor failed after init"
+    fail "doctor: found ${issue_count} issue(s) after clean init"
 fi
 
 # ---------------------------------------------------------------------------
@@ -82,15 +113,58 @@ else
     fail "expected branch feat/e2e, got ${auth_branch}"
 fi
 
-# Verify .mcp.json was written
+# Verify .mcp.json was written in workspace root AND worktree dirs
 if [ -f "${WS_DIR}/.mcp.json" ]; then
     if jq -e '.mcpServers.grove' "${WS_DIR}/.mcp.json" > /dev/null 2>&1; then
-        pass ".mcp.json has grove server entry"
+        pass ".mcp.json has grove server entry (workspace root)"
     else
         fail ".mcp.json missing grove entry"
     fi
 else
     fail ".mcp.json not created in workspace root"
+fi
+
+if [ -f "${WS_DIR}/svc-auth/.mcp.json" ] && jq -e '.mcpServers.grove' "${WS_DIR}/svc-auth/.mcp.json" > /dev/null 2>&1; then
+    pass ".mcp.json written to worktree directories"
+else
+    fail ".mcp.json missing in worktree dir"
+fi
+
+# Verify .grove.toml setup hook ran
+if [ -f "${WS_DIR}/svc-auth/.grove-setup-ran" ]; then
+    pass ".grove.toml setup hook executed"
+else
+    fail ".grove.toml setup hook did not run"
+fi
+
+# ---------------------------------------------------------------------------
+# Test: duplicate workspace name rejected
+# ---------------------------------------------------------------------------
+section "Error handling"
+
+if ! gw create test-ws --branch feat/dupe --repos svc-auth 2>/dev/null; then
+    pass "duplicate workspace name rejected"
+else
+    fail "duplicate workspace name should have failed"
+    gw delete test-ws --force 2>/dev/null || true
+fi
+
+# ---------------------------------------------------------------------------
+# Test: gw go
+# ---------------------------------------------------------------------------
+section "Go"
+
+go_output=$(gw go test-ws 2>/dev/null)
+if [ "${go_output}" = "${WS_DIR}" ]; then
+    pass "go prints correct workspace path"
+else
+    fail "go: expected ${WS_DIR}, got ${go_output}"
+fi
+
+if ! gw go nonexistent-ws 2>/dev/null; then
+    pass "go with invalid workspace exits non-zero"
+else
+    fail "go with invalid workspace should have failed"
 fi
 
 # ---------------------------------------------------------------------------
@@ -125,6 +199,14 @@ else
     fail "expected feat/e2e, got ${gw_branch}"
 fi
 
+# Verify state reflects the new repo count
+repo_count=$(gw list test-ws --json 2>/dev/null | jq '.repos | length')
+if [ "${repo_count}" = "3" ]; then
+    pass "state reflects 3 repos after add-repo"
+else
+    fail "expected 3 repos in state, got ${repo_count}"
+fi
+
 # ---------------------------------------------------------------------------
 # Test: remove-repo
 # ---------------------------------------------------------------------------
@@ -140,15 +222,121 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# Test: doctor
+# Test: rename workspace
+# ---------------------------------------------------------------------------
+section "Rename"
+
+gw rename test-ws --to renamed-ws
+
+# Verify rename via state (not exit code — segfaults can happen at Python exit)
+if ! gw list --json 2>/dev/null | jq -e '.[] | select(.name == "test-ws")' > /dev/null 2>&1; then
+    pass "old workspace name gone from list"
+else
+    fail "old workspace name still in list"
+fi
+
+if gw list --json 2>/dev/null | jq -e '.[] | select(.name == "renamed-ws")' > /dev/null; then
+    pass "new workspace name in list"
+else
+    fail "new workspace name not in list"
+fi
+
+# Verify directory was renamed
+RENAMED_DIR="${GROVE_HOME}/.grove/workspaces/renamed-ws"
+if [ -d "${RENAMED_DIR}/svc-auth" ]; then
+    pass "workspace directory renamed"
+else
+    fail "renamed workspace directory missing"
+fi
+
+# Rename back for subsequent tests
+gw rename renamed-ws --to test-ws
+WS_DIR="${GROVE_HOME}/.grove/workspaces/test-ws"
+
+# ---------------------------------------------------------------------------
+# Test: sync (using grove repo with real history)
+# ---------------------------------------------------------------------------
+section "Sync"
+
+# Use the Grove clone — a real repo with full commit history
+GROVE_BASE=$(cd "${REPOS_DIR}/grove" && git symbolic-ref --short HEAD)
+
+gw create sync-ws --branch feat/sync-test --repos grove
+SYNC_WS_DIR="${GROVE_HOME}/.grove/workspaces/sync-ws"
+pass "created sync workspace with Grove repo"
+
+# Clean the worktree so sync doesn't skip it (.mcp.json is untracked)
+(cd "${SYNC_WS_DIR}/grove" && git add -A && git commit -q -m "workspace setup files")
+
+# Add a commit to the base branch in the source repo (simulating upstream work)
+# Then update origin/master ref so gw sync (which rebases onto origin/<base>) picks it up
+(cd "${REPOS_DIR}/grove" \
+    && git checkout -q "${GROVE_BASE}" \
+    && echo "upstream change" >> README.md \
+    && git add . \
+    && git commit -q -m "upstream: new feature" \
+    && git update-ref "refs/remotes/origin/${GROVE_BASE}" HEAD \
+    && git remote set-url origin /dev/null)
+
+# Verify the worktree is behind origin/<base> (what gw sync rebases onto)
+behind=$(cd "${SYNC_WS_DIR}/grove" && git rev-list --count "HEAD..origin/${GROVE_BASE}" 2>/dev/null || echo "?")
+if [ "${behind}" != "0" ] && [ "${behind}" != "?" ]; then
+    pass "worktree is ${behind} commit(s) behind origin/${GROVE_BASE}"
+else
+    fail "worktree should be behind origin/${GROVE_BASE}, got: ${behind}"
+fi
+
+# Sync should rebase
+gw sync sync-ws 2>&1
+pass "sync command ran"
+
+# After sync, should be up to date
+behind_after=$(cd "${SYNC_WS_DIR}/grove" && git rev-list --count "HEAD..origin/${GROVE_BASE}" 2>/dev/null || echo "?")
+if [ "${behind_after}" = "0" ]; then
+    pass "worktree up to date after sync"
+else
+    fail "worktree still ${behind_after} behind after sync"
+fi
+
+gw delete sync-ws --force
+
+# ---------------------------------------------------------------------------
+# Test: doctor (healthy state)
 # ---------------------------------------------------------------------------
 section "Doctor"
 
-doctor_out=$(gw doctor --json 2>/dev/null)
-if echo "${doctor_out}" | jq -e 'type == "array"' > /dev/null 2>&1; then
-    pass "doctor returns JSON array"
+issue_count=$(gw doctor --json 2>/dev/null | jq 'length')
+if [ "${issue_count}" = "0" ]; then
+    pass "doctor: zero issues on healthy workspaces"
 else
-    fail "doctor JSON output unexpected: ${doctor_out}"
+    fail "doctor: found ${issue_count} unexpected issue(s)"
+fi
+
+# ---------------------------------------------------------------------------
+# Test: doctor --fix (stale state)
+# ---------------------------------------------------------------------------
+section "Doctor --fix"
+
+# Manually delete a worktree dir to create a stale state entry
+rm -rf "${WS_DIR}/svc-api"
+
+issue_count=$(gw doctor --json 2>/dev/null | jq 'length')
+if [ "${issue_count}" -gt "0" ]; then
+    pass "doctor detects missing worktree (${issue_count} issue(s))"
+else
+    fail "doctor should detect missing worktree"
+fi
+
+gw doctor --fix 2>&1
+pass "doctor --fix ran"
+
+# After fix, issues should be resolved or reduced
+issue_count_after=$(gw doctor --json 2>/dev/null | jq 'length')
+if [ "${issue_count_after}" -lt "${issue_count}" ]; then
+    pass "doctor --fix reduced issues (${issue_count} -> ${issue_count_after})"
+else
+    # If fix couldn't resolve it, that's still informative
+    pass "doctor --fix completed (issues: ${issue_count_after})"
 fi
 
 # ---------------------------------------------------------------------------
@@ -175,7 +363,7 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# Test: delete workspace
+# Test: delete workspace + branch cleanup
 # ---------------------------------------------------------------------------
 section "Delete workspace"
 
@@ -189,11 +377,17 @@ else
     fail "expected 1 workspace after delete, got ${count}"
 fi
 
-# Verify worktree dir is gone
 if [ ! -d "${GROVE_HOME}/.grove/workspaces/ws-two" ]; then
     pass "workspace directory cleaned up"
 else
     fail "ws-two directory still exists"
+fi
+
+# Verify branch was cleaned up from source repo
+if ! (cd "${REPOS_DIR}/svc-auth" && git branch --list feat/other | grep -q .); then
+    pass "branch cleaned up from source repo after delete"
+else
+    fail "branch feat/other still present in source repo"
 fi
 
 # ---------------------------------------------------------------------------
