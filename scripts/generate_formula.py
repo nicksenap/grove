@@ -29,7 +29,9 @@ class Grove < Formula
   sha256 "{tarball_sha}"
   license "MIT"
 
+  depends_on "openssl@3"
   depends_on "python@3.12"
+  depends_on "rust" => :build
 
 {resources}
 
