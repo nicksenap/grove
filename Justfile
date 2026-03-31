@@ -1,5 +1,8 @@
 set dotenv-load := false
 
+grove_bin := env("HOME") / ".grove/bin"
+go_dir    := justfile_directory() / "go"
+
 # List available recipes
 default:
     @just --list
@@ -36,14 +39,96 @@ dev:
     uv pip install -e .
     git config core.hooksPath .githooks
 
-# Install gw globally, linked to local source (changes reflect immediately)
-dev-global:
-    uv tool install --editable . --force --reinstall
+# ---------------------------------------------------------------------------
+# Switch active gw implementation (go | python | brew)
+# ---------------------------------------------------------------------------
 
-# Switch back to Homebrew-installed gw
-undev:
-    -uv tool uninstall grove
-    @echo "Homebrew gw is now active (if installed)"
+# Show which gw is currently active
+which:
+    #!/usr/bin/env bash
+    shim="{{ grove_bin }}/gw"
+    if [ -L "$shim" ]; then
+        target=$(readlink "$shim")
+        echo "shim: $shim -> $target"
+        if [[ "$target" == *"/go/"* ]]; then echo "impl: go"
+        elif [[ "$target" == *"uv"* ]] || [[ "$target" == *"python"* ]]; then echo "impl: python (uv)"
+        else echo "impl: unknown"; fi
+    elif [ -f "$shim" ]; then
+        echo "shim: $shim (direct binary)"
+    else
+        echo "shim: none (using PATH fallback)"
+    fi
+    # Check what `command gw` actually resolves to
+    actual=$(PATH="{{ grove_bin }}:$PATH" command -v gw 2>/dev/null || true)
+    echo "resolves: $actual"
+    echo ""
+    PATH="{{ grove_bin }}:$PATH" command gw --version 2>/dev/null || echo "(gw not runnable)"
+    # Warn if shim dir not on PATH
+    if [[ ":$PATH:" != *":{{ grove_bin }}:"* ]]; then
+        echo ""
+        echo "⚠ {{ grove_bin }} is not on your PATH."
+        echo "  Add to ~/.zshrc:  export PATH=\"\$HOME/.grove/bin:\$PATH\""
+    fi
+
+# Switch to Go build
+use-go: _ensure-shim-dir (_path-check)
+    #!/usr/bin/env bash
+    set -euo pipefail
+    echo "Building Go binary..."
+    cd "{{ go_dir }}" && go build -o gw .
+    ln -sf "{{ go_dir }}/gw" "{{ grove_bin }}/gw"
+    echo "✓ Switched to Go: {{ go_dir }}/gw"
+    "{{ grove_bin }}/gw" --version
+
+# Switch to Python editable install (uv)
+use-python: _ensure-shim-dir (_path-check)
+    #!/usr/bin/env bash
+    set -euo pipefail
+    echo "Installing Python editable..."
+    uv tool install --editable . --force --reinstall 2>&1 | tail -1
+    py_gw=$(uv tool dir)/grove/bin/gw
+    if [ ! -f "$py_gw" ]; then
+        # fallback: find it
+        py_gw=$(find "$(uv tool dir)" -name gw -type f 2>/dev/null | head -1)
+    fi
+    if [ -z "$py_gw" ]; then
+        echo "Error: could not locate uv-installed gw"
+        exit 1
+    fi
+    ln -sf "$py_gw" "{{ grove_bin }}/gw"
+    echo "Switched to Python: $py_gw"
+    "{{ grove_bin }}/gw" --version
+
+# Switch to Homebrew version (removes shim, falls through to PATH)
+use-brew: _ensure-shim-dir
+    #!/usr/bin/env bash
+    rm -f "{{ grove_bin }}/gw"
+    brew_gw=$(brew --prefix 2>/dev/null)/bin/gw
+    if [ -x "$brew_gw" ]; then
+        echo "Switched to Homebrew: $brew_gw"
+        "$brew_gw" --version
+    else
+        echo "Homebrew gw not installed. Run: brew install grove"
+    fi
+
+# Run Go e2e tests
+e2e-go:
+    cd "{{ go_dir }}" && go build -o gw . && bash e2e/run.sh
+
+# Ensure ~/.grove/bin exists
+_ensure-shim-dir:
+    @mkdir -p "{{ grove_bin }}"
+
+# Warn once if shim dir not on PATH
+_path-check:
+    #!/usr/bin/env bash
+    if [[ ":$PATH:" != *":{{ grove_bin }}:"* ]]; then
+        echo "────────────────────────────────────────────────"
+        echo "  Add to ~/.zshrc (one-time):"
+        echo "    export PATH=\"\$HOME/.grove/bin:\$PATH\""
+        echo "  Then: source ~/.zshrc"
+        echo "────────────────────────────────────────────────"
+    fi
 
 # Install gw as a uv tool (globally)
 install:
