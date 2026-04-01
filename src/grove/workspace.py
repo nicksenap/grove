@@ -100,47 +100,56 @@ def _provision_worktrees(
 
     # Create worktrees with rollback
     created: list[RepoWorktree] = []
-    for repo_name, repo_path in repo_paths.items():
-        worktree_path = workspace_path / repo_name
+    try:
+        for repo_name, repo_path in repo_paths.items():
+            worktree_path = workspace_path / repo_name
 
-        # Auto-create branch from the default branch if it doesn't exist
-        if not git.branch_exists(repo_path, branch):
-            base = git.resolve_base_branch(repo_path)
-            info(
-                f"Creating branch [bold]{branch}[/] in {repo_name}"
-                + (f" from {base}" if base else "")
+            # Auto-create branch from the default branch if it doesn't exist
+            if not git.branch_exists(repo_path, branch):
+                base = git.resolve_base_branch(repo_path)
+                info(
+                    f"Creating branch [bold]{branch}[/] in {repo_name}"
+                    + (f" from {base}" if base else "")
+                )
+                try:
+                    git.create_branch(repo_path, branch, start_point=base)
+                except GitError as e:
+                    error(f"Failed to create branch in {repo_name}: {e}")
+                    _rollback(
+                        created,
+                        workspace_path,
+                        remove_workspace_dir=remove_workspace_dir_on_rollback,
+                    )
+                    return None
+
+            with console.status(f"Creating worktree for [bold]{repo_name}[/]..."):
+                try:
+                    git.worktree_add(repo_path, worktree_path, branch)
+                except GitError as e:
+                    error(f"Failed to create worktree for {repo_name}: {e}")
+                    _rollback(
+                        created,
+                        workspace_path,
+                        remove_workspace_dir=remove_workspace_dir_on_rollback,
+                    )
+                    return None
+
+            repo_wt = RepoWorktree(
+                repo_name=repo_name,
+                source_repo=repo_path,
+                worktree_path=worktree_path,
+                branch=branch,
             )
-            try:
-                git.create_branch(repo_path, branch, start_point=base)
-            except GitError as e:
-                error(f"Failed to create branch in {repo_name}: {e}")
-                _rollback(
-                    created,
-                    workspace_path,
-                    remove_workspace_dir=remove_workspace_dir_on_rollback,
-                )
-                return None
-
-        with console.status(f"Creating worktree for [bold]{repo_name}[/]..."):
-            try:
-                git.worktree_add(repo_path, worktree_path, branch)
-            except GitError as e:
-                error(f"Failed to create worktree for {repo_name}: {e}")
-                _rollback(
-                    created,
-                    workspace_path,
-                    remove_workspace_dir=remove_workspace_dir_on_rollback,
-                )
-                return None
-
-        repo_wt = RepoWorktree(
-            repo_name=repo_name,
-            source_repo=repo_path,
-            worktree_path=worktree_path,
-            branch=branch,
+            created.append(repo_wt)
+            success(f"{repo_name} -> {worktree_path}")
+    except KeyboardInterrupt:
+        warning("Interrupted — rolling back partial workspace…")
+        _rollback(
+            created,
+            workspace_path,
+            remove_workspace_dir=remove_workspace_dir_on_rollback,
         )
-        created.append(repo_wt)
-        success(f"{repo_name} -> {worktree_path}")
+        raise
 
     # Run per-repo setup hooks (parallel)
     def _setup_one(_name: str, repo_wt: RepoWorktree) -> None:
@@ -307,12 +316,11 @@ def _rollback(
     remove_workspace_dir: bool = True,
 ) -> None:
     """Remove already-created worktrees on failure."""
-    if not created:
-        return
-    warning("Rolling back created worktrees...")
-    for repo_wt in created:
-        with contextlib.suppress(GitError):
-            git.worktree_remove(repo_wt.source_repo, repo_wt.worktree_path)
+    if created:
+        warning("Rolling back created worktrees...")
+        for repo_wt in created:
+            with contextlib.suppress(GitError):
+                git.worktree_remove(repo_wt.source_repo, repo_wt.worktree_path)
     if remove_workspace_dir and workspace_path.exists():
         shutil.rmtree(workspace_path, ignore_errors=True)
 
@@ -871,6 +879,7 @@ class DoctorIssue:
     repo_name: str | None
     issue: str
     suggested_action: str
+    detail_path: Path | None = None
 
 
 def diagnose_workspaces(config: Config) -> list[DoctorIssue]:
@@ -893,6 +902,22 @@ def diagnose_workspaces(config: Config) -> list[DoctorIssue]:
                     suggested_action="remove orphaned Claude memory",
                 )
             )
+
+    # Check for orphaned workspace directories (created but not in state,
+    # e.g. from an interrupted create)
+    known_ws_dirs = {ws.path.resolve() for ws in workspaces}
+    if config.workspace_dir.is_dir():
+        for child in config.workspace_dir.iterdir():
+            if child.is_dir() and child.resolve() not in known_ws_dirs:
+                issues.append(
+                    DoctorIssue(
+                        workspace_name="[orphan]",
+                        repo_name=None,
+                        issue=f"orphaned workspace directory: {child.name}",
+                        suggested_action="remove orphaned workspace directory",
+                        detail_path=child,
+                    )
+                )
 
     for ws in workspaces:
         # Check: workspace directory exists
@@ -997,6 +1022,17 @@ def fix_workspace_issues(issues: list[DoctorIssue]) -> int:
         ws.repos = [r for r in ws.repos if r.repo_name not in repo_names]
         state.update_workspace(ws)
         fixed += len(repo_names)
+
+    # Remove orphaned workspace directories (from interrupted creates)
+    for issue in issues:
+        if (
+            "remove orphaned workspace directory" in issue.suggested_action
+            and issue.detail_path
+            and issue.detail_path.is_dir()
+        ):
+            shutil.rmtree(issue.detail_path, ignore_errors=True)
+            if not issue.detail_path.exists():
+                fixed += 1
 
     # Clean up orphaned Claude memory directories
     fixed += claude.cleanup_orphaned_memory_dirs(claude_orphans)

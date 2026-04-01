@@ -1424,3 +1424,117 @@ class TestRunPostHooks:
 
     def test_noop_when_empty(self):
         workspace.run_post_hooks([])
+
+
+class TestCreateWorkspaceInterrupt:
+    """Tests for Ctrl+C cleanup during workspace creation."""
+
+    def test_keyboard_interrupt_rolls_back_worktrees(self, tmp_grove):
+        """KeyboardInterrupt during worktree creation should clean up and re-raise."""
+        repo1 = tmp_grove["repos_dir"] / "repo1"
+        repo2 = tmp_grove["repos_dir"] / "repo2"
+        repo1.mkdir()
+        repo2.mkdir()
+
+        call_count = 0
+
+        def worktree_add_interrupt(repo, path, branch):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 2:
+                raise KeyboardInterrupt
+            # First call "succeeds" — create the dir so rollback has something to clean
+            path.mkdir(parents=True, exist_ok=True)
+
+        cfg = Config(
+            repo_dirs=[tmp_grove["repos_dir"]],
+            workspace_dir=tmp_grove["workspace_dir"],
+        )
+        repos = {"repo1": repo1, "repo2": repo2}
+
+        with (
+            patch("grove.workspace.git.worktree_has_branch", return_value=False),
+            patch("grove.workspace.git.branch_exists", return_value=True),
+            patch("grove.workspace.git.worktree_add", side_effect=worktree_add_interrupt),
+            patch("grove.workspace.git.worktree_remove"),
+            patch("grove.workspace.git.fetch"),
+            pytest.raises(KeyboardInterrupt),
+        ):
+            workspace.create_workspace("test-int", repos, "feat/int", cfg)
+
+        # Workspace should NOT be in state
+        assert state.get_workspace("test-int") is None
+
+    def test_keyboard_interrupt_cleans_workspace_dir(self, tmp_grove):
+        """Workspace directory should be removed on interrupt."""
+        repo = tmp_grove["repos_dir"] / "myrepo"
+        repo.mkdir()
+        ws_dir = tmp_grove["workspace_dir"] / "test-int"
+
+        cfg = Config(
+            repo_dirs=[tmp_grove["repos_dir"]],
+            workspace_dir=tmp_grove["workspace_dir"],
+        )
+
+        def worktree_add_interrupt(repo, path, branch):
+            raise KeyboardInterrupt
+
+        with (
+            patch("grove.workspace.git.worktree_has_branch", return_value=False),
+            patch("grove.workspace.git.branch_exists", return_value=True),
+            patch("grove.workspace.git.worktree_add", side_effect=worktree_add_interrupt),
+            patch("grove.workspace.git.worktree_remove"),
+            patch("grove.workspace.git.fetch"),
+            pytest.raises(KeyboardInterrupt),
+        ):
+            workspace.create_workspace("test-int", {"myrepo": repo}, "feat/int", cfg)
+
+        # Workspace directory should be cleaned up
+        assert not ws_dir.exists()
+
+
+class TestDoctorOrphanedWorkspaceDir:
+    """Tests for doctor detecting orphaned workspace directories."""
+
+    def test_detects_orphaned_workspace_dir(self, tmp_grove):
+        """An untracked directory in workspace_dir should be flagged."""
+        orphan = tmp_grove["workspace_dir"] / "leftover-ws"
+        orphan.mkdir()
+
+        cfg = Config(
+            repo_dirs=[tmp_grove["repos_dir"]],
+            workspace_dir=tmp_grove["workspace_dir"],
+        )
+        issues = workspace.diagnose_workspaces(cfg)
+        assert any("orphaned workspace directory" in i.issue for i in issues)
+        assert any(i.detail_path == orphan for i in issues)
+
+    def test_ignores_tracked_workspace_dirs(self, tmp_grove, sample_workspace):
+        """Directories that belong to tracked workspaces should not be flagged."""
+        state.add_workspace(sample_workspace)
+
+        cfg = Config(
+            repo_dirs=[tmp_grove["repos_dir"]],
+            workspace_dir=tmp_grove["workspace_dir"],
+        )
+        issues = workspace.diagnose_workspaces(cfg)
+        assert not any("orphaned workspace directory" in i.issue for i in issues)
+
+    def test_fix_removes_orphaned_workspace_dir(self, tmp_grove):
+        """fix_workspace_issues should remove orphaned workspace directories."""
+        orphan = tmp_grove["workspace_dir"] / "leftover-ws"
+        orphan.mkdir()
+        (orphan / "somefile").write_text("junk")
+
+        issues = [
+            workspace.DoctorIssue(
+                workspace_name="[orphan]",
+                repo_name=None,
+                issue="orphaned workspace directory: leftover-ws",
+                suggested_action="remove orphaned workspace directory",
+                detail_path=orphan,
+            )
+        ]
+        fixed = workspace.fix_workspace_issues(issues)
+        assert fixed == 1
+        assert not orphan.exists()

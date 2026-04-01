@@ -340,6 +340,49 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# Test: doctor detects orphaned workspace directory (simulated interrupted create)
+# ---------------------------------------------------------------------------
+section "Doctor: orphaned workspace dir"
+
+# Simulate an interrupted create by manually creating a workspace directory
+# that is NOT tracked in state (exactly what happens on Ctrl+C)
+ORPHAN_DIR="${GROVE_HOME}/.grove/workspaces/interrupted-ws"
+mkdir -p "${ORPHAN_DIR}/svc-auth"
+echo "leftover" > "${ORPHAN_DIR}/svc-auth/junk.txt"
+
+orphan_issues=$(gw doctor --json 2>/dev/null | jq '[.[] | select(.issue | contains("orphaned workspace directory"))] | length')
+if [ "${orphan_issues}" -gt "0" ]; then
+    pass "doctor detects orphaned workspace directory"
+else
+    fail "doctor should detect orphaned workspace directory"
+fi
+
+# Verify the orphan issue text mentions the directory name
+if gw doctor --json 2>/dev/null | jq -e '.[] | select(.issue | contains("interrupted-ws"))' > /dev/null 2>&1; then
+    pass "doctor issue names the orphaned directory"
+else
+    fail "doctor issue should mention 'interrupted-ws'"
+fi
+
+# Fix should remove the orphaned directory
+gw doctor --fix 2>&1
+pass "doctor --fix ran for orphaned dir"
+
+if [ ! -d "${ORPHAN_DIR}" ]; then
+    pass "doctor --fix removed orphaned workspace directory"
+else
+    fail "orphaned directory still exists after doctor --fix"
+fi
+
+# Verify doctor is clean after fix
+orphan_issues_after=$(gw doctor --json 2>/dev/null | jq '[.[] | select(.issue | contains("orphaned workspace directory"))] | length')
+if [ "${orphan_issues_after}" = "0" ]; then
+    pass "doctor clean after fixing orphaned dir"
+else
+    fail "doctor still reports orphaned dir after fix"
+fi
+
+# ---------------------------------------------------------------------------
 # Test: second workspace (isolation check)
 # ---------------------------------------------------------------------------
 section "Multiple workspaces"
