@@ -1426,6 +1426,52 @@ class TestRunPostHooks:
         workspace.run_post_hooks([])
 
 
+class TestRollback:
+    """Tests for the _rollback helper."""
+
+    def test_empty_created_still_removes_workspace_dir(self, tmp_grove):
+        """_rollback with no worktrees should still remove the workspace directory."""
+        ws_dir = tmp_grove["workspace_dir"] / "orphan-ws"
+        ws_dir.mkdir()
+
+        workspace._rollback([], ws_dir, remove_workspace_dir=True)
+        assert not ws_dir.exists()
+
+    def test_empty_created_respects_flag(self, tmp_grove):
+        """_rollback should NOT remove dir when remove_workspace_dir=False."""
+        ws_dir = tmp_grove["workspace_dir"] / "keep-ws"
+        ws_dir.mkdir()
+
+        workspace._rollback([], ws_dir, remove_workspace_dir=False)
+        assert ws_dir.exists()
+
+    def test_cleans_orphan_branches(self, tmp_grove):
+        """Branches created but not yet in a worktree should be deleted on rollback."""
+        repo = tmp_grove["repos_dir"] / "repo1"
+        repo.mkdir()
+        ws_dir = tmp_grove["workspace_dir"] / "test-ws"
+        ws_dir.mkdir()
+
+        with patch("grove.workspace.git.delete_branch") as mock_del:
+            workspace._rollback(
+                [],
+                ws_dir,
+                branches_created=[(repo, "feat/orphan")],
+            )
+        mock_del.assert_called_once_with(repo, "feat/orphan", force=True)
+
+    def test_logs_warning_on_rmtree_failure(self, tmp_grove):
+        """_rollback should warn (not crash) if rmtree fails."""
+        ws_dir = tmp_grove["workspace_dir"] / "locked-ws"
+        ws_dir.mkdir()
+
+        with patch("grove.workspace.shutil.rmtree", side_effect=OSError("perm")):
+            # Should not raise
+            workspace._rollback([], ws_dir, remove_workspace_dir=True)
+        # Dir still exists because rmtree was mocked to fail
+        assert ws_dir.exists()
+
+
 class TestCreateWorkspaceInterrupt:
     """Tests for Ctrl+C cleanup during workspace creation."""
 
@@ -1492,6 +1538,65 @@ class TestCreateWorkspaceInterrupt:
         # Workspace directory should be cleaned up
         assert not ws_dir.exists()
 
+    def test_interrupt_after_create_branch_cleans_branch(self, tmp_grove):
+        """If interrupt fires between create_branch and worktree_add, the branch is deleted."""
+        repo = tmp_grove["repos_dir"] / "myrepo"
+        repo.mkdir()
+
+        cfg = Config(
+            repo_dirs=[tmp_grove["repos_dir"]],
+            workspace_dir=tmp_grove["workspace_dir"],
+        )
+
+        def worktree_add_interrupt(repo, path, branch):
+            raise KeyboardInterrupt
+
+        with (
+            patch("grove.workspace.git.worktree_has_branch", return_value=False),
+            patch("grove.workspace.git.branch_exists", return_value=False),
+            patch("grove.workspace.git.resolve_base_branch", return_value="main"),
+            patch("grove.workspace.git.create_branch"),
+            patch("grove.workspace.git.worktree_add", side_effect=worktree_add_interrupt),
+            patch("grove.workspace.git.worktree_remove"),
+            patch("grove.workspace.git.delete_branch") as mock_del,
+            patch("grove.workspace.git.fetch"),
+            pytest.raises(KeyboardInterrupt),
+        ):
+            workspace.create_workspace("test-int", {"myrepo": repo}, "feat/int", cfg)
+
+        mock_del.assert_called_once_with(repo, "feat/int", force=True)
+
+    def test_interrupt_during_setup_hooks_rolls_back(self, tmp_grove):
+        """KeyboardInterrupt during setup hooks should roll back worktrees."""
+        repo = tmp_grove["repos_dir"] / "myrepo"
+        repo.mkdir()
+
+        cfg = Config(
+            repo_dirs=[tmp_grove["repos_dir"]],
+            workspace_dir=tmp_grove["workspace_dir"],
+        )
+
+        original_parallel = workspace._parallel
+
+        def interrupt_on_setup(fn, items, label="Processing", *, spinner=True):
+            if "setup" in label.lower():
+                raise KeyboardInterrupt
+            return original_parallel(fn, items, label, spinner=spinner)
+
+        with (
+            patch("grove.workspace.git.worktree_has_branch", return_value=False),
+            patch("grove.workspace.git.branch_exists", return_value=True),
+            patch("grove.workspace.git.worktree_add"),
+            patch("grove.workspace.git.worktree_remove") as mock_remove,
+            patch("grove.workspace.git.fetch"),
+            patch("grove.workspace._parallel", side_effect=interrupt_on_setup),
+            pytest.raises(KeyboardInterrupt),
+        ):
+            workspace.create_workspace("test-int", {"myrepo": repo}, "feat/int", cfg)
+
+        assert state.get_workspace("test-int") is None
+        mock_remove.assert_called_once()
+
 
 class TestDoctorOrphanedWorkspaceDir:
     """Tests for doctor detecting orphaned workspace directories."""
@@ -1520,6 +1625,32 @@ class TestDoctorOrphanedWorkspaceDir:
         issues = workspace.diagnose_workspaces(cfg)
         assert not any("orphaned workspace directory" in i.issue for i in issues)
 
+    def test_ignores_hidden_dirs(self, tmp_grove):
+        """Hidden directories (starting with .) should not be flagged."""
+        hidden = tmp_grove["workspace_dir"] / ".cache"
+        hidden.mkdir()
+
+        cfg = Config(
+            repo_dirs=[tmp_grove["repos_dir"]],
+            workspace_dir=tmp_grove["workspace_dir"],
+        )
+        issues = workspace.diagnose_workspaces(cfg)
+        assert not any(".cache" in i.issue for i in issues)
+
+    def test_ignores_symlinks_outside_workspace_dir(self, tmp_grove):
+        """Symlinks resolving outside workspace_dir should not be flagged."""
+        outside = tmp_grove["grove_dir"] / "outside-target"
+        outside.mkdir()
+        link = tmp_grove["workspace_dir"] / "sneaky-link"
+        link.symlink_to(outside)
+
+        cfg = Config(
+            repo_dirs=[tmp_grove["repos_dir"]],
+            workspace_dir=tmp_grove["workspace_dir"],
+        )
+        issues = workspace.diagnose_workspaces(cfg)
+        assert not any("sneaky-link" in i.issue for i in issues)
+
     def test_fix_removes_orphaned_workspace_dir(self, tmp_grove):
         """fix_workspace_issues should remove orphaned workspace directories."""
         orphan = tmp_grove["workspace_dir"] / "leftover-ws"
@@ -1528,13 +1659,37 @@ class TestDoctorOrphanedWorkspaceDir:
 
         issues = [
             workspace.DoctorIssue(
-                workspace_name="[orphan]",
+                workspace_name=workspace._ORPHAN_WS_LABEL,
                 repo_name=None,
                 issue="orphaned workspace directory: leftover-ws",
-                suggested_action="remove orphaned workspace directory",
+                suggested_action=workspace._ORPHAN_WS_ACTION,
                 detail_path=orphan,
             )
         ]
         fixed = workspace.fix_workspace_issues(issues)
         assert fixed == 1
         assert not orphan.exists()
+
+    def test_fix_skips_symlinks(self, tmp_grove):
+        """fix_workspace_issues should not follow symlinks."""
+        outside = tmp_grove["grove_dir"] / "real-data"
+        outside.mkdir()
+        (outside / "important").write_text("data")
+
+        link = tmp_grove["workspace_dir"] / "bad-link"
+        link.symlink_to(outside)
+
+        issues = [
+            workspace.DoctorIssue(
+                workspace_name=workspace._ORPHAN_WS_LABEL,
+                repo_name=None,
+                issue="orphaned workspace directory: bad-link",
+                suggested_action=workspace._ORPHAN_WS_ACTION,
+                detail_path=link,
+            )
+        ]
+        fixed = workspace.fix_workspace_issues(issues)
+        assert fixed == 0
+        # Original target should be untouched
+        assert outside.exists()
+        assert (outside / "important").exists()

@@ -382,6 +382,35 @@ else
     fail "doctor still reports orphaned dir after fix"
 fi
 
+# Hidden dirs should be ignored by orphan detection
+mkdir -p "${GROVE_HOME}/.grove/workspaces/.hidden-dir"
+hidden_issues=$(gw doctor --json 2>/dev/null | jq '[.[] | select(.issue | contains(".hidden-dir"))] | length')
+if [ "${hidden_issues}" = "0" ]; then
+    pass "doctor ignores hidden directories"
+else
+    fail "doctor should ignore hidden directories"
+fi
+rm -rf "${GROVE_HOME}/.grove/workspaces/.hidden-dir"
+
+# Symlinks pointing outside workspace_dir should be ignored
+OUTSIDE_DIR=$(mktemp -d "${GROVE_HOME}/outside.XXXXXX")
+echo "precious" > "${OUTSIDE_DIR}/important.txt"
+ln -s "${OUTSIDE_DIR}" "${GROVE_HOME}/.grove/workspaces/sneaky-link"
+symlink_issues=$(gw doctor --json 2>/dev/null | jq '[.[] | select(.issue | contains("sneaky-link"))] | length')
+if [ "${symlink_issues}" = "0" ]; then
+    pass "doctor ignores symlinks outside workspace_dir"
+else
+    fail "doctor should ignore symlinks outside workspace_dir"
+fi
+# Verify the target was not touched
+if [ -f "${OUTSIDE_DIR}/important.txt" ]; then
+    pass "symlink target preserved"
+else
+    fail "symlink target was deleted!"
+fi
+rm -f "${GROVE_HOME}/.grove/workspaces/sneaky-link"
+rm -rf "${OUTSIDE_DIR}"
+
 # ---------------------------------------------------------------------------
 # Test: second workspace (isolation check)
 # ---------------------------------------------------------------------------

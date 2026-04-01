@@ -20,6 +20,10 @@ from grove.models import Config, RepoWorktree, Workspace
 
 _log = get_logger(__name__)
 
+# Sentinel constants used by diagnose / fix to identify issue types.
+_ORPHAN_WS_ACTION = "remove orphaned workspace directory"
+_ORPHAN_WS_LABEL = "[orphan]"
+
 
 def _parallel(
     fn: Callable[[str, Any], Any],
@@ -54,6 +58,8 @@ def _parallel(
             name = futures[future]
             try:
                 results[order[name]] = (name, future.result(), None)
+            except KeyboardInterrupt:
+                raise  # always propagate — let callers handle cleanup
             except Exception as exc:
                 results[order[name]] = (name, None, exc)
 
@@ -98,8 +104,10 @@ def _provision_worktrees(
         if exc is not None:
             warning(f"Could not fetch {repo_name}: {exc}")
 
-    # Create worktrees with rollback
+    # Create worktrees with rollback.
+    # Track branches we create so they can be cleaned up on interrupt.
     created: list[RepoWorktree] = []
+    branches_created: list[tuple[Path, str]] = []  # (repo_path, branch)
     try:
         for repo_name, repo_path in repo_paths.items():
             worktree_path = workspace_path / repo_name
@@ -119,8 +127,10 @@ def _provision_worktrees(
                         created,
                         workspace_path,
                         remove_workspace_dir=remove_workspace_dir_on_rollback,
+                        branches_created=branches_created,
                     )
                     return None
+                branches_created.append((repo_path, branch))
 
             with console.status(f"Creating worktree for [bold]{repo_name}[/]..."):
                 try:
@@ -131,6 +141,7 @@ def _provision_worktrees(
                         created,
                         workspace_path,
                         remove_workspace_dir=remove_workspace_dir_on_rollback,
+                        branches_created=branches_created,
                     )
                     return None
 
@@ -141,22 +152,25 @@ def _provision_worktrees(
                 branch=branch,
             )
             created.append(repo_wt)
+            # Branch is now attached to a worktree — rollback handles it via worktree_remove
+            branches_created = [(r, b) for r, b in branches_created if r != repo_path]
             success(f"{repo_name} -> {worktree_path}")
+
+        # Run per-repo setup hooks (parallel)
+        def _setup_one(_name: str, repo_wt: RepoWorktree) -> None:
+            _run_hook(repo_wt.repo_name, repo_wt.source_repo, repo_wt.worktree_path, "setup")
+
+        setup_items = [(wt.repo_name, wt) for wt in created]
+        _parallel(_setup_one, setup_items, "Running setup for", spinner=False)
     except KeyboardInterrupt:
         warning("Interrupted — rolling back partial workspace…")
         _rollback(
             created,
             workspace_path,
             remove_workspace_dir=remove_workspace_dir_on_rollback,
+            branches_created=branches_created,
         )
         raise
-
-    # Run per-repo setup hooks (parallel)
-    def _setup_one(_name: str, repo_wt: RepoWorktree) -> None:
-        _run_hook(repo_wt.repo_name, repo_wt.source_repo, repo_wt.worktree_path, "setup")
-
-    setup_items = [(wt.repo_name, wt) for wt in created]
-    _parallel(_setup_one, setup_items, "Running setup for", spinner=False)
 
     return created
 
@@ -314,15 +328,28 @@ def _rollback(
     workspace_path: Path,
     *,
     remove_workspace_dir: bool = True,
+    branches_created: list[tuple[Path, str]] | None = None,
 ) -> None:
-    """Remove already-created worktrees on failure."""
+    """Remove already-created worktrees (and orphan branches) on failure."""
     if created:
         warning("Rolling back created worktrees...")
         for repo_wt in created:
             with contextlib.suppress(GitError):
                 git.worktree_remove(repo_wt.source_repo, repo_wt.worktree_path)
+
+    # Clean up branches that were created but never attached to a worktree
+    for repo_path, branch in branches_created or []:
+        with contextlib.suppress(GitError):
+            git.delete_branch(repo_path, branch, force=True)
+
+    # Always attempt to remove the workspace directory (even when no worktrees
+    # were created) so that interrupted creates don't leave empty dirs behind.
     if remove_workspace_dir and workspace_path.exists():
-        shutil.rmtree(workspace_path, ignore_errors=True)
+        try:
+            shutil.rmtree(workspace_path)
+        except OSError:
+            _log.warning("could not remove workspace directory %s", workspace_path, exc_info=True)
+            warning(f"Could not remove {workspace_path} — run [bold]gw doctor --fix[/] to clean up")
 
 
 def _teardown_and_remove(
@@ -904,17 +931,24 @@ def diagnose_workspaces(config: Config) -> list[DoctorIssue]:
             )
 
     # Check for orphaned workspace directories (created but not in state,
-    # e.g. from an interrupted create)
+    # e.g. from an interrupted create).  Skip hidden dirs and symlinks that
+    # resolve outside workspace_dir to avoid false positives.
     known_ws_dirs = {ws.path.resolve() for ws in workspaces}
+    ws_dir_resolved = config.workspace_dir.resolve()
     if config.workspace_dir.is_dir():
         for child in config.workspace_dir.iterdir():
-            if child.is_dir() and child.resolve() not in known_ws_dirs:
+            if not child.is_dir() or child.name.startswith("."):
+                continue
+            if child.resolve() not in known_ws_dirs:
+                # Safety: skip symlinks that escape the workspace directory
+                if not child.resolve().is_relative_to(ws_dir_resolved):
+                    continue
                 issues.append(
                     DoctorIssue(
-                        workspace_name="[orphan]",
+                        workspace_name=_ORPHAN_WS_LABEL,
                         repo_name=None,
                         issue=f"orphaned workspace directory: {child.name}",
-                        suggested_action="remove orphaned workspace directory",
+                        suggested_action=_ORPHAN_WS_ACTION,
                         detail_path=child,
                     )
                 )
@@ -1025,14 +1059,17 @@ def fix_workspace_issues(issues: list[DoctorIssue]) -> int:
 
     # Remove orphaned workspace directories (from interrupted creates)
     for issue in issues:
-        if (
-            "remove orphaned workspace directory" in issue.suggested_action
-            and issue.detail_path
-            and issue.detail_path.is_dir()
-        ):
-            shutil.rmtree(issue.detail_path, ignore_errors=True)
-            if not issue.detail_path.exists():
-                fixed += 1
+        if issue.suggested_action != _ORPHAN_WS_ACTION or not issue.detail_path:
+            continue
+        path = issue.detail_path
+        if not path.is_dir() or path.is_symlink():
+            continue
+        try:
+            shutil.rmtree(path)
+            fixed += 1
+        except OSError:
+            _log.warning("could not remove orphaned directory %s", path, exc_info=True)
+            warning(f"Could not remove {path}")
 
     # Clean up orphaned Claude memory directories
     fixed += claude.cleanup_orphaned_memory_dirs(claude_orphans)
