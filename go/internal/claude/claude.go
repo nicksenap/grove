@@ -142,9 +142,10 @@ func MigrateMemoryDir(claudeDir, oldPath, newPath string) bool {
 	return true
 }
 
-// FindOrphanedMemoryDirs finds Claude project dirs whose original paths no longer exist.
-// workspaceDir is used to scope the search — only dirs whose decoded path is under workspaceDir
-// are considered candidates (to avoid flagging non-grove claude projects).
+// FindOrphanedMemoryDirs finds Claude project dirs for worktree paths that
+// no longer exist. Uses the workspace dir prefix to scope the search (avoids
+// flagging non-grove Claude projects), and cross-references against active
+// worktree paths rather than attempting lossy path reconstruction.
 func FindOrphanedMemoryDirs(claudeDir string, workspaceDir string) []string {
 	projectsDir := filepath.Join(claudeDir, "projects")
 	entries, err := os.ReadDir(projectsDir)
@@ -154,6 +155,18 @@ func FindOrphanedMemoryDirs(claudeDir string, workspaceDir string) []string {
 
 	// Encoded workspace dir prefix for scoping
 	wsDirEncoded := EncodePath(workspaceDir)
+
+	// Walk the workspace dir to find all paths that actually exist
+	activePaths := make(map[string]bool)
+	filepath.Walk(workspaceDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return nil
+		}
+		if info.IsDir() {
+			activePaths[EncodePath(path)] = true
+		}
+		return nil
+	})
 
 	var orphaned []string
 	for _, entry := range entries {
@@ -174,22 +187,18 @@ func FindOrphanedMemoryDirs(claudeDir string, workspaceDir string) []string {
 			continue
 		}
 
-		// Decode: reverse the encoding to get the original path
-		// EncodePath replaces / with - and . with -
-		// We can't perfectly reverse this, but we can check if the worktree dir exists
-		// by reconstructing: the path after wsDirEncoded is the workspace+repo name
-		suffix := strings.TrimPrefix(name, wsDirEncoded)
-		originalPath := workspaceDir + strings.ReplaceAll(suffix, "-", "/")
-
-		if _, err := os.Stat(originalPath); os.IsNotExist(err) {
-			orphaned = append(orphaned, projDir)
+		// If this encoded path matches an active directory, it's not orphaned
+		if activePaths[name] {
+			continue
 		}
+
+		orphaned = append(orphaned, projDir)
 	}
 
 	return orphaned
 }
 
-// copyFile copies src to dst, creating parent directories as needed.
+// copyFile copies src to dst atomically, creating parent directories as needed.
 func copyFile(src, dst string) error {
 	os.MkdirAll(filepath.Dir(dst), 0o755)
 
@@ -199,12 +208,18 @@ func copyFile(src, dst string) error {
 	}
 	defer in.Close()
 
-	out, err := os.Create(dst)
+	tmp := dst + ".tmp"
+	out, err := os.Create(tmp)
 	if err != nil {
 		return err
 	}
-	defer out.Close()
 
-	_, err = io.Copy(out, in)
-	return err
+	if _, err := io.Copy(out, in); err != nil {
+		out.Close()
+		os.Remove(tmp)
+		return err
+	}
+	out.Close()
+
+	return os.Rename(tmp, dst)
 }

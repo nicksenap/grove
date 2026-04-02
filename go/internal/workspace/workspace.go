@@ -163,7 +163,7 @@ func runSetupHooks(ws models.Workspace) {
 			for _, cmdStr := range cmds {
 				cmd := exec.Command("sh", "-c", cmdStr)
 				cmd.Dir = repo.WorktreePath
-				cmd.Stdout = os.Stderr
+				cmd.Stdout = os.Stdout
 				cmd.Stderr = os.Stderr
 				if err := cmd.Run(); err != nil {
 					console.Warningf("setup hook failed in %s: %s", repo.RepoName, err)
@@ -281,7 +281,7 @@ func Delete(name string) error {
 	}
 
 	// Parallel teardown+remove for all repos
-	errs := make([]error, len(ws.Repos))
+	succeeded := make([]bool, len(ws.Repos))
 	var wg sync.WaitGroup
 	for i, r := range ws.Repos {
 		wg.Add(1)
@@ -296,11 +296,11 @@ func Delete(name string) error {
 			}
 
 			// Remove worktree
-			if removeErr := gitops.WorktreeRemove(repo.SourceRepo, repo.WorktreePath); removeErr != nil {
-				// Force cleanup
-				if rmErr := os.RemoveAll(repo.WorktreePath); rmErr != nil {
-					errs[idx] = rmErr
-					return
+			if err := gitops.WorktreeRemove(repo.SourceRepo, repo.WorktreePath); err != nil {
+				// Force cleanup: try removing directory directly
+				if err := os.RemoveAll(repo.WorktreePath); err != nil {
+					console.Warningf("%s: failed to remove worktree: %s", repo.RepoName, err)
+					return // leave succeeded[idx] = false
 				}
 			}
 
@@ -308,14 +308,16 @@ func Delete(name string) error {
 			if err := gitops.DeleteBranch(repo.SourceRepo, repo.Branch, false); err != nil {
 				console.Warningf("%s: branch %s has unmerged commits, kept", repo.RepoName, repo.Branch)
 			}
+
+			succeeded[idx] = true
 		}(i, r)
 	}
 	wg.Wait()
 
 	// Count failures
 	failCount := 0
-	for _, e := range errs {
-		if e != nil {
+	for _, ok := range succeeded {
+		if !ok {
 			failCount++
 		}
 	}
@@ -443,6 +445,7 @@ func AddRepos(wsName string, repoNames []string, repoMap map[string]string) erro
 	}
 
 	// Provision new worktrees
+	beforeLen := len(ws.Repos)
 	for _, repoName := range toAdd {
 		sourcePath, ok := repoMap[repoName]
 		if !ok {
@@ -460,8 +463,8 @@ func AddRepos(wsName string, repoNames []string, repoMap map[string]string) erro
 		mergeMCPConfig(filepath.Join(rw.WorktreePath, ".mcp.json"), ws.Name)
 	}
 
-	// Run setup hooks on new repos
-	newWS := models.Workspace{Repos: ws.Repos[len(ws.Repos)-len(toAdd):]}
+	// Run setup hooks on new repos only
+	newWS := models.Workspace{Repos: ws.Repos[beforeLen:]}
 	runSetupHooks(newWS)
 
 	// Update state

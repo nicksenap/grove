@@ -13,7 +13,6 @@ import (
 	"github.com/nicksenap/grove/internal/console"
 	"github.com/nicksenap/grove/internal/picker"
 	"github.com/nicksenap/grove/internal/state"
-	"github.com/nicksenap/grove/internal/workspace"
 	"github.com/spf13/cobra"
 )
 
@@ -82,7 +81,7 @@ var goCmd = &cobra.Command{
 			if currentWs != nil && currentWs.Name == ws.Name {
 				console.Warning("Cannot delete workspace you're navigating to")
 			} else if currentWs != nil {
-				go workspace.Delete(currentWs.Name)
+				deleteAsync(currentWs.Name)
 			}
 		}
 

@@ -32,8 +32,7 @@ func Load() ([]models.Workspace, error) {
 
 	var workspaces []models.Workspace
 	if err := json.Unmarshal(data, &workspaces); err != nil {
-		fmt.Fprintf(os.Stderr, "\033[1;31merror:\033[0m Corrupt state file. Run: gw doctor --fix\n")
-		os.Exit(1)
+		return nil, fmt.Errorf("corrupt state file (%s). Run: gw doctor --fix", StatePath())
 	}
 	return workspaces, nil
 }
