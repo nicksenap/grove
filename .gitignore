@@ -12,3 +12,7 @@ wheels/
 # Tool caches
 .pytest_cache/
 .ruff_cache/
+
+# Go binaries
+go/gw
+go/gw_test
