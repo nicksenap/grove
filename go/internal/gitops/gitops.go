@@ -1,12 +1,14 @@
 package gitops
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/BurntSushi/toml"
 	"github.com/nicksenap/grove/internal/models"
@@ -22,19 +24,61 @@ func (e *GitError) Error() string {
 	return fmt.Sprintf("git %s: %s", e.Cmd, e.Stderr)
 }
 
+// isAuthError checks if git output indicates an authentication failure.
+func isAuthError(output string) bool {
+	lower := strings.ToLower(output)
+	patterns := []string{
+		"permission denied (publickey",
+		"host key verification failed",
+		"terminal prompts disabled",
+		"could not read from remote repository",
+	}
+	for _, p := range patterns {
+		if strings.Contains(lower, p) {
+			return true
+		}
+	}
+	return false
+}
+
 // runGit executes a git command in the given directory.
 func runGit(dir string, args ...string) (string, error) {
 	cmd := exec.Command("git", args...)
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(),
-		"GIT_TERMINAL_PROMPT=0",
-		"GIT_SSH_COMMAND=ssh -o BatchMode=yes",
-	)
-	cmd.Stdin = nil
+
+	// Build env: preserve existing GIT_SSH_COMMAND if set, otherwise set ours
+	env := os.Environ()
+	hasSSHCmd := false
+	for _, e := range env {
+		if strings.HasPrefix(e, "GIT_SSH_COMMAND=") {
+			hasSSHCmd = true
+			break
+		}
+	}
+	env = append(env, "GIT_TERMINAL_PROMPT=0")
+	if !hasSSHCmd {
+		env = append(env, "GIT_SSH_COMMAND=ssh -o BatchMode=yes")
+	}
+	cmd.Env = env
+	// Prevent git from reading stdin (interactive prompts)
+	devnull, derr := os.Open(os.DevNull)
+	if derr == nil {
+		cmd.Stdin = devnull
+	}
 
 	out, err := cmd.CombinedOutput()
+	if devnull != nil {
+		devnull.Close()
+	}
 	output := strings.TrimSpace(string(out))
 	if err != nil {
+		if isAuthError(output) {
+			return output, &GitError{
+				Cmd: strings.Join(args, " "),
+				Stderr: output + "\n\nHint: Check your SSH keys or credentials. " +
+					"Run 'ssh -T git@github.com' to test your connection.",
+			}
+		}
 		return output, &GitError{
 			Cmd:    strings.Join(args, " "),
 			Stderr: output,
@@ -43,31 +87,6 @@ func runGit(dir string, args ...string) (string, error) {
 	return output, nil
 }
 
-// runGitSeparate runs git and returns stdout and stderr separately.
-func runGitSeparate(dir string, args ...string) (stdout, stderr string, err error) {
-	cmd := exec.Command("git", args...)
-	cmd.Dir = dir
-	cmd.Env = append(os.Environ(),
-		"GIT_TERMINAL_PROMPT=0",
-		"GIT_SSH_COMMAND=ssh -o BatchMode=yes",
-	)
-	cmd.Stdin = nil
-
-	var outBuf, errBuf strings.Builder
-	cmd.Stdout = &outBuf
-	cmd.Stderr = &errBuf
-
-	err = cmd.Run()
-	stdout = strings.TrimSpace(outBuf.String())
-	stderr = strings.TrimSpace(errBuf.String())
-	if err != nil {
-		err = &GitError{
-			Cmd:    strings.Join(args, " "),
-			Stderr: stderr,
-		}
-	}
-	return
-}
 
 // IsGitRepo checks if a directory is a git repository.
 func IsGitRepo(path string) bool {
@@ -82,24 +101,25 @@ func Fetch(repo string) error {
 }
 
 // DefaultBranch returns the default branch name for a repo.
-func DefaultBranch(repo string) string {
+// Returns an error if the default branch cannot be determined.
+func DefaultBranch(repo string) (string, error) {
 	out, err := runGit(repo, "symbolic-ref", "refs/remotes/origin/HEAD", "--short")
 	if err == nil {
 		// Returns "origin/main" — strip the "origin/" prefix
 		parts := strings.SplitN(out, "/", 2)
 		if len(parts) == 2 {
-			return parts[1]
+			return parts[1], nil
 		}
-		return out
+		return out, nil
 	}
 
 	// Fallback: probe common branch names
 	for _, branch := range []string{"main", "master"} {
 		if _, err := runGit(repo, "rev-parse", "--verify", "refs/remotes/origin/"+branch); err == nil {
-			return branch
+			return branch, nil
 		}
 	}
-	return "main"
+	return "", &GitError{Cmd: "default-branch", Stderr: "could not determine default branch"}
 }
 
 // BranchExists checks if a local branch exists.
@@ -237,13 +257,187 @@ func CommitsAheadBehind(path, upstream string) (int, int, error) {
 	return ahead, behind, nil
 }
 
-// RemoteURL returns the URL for a remote.
-func RemoteURL(path, remote string) (string, error) {
-	return runGit(path, "remote", "get-url", remote)
+// RemoteURL returns the URL for a remote. Returns "" on any error.
+func RemoteURL(path, remote string) string {
+	out, err := runGit(path, "remote", "get-url", remote)
+	if err != nil {
+		return ""
+	}
+	return out
+}
+
+// ParseRemoteName extracts "owner/repo" from an SSH or HTTPS git URL.
+// Returns "" if the URL cannot be parsed.
+func ParseRemoteName(url string) string {
+	url = strings.TrimSpace(url)
+	if url == "" {
+		return ""
+	}
+
+	// SSH: git@github.com:owner/repo.git
+	if strings.Contains(url, ":") && !strings.Contains(url, "://") {
+		parts := strings.SplitN(url, ":", 2)
+		if len(parts) == 2 {
+			path := strings.TrimSuffix(parts[1], ".git")
+			path = strings.TrimPrefix(path, "/")
+			return path
+		}
+	}
+
+	// HTTPS: https://github.com/owner/repo.git
+	if strings.Contains(url, "://") {
+		// Remove scheme + host
+		idx := strings.Index(url, "://")
+		rest := url[idx+3:]
+		slashIdx := strings.Index(rest, "/")
+		if slashIdx >= 0 {
+			path := rest[slashIdx+1:]
+			path = strings.TrimSuffix(path, ".git")
+			path = strings.TrimPrefix(path, "/")
+			return path
+		}
+	}
+
+	return ""
+}
+
+// RepoBaseBranch returns "origin/<base>" from .grove.toml, or "".
+func RepoBaseBranch(repo string) string {
+	cfg, err := ReadGroveConfig(repo)
+	if err != nil || cfg == nil || cfg.BaseBranch == "" {
+		return ""
+	}
+	return "origin/" + cfg.BaseBranch
+}
+
+// ResolveBaseBranch returns the base branch for rebasing:
+// .grove.toml base_branch > default branch > error.
+func ResolveBaseBranch(repo string) (string, error) {
+	if base := RepoBaseBranch(repo); base != "" {
+		return base, nil
+	}
+	branch, err := DefaultBranch(repo)
+	if err != nil {
+		return "", err
+	}
+	return "origin/" + branch, nil
+}
+
+// PRInfo holds merge/pull request status.
+type PRInfo struct {
+	Number         int    `json:"number"`
+	State          string `json:"state"`           // OPEN, MERGED, CLOSED
+	ReviewDecision string `json:"reviewDecision"`  // APPROVED, CHANGES_REQUESTED, REVIEW_REQUIRED, ""
+	Provider       string `json:"-"`               // "github" or "gitlab"
+}
+
+// PRStatus returns PR/MR info for the current branch, or nil if unavailable.
+// Detects GitHub (gh) or GitLab (glab) based on the remote URL.
+func PRStatus(path string) *PRInfo {
+	remote := RemoteURL(path, "origin")
+
+	// Try GitLab if remote looks like gitlab
+	if strings.Contains(remote, "gitlab") {
+		if info := glabMRStatus(path); info != nil {
+			return info
+		}
+	}
+
+	// Try GitHub
+	if info := ghPRStatus(path); info != nil {
+		return info
+	}
+
+	// Fallback: try glab even if remote didn't match
+	if !strings.Contains(remote, "gitlab") {
+		return glabMRStatus(path)
+	}
+
+	return nil
+}
+
+func ghPRStatus(path string) *PRInfo {
+	ghPath, err := exec.LookPath("gh")
+	if err != nil {
+		return nil
+	}
+	cmd := exec.Command(ghPath, "pr", "view", "--json", "number,state,reviewDecision")
+	cmd.Dir = path
+	cmd.Stdin = nil
+	out, err := cmd.Output()
+	if err != nil {
+		return nil
+	}
+	var info PRInfo
+	if err := json.Unmarshal(out, &info); err != nil {
+		return nil
+	}
+	info.Provider = "github"
+	return &info
+}
+
+func glabMRStatus(path string) *PRInfo {
+	glabPath, err := exec.LookPath("glab")
+	if err != nil {
+		return nil
+	}
+	cmd := exec.Command(glabPath, "mr", "view", "--output", "json")
+	cmd.Dir = path
+	cmd.Stdin = nil
+	out, err := cmd.Output()
+	if err != nil {
+		return nil
+	}
+
+	// glab uses different field names
+	var raw struct {
+		IID   int    `json:"iid"`
+		State string `json:"state"` // "opened", "merged", "closed"
+	}
+	if err := json.Unmarshal(out, &raw); err != nil {
+		return nil
+	}
+
+	// Normalize state to match GitHub conventions
+	state := strings.ToUpper(raw.State)
+	if state == "OPENED" {
+		state = "OPEN"
+	}
+
+	return &PRInfo{
+		Number:   raw.IID,
+		State:    state,
+		Provider: "gitlab",
+	}
+}
+
+// groveConfigCache caches .grove.toml reads per-process.
+var groveConfigCache sync.Map
+
+type groveConfigEntry struct {
+	cfg *models.GroveConfig
+	err error
 }
 
 // ReadGroveConfig reads a .grove.toml from a repo directory.
+// Results are cached per-process (never re-read within a single command).
 func ReadGroveConfig(repoPath string) (*models.GroveConfig, error) {
+	if entry, ok := groveConfigCache.Load(repoPath); ok {
+		e := entry.(*groveConfigEntry)
+		return e.cfg, e.err
+	}
+
+	cfg, err := readGroveConfigFromDisk(repoPath)
+	groveConfigCache.Store(repoPath, &groveConfigEntry{cfg: cfg, err: err})
+	return cfg, err
+}
+
+// ClearGroveConfigCache clears the cache. Call in tests.
+func ClearGroveConfigCache() {
+	groveConfigCache = sync.Map{}
+}
+
+func readGroveConfigFromDisk(repoPath string) (*models.GroveConfig, error) {
 	cfgPath := filepath.Join(repoPath, ".grove.toml")
 	data, err := os.ReadFile(cfgPath)
 	if err != nil {

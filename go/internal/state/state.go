@@ -111,6 +111,22 @@ func RemoveWorkspace(name string) error {
 	return Save(filtered)
 }
 
+// UpdateWorkspaceByName replaces a workspace matched by matchName.
+// This enables atomic renames: ws.Name is already the new name, matchName is the old.
+func UpdateWorkspaceByName(ws models.Workspace, matchName string) error {
+	workspaces, err := Load()
+	if err != nil {
+		return err
+	}
+	for i := range workspaces {
+		if workspaces[i].Name == matchName {
+			workspaces[i] = ws
+			return Save(workspaces)
+		}
+	}
+	return fmt.Errorf("workspace %s not found", matchName)
+}
+
 // RenameWorkspace renames a workspace in state and updates paths.
 func RenameWorkspace(oldName, newName, newPath string) error {
 	workspaces, err := Load()

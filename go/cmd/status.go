@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"github.com/nicksenap/grove/internal/console"
 	"github.com/nicksenap/grove/internal/workspace"
 	"github.com/spf13/cobra"
 )
@@ -8,6 +9,8 @@ import (
 var (
 	statusJSON    bool
 	statusVerbose bool
+	statusPR      bool
+	statusAll     bool
 )
 
 var statusCmd = &cobra.Command{
@@ -21,12 +24,20 @@ var statusCmd = &cobra.Command{
 			name = args[0]
 		}
 
+		if statusAll {
+			console.Warning("--all is deprecated. Use: gw list -s")
+		}
+
 		ws, err := workspace.ResolveWorkspace(name)
 		if err != nil {
 			exitError(err.Error())
 		}
 
-		if err := workspace.Status(ws.Name, statusJSON); err != nil {
+		if err := workspace.Status(ws.Name, workspace.StatusOptions{
+			JSON:    statusJSON,
+			Verbose: statusVerbose,
+			PR:      statusPR,
+		}); err != nil {
 			exitError(err.Error())
 		}
 	},
@@ -35,4 +46,8 @@ var statusCmd = &cobra.Command{
 func init() {
 	statusCmd.Flags().BoolVarP(&statusJSON, "json", "j", false, "Output as JSON")
 	statusCmd.Flags().BoolVarP(&statusVerbose, "verbose", "V", false, "Show full git status")
+	statusCmd.Flags().BoolVarP(&statusPR, "pr", "P", false, "Show PR/MR status (requires gh or glab)")
+	statusCmd.Flags().BoolVarP(&statusAll, "all", "a", false, "Show all workspaces (deprecated, use: gw list -s)")
+	statusCmd.Flags().MarkDeprecated("all", "use 'gw list -s' instead")
+	statusCmd.ValidArgsFunction = completeWorkspaceNames
 }

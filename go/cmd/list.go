@@ -8,6 +8,7 @@ import (
 
 	"github.com/nicksenap/grove/internal/console"
 	"github.com/nicksenap/grove/internal/state"
+	"github.com/nicksenap/grove/internal/workspace"
 	"github.com/spf13/cobra"
 )
 
@@ -35,6 +36,11 @@ func init() {
 }
 
 func listAll() {
+	if listStatus {
+		listWithStatus()
+		return
+	}
+
 	workspaces, err := state.Load()
 	if err != nil {
 		exitError(err.Error())
@@ -59,6 +65,30 @@ func listAll() {
 			created = created[:10]
 		}
 		table.AddRow([]string{ws.Name, ws.Branch, repos, ws.Path, created})
+	}
+	table.Render()
+}
+
+func listWithStatus() {
+	summaries, err := workspace.AllWorkspacesSummary()
+	if err != nil {
+		exitError(err.Error())
+	}
+
+	if listJSON {
+		data, _ := json.MarshalIndent(summaries, "", "  ")
+		fmt.Println(string(data))
+		return
+	}
+
+	if len(summaries) == 0 {
+		console.Info("No workspaces.")
+		return
+	}
+
+	table := console.NewTable(os.Stdout, []string{"Name", "Branch", "Repos", "Status", "Path"})
+	for _, s := range summaries {
+		table.AddRow([]string{s.Name, s.Branch, fmt.Sprintf("%d", s.Repos), s.Status, s.Path})
 	}
 	table.Render()
 }

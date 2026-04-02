@@ -6,7 +6,11 @@ import (
 	"path/filepath"
 	"strings"
 
+	"os/exec"
+	"syscall"
+
 	"github.com/nicksenap/grove/internal/config"
+	"github.com/nicksenap/grove/internal/console"
 	"github.com/nicksenap/grove/internal/picker"
 	"github.com/nicksenap/grove/internal/state"
 	"github.com/nicksenap/grove/internal/workspace"
@@ -27,17 +31,42 @@ var goCmd = &cobra.Command{
 	Long:  "Prints workspace path to stdout. Auto-detects from cwd for --back.",
 	Args:  cobra.MaximumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
+		// --close-tab: close current Zellij tab/pane
+		if goCloseTab {
+			if goDelete {
+				// Delete current workspace first
+				cwd, _ := os.Getwd()
+				ws, _ := state.FindWorkspaceByPath(cwd)
+				if ws != nil {
+					deleteAsync(ws.Name)
+				}
+			}
+			// Close Zellij pane
+			zellijClose()
+			return
+		}
+
 		if goBack {
-			handleGoBack()
+			target := resolveGoBack()
+			if goDelete {
+				// Delete current workspace asynchronously
+				cwd, _ := os.Getwd()
+				ws, _ := state.FindWorkspaceByPath(cwd)
+				if ws != nil {
+					deleteAsync(ws.Name)
+				}
+			}
+			fmt.Print(target)
 			return
 		}
 
-		if len(args) == 0 {
-			handleGoInteractive()
-			return
+		var name string
+		if len(args) > 0 {
+			name = args[0]
+		} else {
+			name = pickWorkspaceForGo()
 		}
 
-		name := args[0]
 		ws, err := state.GetWorkspace(name)
 		if err != nil {
 			exitError(err.Error())
@@ -46,12 +75,22 @@ var goCmd = &cobra.Command{
 			exitError("Workspace not found: " + name)
 		}
 
-		// Print path to stdout — shell wrapper does the cd
+		if goDelete {
+			// Check we're not deleting the workspace we're navigating to
+			cwd, _ := os.Getwd()
+			currentWs, _ := state.FindWorkspaceByPath(cwd)
+			if currentWs != nil && currentWs.Name == ws.Name {
+				console.Warning("Cannot delete workspace you're navigating to")
+			} else if currentWs != nil {
+				go workspace.Delete(currentWs.Name)
+			}
+		}
+
 		fmt.Print(ws.Path)
 	},
 }
 
-func handleGoBack() {
+func resolveGoBack() string {
 	cwd, err := os.Getwd()
 	if err != nil {
 		exitError(err.Error())
@@ -65,29 +104,34 @@ func handleGoBack() {
 		exitError("Not inside a workspace")
 	}
 
-	// Collect unique parent dirs of source repos
-	parents := make(map[string]bool)
-	for _, r := range ws.Repos {
-		parents[filepath.Dir(r.SourceRepo)] = true
+	if len(ws.Repos) == 0 {
+		exitError("Workspace has no repos")
 	}
 
-	if len(parents) == 1 {
-		for p := range parents {
-			fmt.Print(p)
-			return
+	// Collect unique parent dirs of source repos
+	parents := make(map[string]bool)
+	var parentList []string
+	for _, r := range ws.Repos {
+		p := filepath.Dir(r.SourceRepo)
+		if !parents[p] {
+			parents[p] = true
+			parentList = append(parentList, p)
 		}
 	}
 
-	// If workspace only has repos from one location, use it
-	// Otherwise use ResolveWorkspace which handles interactive picking
-	ws2, err := workspace.ResolveWorkspace("")
+	if len(parentList) == 1 {
+		return parentList[0]
+	}
+
+	// Multiple parent dirs — let user pick
+	picked, err := picker.PickOne("Select repo directory:", parentList)
 	if err != nil {
 		exitError(err.Error())
 	}
-	fmt.Print(filepath.Dir(ws2.Repos[0].SourceRepo))
+	return picked
 }
 
-func handleGoInteractive() {
+func pickWorkspaceForGo() string {
 	workspaces, err := state.Load()
 	if err != nil {
 		exitError(err.Error())
@@ -96,7 +140,8 @@ func handleGoInteractive() {
 		exitError("No workspaces. Create one first: gw create ...")
 	}
 
-	currentWs, _ := state.FindWorkspaceByPath("")
+	cwd, _ := os.Getwd()
+	currentWs, _ := state.FindWorkspaceByPath(cwd)
 	choices := make([]string, 0, len(workspaces))
 	for _, ws := range workspaces {
 		label := ws.Name
@@ -118,33 +163,48 @@ func handleGoInteractive() {
 	if picked == backToRepos {
 		cfg := config.RequireConfig()
 		if len(cfg.RepoDirs) == 1 {
-			fmt.Print(cfg.RepoDirs[0])
+			return cfg.RepoDirs[0]
 		} else if len(cfg.RepoDirs) > 1 {
 			dir, err := picker.PickOne("Select repo directory", cfg.RepoDirs)
 			if err != nil {
 				exitError(err.Error())
 			}
-			fmt.Print(dir)
-		} else {
-			exitError("No repo dirs configured. Run: gw add-dir <path>")
+			return dir
 		}
-		return
+		exitError("No repo dirs configured. Run: gw add-dir <path>")
 	}
 
 	// Strip "(current)" suffix if present
-	name := strings.Split(picked, "  (current)")[0]
-	ws, err := state.GetWorkspace(name)
+	return strings.Split(picked, "  (current)")[0]
+}
+
+// deleteAsync spawns a detached subprocess to delete a workspace.
+// The subprocess survives after this process exits.
+func deleteAsync(name string) {
+	exe, err := os.Executable()
 	if err != nil {
-		exitError(err.Error())
+		exe = "gw"
 	}
-	if ws == nil {
-		exitError("Workspace not found: " + name)
+	cmd := exec.Command(exe, "delete", "--force", name)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Stdout = nil
+	cmd.Stderr = nil
+	cmd.Stdin = nil
+	cmd.Start() // fire and forget
+}
+
+func zellijClose() {
+	sessionName := os.Getenv("ZELLIJ_SESSION_NAME")
+	if sessionName == "" {
+		exitError("Not inside a Zellij session")
 	}
-	fmt.Print(ws.Path)
+	cmd := exec.Command("zellij", "action", "close-pane")
+	cmd.Run()
 }
 
 func init() {
 	goCmd.Flags().BoolVarP(&goBack, "back", "b", false, "Go back to source repo")
 	goCmd.Flags().BoolVarP(&goDelete, "delete", "d", false, "Delete workspace after navigating away")
 	goCmd.Flags().BoolVarP(&goCloseTab, "close-tab", "c", false, "Close current Zellij pane/tab")
+	goCmd.ValidArgsFunction = completeWorkspaceNames
 }

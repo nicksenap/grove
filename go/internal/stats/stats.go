@@ -85,6 +85,137 @@ func RecordDeleted(ws models.Workspace) error {
 	return saveEvents(events)
 }
 
+// activityByDate counts workspace_created events per date (YYYY-MM-DD).
+func activityByDate(events []models.StatsEvent) map[string]int {
+	counts := make(map[string]int)
+	for _, ev := range events {
+		if ev.Event != "workspace_created" {
+			continue
+		}
+		ts, _ := time.Parse("2006-01-02T15:04:05.000000", ev.Timestamp)
+		if ts.IsZero() {
+			ts, _ = time.Parse("2006-01-02T15:04:05", ev.Timestamp)
+		}
+		if !ts.IsZero() {
+			counts[ts.Format("2006-01-02")]++
+		}
+	}
+	return counts
+}
+
+// BuildHeatmap generates a GitHub-style contribution grid.
+// Returns lines of text with ANSI coloring.
+func BuildHeatmap(events []models.StatsEvent, weeks int) []string {
+	counts := activityByDate(events)
+
+	// Find the Monday at the start of our range
+	now := time.Now()
+	start := now.AddDate(0, 0, -7*weeks)
+	// Snap to Monday
+	for start.Weekday() != time.Monday {
+		start = start.AddDate(0, 0, -1)
+	}
+
+	// Build grid: 7 rows (Mon-Sun) x N columns (weeks)
+	type cell struct {
+		date  string
+		count int
+	}
+	grid := make([][]cell, 7)
+	for i := range grid {
+		grid[i] = make([]cell, 0)
+	}
+
+	// Fill grid
+	numWeeks := 0
+	d := start
+	for d.Before(now) || d.Equal(now) {
+		weekday := int(d.Weekday())
+		if weekday == 0 {
+			weekday = 7 // Sunday = 7
+		}
+		row := weekday - 1 // Monday=0, Sunday=6
+
+		dateStr := d.Format("2006-01-02")
+		grid[row] = append(grid[row], cell{date: dateStr, count: counts[dateStr]})
+
+		if row == 0 {
+			numWeeks++
+		}
+		d = d.AddDate(0, 0, 1)
+	}
+
+	// Find max for intensity scaling
+	maxCount := 1
+	for _, ev := range counts {
+		if ev > maxCount {
+			maxCount = ev
+		}
+	}
+
+	// Intensity levels (brown-to-orange palette)
+	levels := []string{
+		"\033[2m·\033[0m",        // 0: dim dot
+		"\033[38;5;130m█\033[0m", // 1: dark brown
+		"\033[38;5;166m█\033[0m", // 2: brown
+		"\033[38;5;208m█\033[0m", // 3: orange
+		"\033[38;5;214m█\033[0m", // 4: bright orange
+	}
+
+	dayLabels := []string{"Mon", "   ", "Wed", "   ", "Fri", "   ", "   "}
+
+	var lines []string
+
+	// Month labels row
+	monthLine := "     "
+	prevMonth := ""
+	for col := 0; col < numWeeks && col < len(grid[0]); col++ {
+		month := ""
+		if col < len(grid[0]) {
+			t, _ := time.Parse("2006-01-02", grid[0][col].date)
+			month = t.Format("Jan")
+		}
+		if month != prevMonth {
+			monthLine += month
+			prevMonth = month
+		} else {
+			monthLine += " "
+		}
+	}
+	lines = append(lines, monthLine)
+
+	// Data rows
+	for row := 0; row < 7; row++ {
+		line := dayLabels[row] + "  "
+		for col := 0; col < len(grid[row]); col++ {
+			c := grid[row][col]
+			if c.count == 0 {
+				line += levels[0]
+			} else {
+				level := c.count * 4 / maxCount
+				if level > 4 {
+					level = 4
+				}
+				if level < 1 {
+					level = 1
+				}
+				line += levels[level]
+			}
+		}
+		lines = append(lines, line)
+	}
+
+	// Legend
+	legend := "     Less "
+	for _, l := range levels {
+		legend += l
+	}
+	legend += " More"
+	lines = append(lines, legend)
+
+	return lines
+}
+
 // PrintStats outputs workspace usage statistics.
 func PrintStats() error {
 	events, err := loadEvents()
@@ -95,6 +226,13 @@ func PrintStats() error {
 	if len(events) == 0 {
 		fmt.Fprintf(os.Stderr, "No stats yet — create a workspace to start tracking.\n")
 		return nil
+	}
+
+	// Heatmap
+	heatmapLines := BuildHeatmap(events, 52)
+	fmt.Fprintln(os.Stderr)
+	for _, line := range heatmapLines {
+		fmt.Fprintln(os.Stderr, line)
 	}
 
 	var created, deleted int

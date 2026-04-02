@@ -19,19 +19,30 @@ type ExploredRepo struct {
 // Explore does a deep scan (up to depth 3) of configured directories.
 func Explore(dirs []string) []ExploredRepo {
 	var results []ExploredRepo
+	seen := make(map[string]bool) // resolved paths for symlink loop prevention
 
 	for _, dir := range dirs {
-		repos := deepScan(dir, dir, 0, 3)
+		repos := deepScan(dir, dir, 0, 3, seen)
 		results = append(results, repos...)
 	}
 
 	return results
 }
 
-func deepScan(rootDir, currentDir string, depth, maxDepth int) []ExploredRepo {
+func deepScan(rootDir, currentDir string, depth, maxDepth int, seen map[string]bool) []ExploredRepo {
 	if depth > maxDepth {
 		return nil
 	}
+
+	// Resolve symlinks for loop detection
+	resolved, err := filepath.EvalSymlinks(currentDir)
+	if err != nil {
+		resolved = currentDir
+	}
+	if seen[resolved] {
+		return nil
+	}
+	seen[resolved] = true
 
 	entries, err := os.ReadDir(currentDir)
 	if err != nil {
@@ -45,7 +56,8 @@ func deepScan(rootDir, currentDir string, depth, maxDepth int) []ExploredRepo {
 			continue
 		}
 		name := entry.Name()
-		if name == "." || name == ".." || name == ".git" || name == "node_modules" || name == "__pycache__" {
+		// Skip hidden dirs and known non-repo dirs
+		if strings.HasPrefix(name, ".") || name == "node_modules" || name == "__pycache__" {
 			continue
 		}
 
@@ -62,16 +74,16 @@ func deepScan(rootDir, currentDir string, depth, maxDepth int) []ExploredRepo {
 				ParentDir: rootDir,
 			})
 			// Still scan inside for nested repos
-			nested_repos := deepScan(rootDir, path, depth+1, maxDepth)
-			for i := range nested_repos {
-				nested_repos[i].Nested = true
+			nestedRepos := deepScan(rootDir, path, depth+1, maxDepth, seen)
+			for i := range nestedRepos {
+				nestedRepos[i].Nested = true
 			}
-			results = append(results, nested_repos...)
+			results = append(results, nestedRepos...)
 			continue
 		}
 
 		// Not a repo — recurse
-		results = append(results, deepScan(rootDir, path, depth+1, maxDepth)...)
+		results = append(results, deepScan(rootDir, path, depth+1, maxDepth, seen)...)
 	}
 
 	return results

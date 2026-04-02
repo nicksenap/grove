@@ -4,10 +4,13 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 
 	"github.com/BurntSushi/toml"
 	"github.com/nicksenap/grove/internal/models"
 )
+
+var validPresetName = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
 
 var (
 	// GroveDir is the root Grove directory. Override in tests.
@@ -74,6 +77,13 @@ func RequireConfig() *models.Config {
 
 // Save writes config to disk atomically.
 func Save(cfg *models.Config) error {
+	// Validate preset names
+	for name := range cfg.Presets {
+		if !validPresetName.MatchString(name) {
+			return fmt.Errorf("invalid preset name %q: must match [a-zA-Z0-9_-]+", name)
+		}
+	}
+
 	if err := os.MkdirAll(filepath.Dir(ConfigPath), 0o755); err != nil {
 		return err
 	}

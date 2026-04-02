@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/nicksenap/grove/internal/logging"
+	"github.com/nicksenap/grove/internal/update"
 	"github.com/spf13/cobra"
 )
 
@@ -15,6 +17,9 @@ var rootCmd = &cobra.Command{
 	Use:   "gw",
 	Short: "Grove — Git Worktree Workspace Orchestrator",
 	Long:  "Manages multi-repo worktree-based workspaces",
+	PersistentPreRun: func(cmd *cobra.Command, args []string) {
+		logging.Setup(verbose)
+	},
 	Run: func(cmd *cobra.Command, args []string) {
 		cmd.Help()
 	},
@@ -51,6 +56,11 @@ func init() {
 }
 
 func Execute() {
+	// Non-blocking version check
+	if notice := update.FormatNotice(Version); notice != "" {
+		fmt.Fprintf(os.Stderr, "\033[2m%s\033[0m\n", notice)
+	}
+
 	if err := rootCmd.Execute(); err != nil {
 		os.Exit(1)
 	}

@@ -1,8 +1,10 @@
 package console
 
 import (
+	"bufio"
 	"fmt"
 	"os"
+	"strings"
 )
 
 // ANSI color codes
@@ -58,6 +60,33 @@ func Warning(msg string) {
 // Warningf prints a formatted warning message to stderr.
 func Warningf(format string, args ...interface{}) {
 	Warning(fmt.Sprintf(format, args...))
+}
+
+// Confirm asks the user a yes/no question. Returns true for yes.
+// Defaults to defaultYes if the user just presses enter.
+func Confirm(prompt string, defaultYes bool) bool {
+	hint := "[y/N]"
+	if defaultYes {
+		hint = "[Y/n]"
+	}
+	fmt.Fprintf(os.Stderr, "%s %s ", prompt, hint)
+
+	reader := bufio.NewReader(os.Stdin)
+	input, _ := reader.ReadString('\n')
+	input = strings.TrimSpace(strings.ToLower(input))
+
+	if input == "" {
+		return defaultYes
+	}
+	return input == "y" || input == "yes"
+}
+
+// Prompt asks the user for text input.
+func Prompt(label string) string {
+	fmt.Fprintf(os.Stderr, "%s: ", label)
+	reader := bufio.NewReader(os.Stdin)
+	input, _ := reader.ReadString('\n')
+	return strings.TrimSpace(input)
 }
 
 // IsTerminal returns true if the given file is a terminal.

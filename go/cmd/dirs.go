@@ -6,6 +6,7 @@ import (
 	"github.com/nicksenap/grove/internal/config"
 	"github.com/nicksenap/grove/internal/console"
 	"github.com/nicksenap/grove/internal/discover"
+	"github.com/nicksenap/grove/internal/picker"
 	"github.com/spf13/cobra"
 )
 
@@ -47,11 +48,16 @@ var removeDirCmd = &cobra.Command{
 		if len(cfg.RepoDirs) == 0 {
 			exitError("No repo directories configured")
 		}
-		if len(args) == 0 {
-			exitError("path required")
+		var absPath string
+		if len(args) > 0 {
+			absPath, _ = filepath.Abs(args[0])
+		} else {
+			selected, err := picker.PickOne("Select directory to remove:", cfg.RepoDirs)
+			if err != nil {
+				exitError(err.Error())
+			}
+			absPath = selected
 		}
-
-		absPath, _ := filepath.Abs(args[0])
 		found := false
 		filtered := make([]string, 0, len(cfg.RepoDirs))
 		for _, d := range cfg.RepoDirs {

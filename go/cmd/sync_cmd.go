@@ -26,3 +26,7 @@ var syncCmd = &cobra.Command{
 		}
 	},
 }
+
+func init() {
+	syncCmd.ValidArgsFunction = completeWorkspaceNames
+}

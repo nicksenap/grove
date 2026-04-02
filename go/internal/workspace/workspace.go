@@ -9,12 +9,22 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/nicksenap/grove/internal/claude"
+	"github.com/nicksenap/grove/internal/config"
 	"github.com/nicksenap/grove/internal/console"
 	"github.com/nicksenap/grove/internal/gitops"
 	"github.com/nicksenap/grove/internal/models"
 	"github.com/nicksenap/grove/internal/state"
 	"github.com/nicksenap/grove/internal/stats"
 )
+
+// ClaudeDir is the path to ~/.claude. Override in tests.
+var ClaudeDir string
+
+func init() {
+	home, _ := os.UserHomeDir()
+	ClaudeDir = filepath.Join(home, ".claude")
+}
 
 // Create creates a new workspace with worktrees for the given repos.
 // repoMap is name→source_path.
@@ -69,6 +79,13 @@ func Create(name, branch string, repoNames []string, repoMap map[string]string, 
 	// Record stats
 	stats.RecordCreated(ws)
 
+	// Rehydrate Claude memory
+	if cfg.ClaudeMemorySync {
+		for _, r := range ws.Repos {
+			claude.RehydrateMemory(ClaudeDir, r.SourceRepo, r.WorktreePath)
+		}
+	}
+
 	// Write .mcp.json
 	writeMCPConfig(ws)
 
@@ -82,18 +99,12 @@ func Create(name, branch string, repoNames []string, repoMap map[string]string, 
 	return nil
 }
 
+
 func provisionWorktree(sourcePath, repoName, wsPath, branch string) (*models.RepoWorktree, error) {
 	wtPath := filepath.Join(wsPath, repoName)
 
-	// Fetch
+	// Fetch (best-effort)
 	_ = gitops.Fetch(sourcePath)
-
-	// Determine base branch
-	baseBranch := gitops.DefaultBranch(sourcePath)
-	groveCfg, _ := gitops.ReadGroveConfig(sourcePath)
-	if groveCfg != nil && groveCfg.BaseBranch != "" {
-		baseBranch = groveCfg.BaseBranch
-	}
 
 	// Check if branch already has a worktree
 	hasWT, _ := gitops.WorktreeHasBranch(sourcePath, branch)
@@ -103,11 +114,19 @@ func provisionWorktree(sourcePath, repoName, wsPath, branch string) (*models.Rep
 
 	// Create branch if needed
 	if !gitops.BranchExists(sourcePath, branch) {
-		startPoint := "origin/" + baseBranch
-		if err := gitops.CreateBranch(sourcePath, branch, startPoint); err != nil {
-			// Try without remote prefix
-			if err2 := gitops.CreateBranch(sourcePath, branch, baseBranch); err2 != nil {
-				return nil, fmt.Errorf("creating branch: %w", err)
+		base, err := gitops.ResolveBaseBranch(sourcePath)
+		if err != nil {
+			// No remote — branch from current HEAD
+			base = "HEAD"
+		}
+		if err := gitops.CreateBranch(sourcePath, branch, base); err != nil {
+			// Try without "origin/" prefix
+			plainBase := strings.TrimPrefix(base, "origin/")
+			if err2 := gitops.CreateBranch(sourcePath, branch, plainBase); err2 != nil {
+				// Last resort: branch from HEAD
+				if err3 := gitops.CreateBranch(sourcePath, branch, "HEAD"); err3 != nil {
+					return nil, fmt.Errorf("creating branch: %w", err)
+				}
 			}
 		}
 	}
@@ -155,27 +174,88 @@ func runSetupHooks(ws models.Workspace) {
 	wg.Wait()
 }
 
-func writeMCPConfig(ws models.Workspace) {
-	mcpCfg := models.MCPConfig{
-		MCPServers: map[string]models.MCPServer{
-			"grove": {
-				Command: "gw",
-				Args:    []string{"mcp-serve", "--workspace", ws.Name},
-			},
-		},
+// mcpServerEntry returns the grove MCP server config.
+func mcpServerEntry(wsName string) models.MCPServer {
+	return models.MCPServer{
+		Command: "gw",
+		Args:    []string{"mcp-serve", "--workspace", wsName},
+	}
+}
+
+// mergeMCPConfig reads existing .mcp.json, adds/updates the grove entry, writes back.
+func mergeMCPConfig(path string, wsName string) {
+	var existing map[string]interface{}
+
+	data, err := os.ReadFile(path)
+	if err == nil {
+		json.Unmarshal(data, &existing)
+	}
+	if existing == nil {
+		existing = make(map[string]interface{})
 	}
 
-	data, err := json.MarshalIndent(mcpCfg, "", "  ")
+	servers, ok := existing["mcpServers"].(map[string]interface{})
+	if !ok {
+		servers = make(map[string]interface{})
+	}
+	servers["grove"] = mcpServerEntry(wsName)
+	existing["mcpServers"] = servers
+
+	out, err := json.MarshalIndent(existing, "", "  ")
 	if err != nil {
 		return
 	}
+	// Atomic write
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, out, 0o644); err != nil {
+		return
+	}
+	os.Rename(tmp, path)
+}
 
+func writeMCPConfig(ws models.Workspace) {
 	// Write to workspace root
-	os.WriteFile(filepath.Join(ws.Path, ".mcp.json"), data, 0o644)
+	mergeMCPConfig(filepath.Join(ws.Path, ".mcp.json"), ws.Name)
 
 	// Write to each worktree
 	for _, r := range ws.Repos {
-		os.WriteFile(filepath.Join(r.WorktreePath, ".mcp.json"), data, 0o644)
+		mergeMCPConfig(filepath.Join(r.WorktreePath, ".mcp.json"), ws.Name)
+	}
+}
+
+// removeMCPConfig removes the grove entry from .mcp.json files.
+// Deletes the file if no other servers remain.
+func removeMCPConfig(ws models.Workspace) {
+	paths := []string{filepath.Join(ws.Path, ".mcp.json")}
+	for _, r := range ws.Repos {
+		paths = append(paths, filepath.Join(r.WorktreePath, ".mcp.json"))
+	}
+
+	for _, path := range paths {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			continue
+		}
+
+		var existing map[string]interface{}
+		if err := json.Unmarshal(data, &existing); err != nil {
+			continue
+		}
+
+		servers, ok := existing["mcpServers"].(map[string]interface{})
+		if !ok {
+			continue
+		}
+
+		delete(servers, "grove")
+
+		if len(servers) == 0 {
+			os.Remove(path)
+		} else {
+			existing["mcpServers"] = servers
+			out, _ := json.MarshalIndent(existing, "", "  ")
+			os.WriteFile(path, out, 0o644)
+		}
 	}
 }
 
@@ -189,24 +269,55 @@ func Delete(name string) error {
 		return fmt.Errorf("Workspace %s not found", name)
 	}
 
-	// Run teardown hooks and remove worktrees
-	for _, r := range ws.Repos {
-		// Teardown hook
-		groveCfg, _ := gitops.ReadGroveConfig(r.SourceRepo)
-		if groveCfg != nil && groveCfg.Teardown != "" {
-			cmd := exec.Command("sh", "-c", groveCfg.Teardown)
-			cmd.Dir = r.WorktreePath
-			cmd.Run()
-		}
+	// Remove MCP config
+	removeMCPConfig(*ws)
 
-		// Remove worktree
-		if err := gitops.WorktreeRemove(r.SourceRepo, r.WorktreePath); err != nil {
-			// Fallback: remove directory
-			os.RemoveAll(r.WorktreePath)
+	// Harvest Claude memory before destruction
+	cfg, _ := config.Load()
+	if cfg != nil && cfg.ClaudeMemorySync {
+		for _, r := range ws.Repos {
+			claude.HarvestMemory(ClaudeDir, r.WorktreePath, r.SourceRepo)
 		}
+	}
 
-		// Try to delete the branch (safe delete, skip if unmerged)
-		gitops.DeleteBranch(r.SourceRepo, r.Branch, false)
+	// Parallel teardown+remove for all repos
+	errs := make([]error, len(ws.Repos))
+	var wg sync.WaitGroup
+	for i, r := range ws.Repos {
+		wg.Add(1)
+		go func(idx int, repo models.RepoWorktree) {
+			defer wg.Done()
+			// Teardown hook
+			groveCfg, _ := gitops.ReadGroveConfig(repo.SourceRepo)
+			if groveCfg != nil && groveCfg.Teardown != "" {
+				cmd := exec.Command("sh", "-c", groveCfg.Teardown)
+				cmd.Dir = repo.WorktreePath
+				cmd.Run()
+			}
+
+			// Remove worktree
+			if removeErr := gitops.WorktreeRemove(repo.SourceRepo, repo.WorktreePath); removeErr != nil {
+				// Force cleanup
+				if rmErr := os.RemoveAll(repo.WorktreePath); rmErr != nil {
+					errs[idx] = rmErr
+					return
+				}
+			}
+
+			// Try to delete the branch (safe delete, warn on unmerged)
+			if err := gitops.DeleteBranch(repo.SourceRepo, repo.Branch, false); err != nil {
+				console.Warningf("%s: branch %s has unmerged commits, kept", repo.RepoName, repo.Branch)
+			}
+		}(i, r)
+	}
+	wg.Wait()
+
+	// Count failures
+	failCount := 0
+	for _, e := range errs {
+		if e != nil {
+			failCount++
+		}
 	}
 
 	// Remove workspace directory
@@ -215,16 +326,19 @@ func Delete(name string) error {
 	// Record stats before removing state
 	stats.RecordDeleted(*ws)
 
-	// Remove from state
-	if err := state.RemoveWorkspace(name); err != nil {
-		return err
+	// Only remove from state if no failures or dir is gone
+	_, dirErr := os.Stat(ws.Path)
+	if failCount == 0 || os.IsNotExist(dirErr) {
+		if err := state.RemoveWorkspace(name); err != nil {
+			return err
+		}
 	}
 
 	console.Successf("Workspace %s deleted", name)
 	return nil
 }
 
-// Rename renames a workspace.
+// Rename renames a workspace using a state-first pattern with rollback.
 func Rename(oldName, newName string) error {
 	ws, err := state.GetWorkspace(oldName)
 	if err != nil {
@@ -246,23 +360,53 @@ func Rename(oldName, newName string) error {
 	oldPath := ws.Path
 	newPath := filepath.Join(filepath.Dir(oldPath), newName)
 
-	// Rename directory
-	if err := os.Rename(oldPath, newPath); err != nil {
-		return fmt.Errorf("renaming directory: %w", err)
+	// Check target dir doesn't exist
+	if _, err := os.Stat(newPath); err == nil {
+		return fmt.Errorf("directory %s already exists", newPath)
 	}
 
-	// Update state
-	if err := state.RenameWorkspace(oldName, newName, newPath); err != nil {
-		// Rollback directory rename
-		os.Rename(newPath, oldPath)
+	// Save original values for rollback
+	origName := ws.Name
+	origPath := ws.Path
+	origWorktreePaths := make([]string, len(ws.Repos))
+	for i := range ws.Repos {
+		origWorktreePaths[i] = ws.Repos[i].WorktreePath
+	}
+
+	// Mutate in memory
+	ws.Name = newName
+	ws.Path = newPath
+	for i := range ws.Repos {
+		ws.Repos[i].WorktreePath = strings.Replace(ws.Repos[i].WorktreePath, oldPath, newPath, 1)
+	}
+
+	// State-first: update state atomically using match_name
+	if err := state.UpdateWorkspaceByName(*ws, oldName); err != nil {
 		return err
 	}
 
-	// Repair worktrees
-	updatedWS, _ := state.GetWorkspace(newName)
-	if updatedWS != nil {
-		for _, r := range updatedWS.Repos {
-			gitops.WorktreeRepair(r.SourceRepo, r.WorktreePath)
+	// Now rename filesystem
+	if err := os.Rename(oldPath, newPath); err != nil {
+		// Rollback state
+		ws.Name = origName
+		ws.Path = origPath
+		for i := range ws.Repos {
+			ws.Repos[i].WorktreePath = origWorktreePaths[i]
+		}
+		state.UpdateWorkspaceByName(*ws, newName)
+		return fmt.Errorf("renaming directory: %w", err)
+	}
+
+	// Repair worktrees (best-effort)
+	for _, r := range ws.Repos {
+		gitops.WorktreeRepair(r.SourceRepo, r.WorktreePath)
+	}
+
+	// Migrate Claude memory dirs
+	cfg, _ := config.Load()
+	if cfg != nil && cfg.ClaudeMemorySync {
+		for i := range ws.Repos {
+			claude.MigrateMemoryDir(ClaudeDir, origWorktreePaths[i], ws.Repos[i].WorktreePath)
 		}
 	}
 
@@ -313,16 +457,7 @@ func AddRepos(wsName string, repoNames []string, repoMap map[string]string) erro
 		ws.Repos = append(ws.Repos, *rw)
 
 		// Write .mcp.json to new worktree
-		mcpCfg := models.MCPConfig{
-			MCPServers: map[string]models.MCPServer{
-				"grove": {
-					Command: "gw",
-					Args:    []string{"mcp-serve", "--workspace", ws.Name},
-				},
-			},
-		}
-		data, _ := json.MarshalIndent(mcpCfg, "", "  ")
-		os.WriteFile(filepath.Join(rw.WorktreePath, ".mcp.json"), data, 0o644)
+		mergeMCPConfig(filepath.Join(rw.WorktreePath, ".mcp.json"), ws.Name)
 	}
 
 	// Run setup hooks on new repos
@@ -348,29 +483,51 @@ func RemoveRepos(wsName string, repoNames []string) error {
 		return fmt.Errorf("Workspace %s not found", wsName)
 	}
 
+	// Collect repos to remove
+	type removeItem struct {
+		name string
+		repo *models.RepoWorktree
+	}
+	var items []removeItem
 	for _, repoName := range repoNames {
 		r := ws.FindRepo(repoName)
-		if r == nil {
-			continue
+		if r != nil {
+			items = append(items, removeItem{name: repoName, repo: r})
 		}
+	}
 
-		// Teardown hook
-		groveCfg, _ := gitops.ReadGroveConfig(r.SourceRepo)
-		if groveCfg != nil && groveCfg.Teardown != "" {
-			cmd := exec.Command("sh", "-c", groveCfg.Teardown)
-			cmd.Dir = r.WorktreePath
-			cmd.Run()
+	// Parallel teardown+remove
+	succeeded := make([]bool, len(items))
+	var wg sync.WaitGroup
+	for i, item := range items {
+		wg.Add(1)
+		go func(idx int, r models.RepoWorktree) {
+			defer wg.Done()
+			// Teardown hook
+			groveCfg, _ := gitops.ReadGroveConfig(r.SourceRepo)
+			if groveCfg != nil && groveCfg.Teardown != "" {
+				cmd := exec.Command("sh", "-c", groveCfg.Teardown)
+				cmd.Dir = r.WorktreePath
+				cmd.Run()
+			}
+
+			// Remove worktree
+			if err := gitops.WorktreeRemove(r.SourceRepo, r.WorktreePath); err != nil {
+				os.RemoveAll(r.WorktreePath)
+			}
+
+			// Try branch cleanup
+			gitops.DeleteBranch(r.SourceRepo, r.Branch, false)
+			succeeded[idx] = true
+		}(i, *item.repo)
+	}
+	wg.Wait()
+
+	// Only remove successfully removed repos from state
+	for i, item := range items {
+		if succeeded[i] {
+			ws.RemoveRepo(item.name)
 		}
-
-		// Remove worktree
-		if err := gitops.WorktreeRemove(r.SourceRepo, r.WorktreePath); err != nil {
-			os.RemoveAll(r.WorktreePath)
-		}
-
-		// Try branch cleanup
-		gitops.DeleteBranch(r.SourceRepo, r.Branch, false)
-
-		ws.RemoveRepo(repoName)
 	}
 
 	if err := state.UpdateWorkspace(*ws); err != nil {
@@ -379,6 +536,69 @@ func RemoveRepos(wsName string, repoNames []string) error {
 
 	console.Successf("Removed %d repo(s) from %s", len(repoNames), wsName)
 	return nil
+}
+
+// syncOneRepo syncs a single repo. Returns a message for output ordering.
+func syncOneRepo(r models.RepoWorktree) {
+	// Fetch from source repo (worktrees share the git database)
+	if err := gitops.Fetch(r.SourceRepo); err != nil {
+		console.Warningf("%s: fetch failed (continuing): %s", r.RepoName, err)
+	}
+
+	groveCfg, _ := gitops.ReadGroveConfig(r.SourceRepo)
+
+	// Check if dirty
+	status, err := gitops.RepoStatus(r.WorktreePath)
+	if err != nil {
+		console.Warningf("%s: status check failed: %s", r.RepoName, err)
+		return
+	}
+	if status != "" {
+		console.Warningf("%s: skipping (dirty working tree)", r.RepoName)
+		return
+	}
+
+	// Determine base
+	upstream, err := gitops.ResolveBaseBranch(r.SourceRepo)
+	if err != nil {
+		console.Warningf("%s: could not determine base branch: %s", r.RepoName, err)
+		return
+	}
+
+	// Check ahead/behind
+	_, behind, err := gitops.CommitsAheadBehind(r.WorktreePath, upstream)
+	if err != nil {
+		console.Warningf("%s: cannot determine ahead/behind: %s", r.RepoName, err)
+		return
+	}
+
+	if behind == 0 {
+		console.Infof("%s: ✓ up to date", r.RepoName)
+		return
+	}
+
+	// pre_sync hook
+	if groveCfg != nil && groveCfg.PreSync != "" {
+		cmd := exec.Command("sh", "-c", groveCfg.PreSync)
+		cmd.Dir = r.WorktreePath
+		cmd.Run()
+	}
+
+	// Rebase
+	if err := gitops.RebaseOnto(r.WorktreePath, upstream); err != nil {
+		console.Errorf("%s: rebase failed: %s", r.RepoName, err)
+		gitops.RebaseAbort(r.WorktreePath)
+		return
+	}
+
+	console.Successf("%s: rebased (%d commits)", r.RepoName, behind)
+
+	// post_sync hook
+	if groveCfg != nil && groveCfg.PostSync != "" {
+		cmd := exec.Command("sh", "-c", groveCfg.PostSync)
+		cmd.Dir = r.WorktreePath
+		cmd.Run()
+	}
 }
 
 // Sync rebases workspace repos onto their base branches.
@@ -391,74 +611,97 @@ func Sync(wsName string) error {
 		return fmt.Errorf("Workspace %s not found", wsName)
 	}
 
+	// Parallel sync per repo
+	var wg sync.WaitGroup
 	for _, r := range ws.Repos {
-		// pre_sync hook
-		groveCfg, _ := gitops.ReadGroveConfig(r.SourceRepo)
-		if groveCfg != nil && groveCfg.PreSync != "" {
-			cmd := exec.Command("sh", "-c", groveCfg.PreSync)
-			cmd.Dir = r.WorktreePath
-			cmd.Run()
-		}
-
-		// Fetch (best-effort — refs may already be current)
-		if err := gitops.Fetch(r.WorktreePath); err != nil {
-			// Don't abort — local refs may already be updated
-			console.Warningf("%s: fetch failed (continuing): %s", r.RepoName, err)
-		}
-
-		// Check if dirty
-		status, err := gitops.RepoStatus(r.WorktreePath)
-		if err != nil {
-			console.Warningf("%s: status check failed: %s", r.RepoName, err)
-			continue
-		}
-		if status != "" {
-			console.Warningf("%s: skipping (dirty working tree)", r.RepoName)
-			continue
-		}
-
-		// Determine base
-		baseBranch := gitops.DefaultBranch(r.SourceRepo)
-		if groveCfg != nil && groveCfg.BaseBranch != "" {
-			baseBranch = groveCfg.BaseBranch
-		}
-
-		upstream := "origin/" + baseBranch
-
-		// Check ahead/behind
-		_, behind, err := gitops.CommitsAheadBehind(r.WorktreePath, upstream)
-		if err != nil {
-			console.Warningf("%s: cannot determine ahead/behind: %s", r.RepoName, err)
-			continue
-		}
-
-		if behind == 0 {
-			console.Infof("%s: ✓ up to date", r.RepoName)
-			continue
-		}
-
-		// Rebase
-		if err := gitops.RebaseOnto(r.WorktreePath, upstream); err != nil {
-			console.Errorf("%s: rebase failed: %s", r.RepoName, err)
-			gitops.RebaseAbort(r.WorktreePath)
-			continue
-		}
-
-		console.Successf("%s: rebased (%d commits)", r.RepoName, behind)
-
-		// post_sync hook
-		if groveCfg != nil && groveCfg.PostSync != "" {
-			cmd := exec.Command("sh", "-c", groveCfg.PostSync)
-			cmd.Dir = r.WorktreePath
-			cmd.Run()
-		}
+		wg.Add(1)
+		go func(repo models.RepoWorktree) {
+			defer wg.Done()
+			syncOneRepo(repo)
+		}(r)
 	}
+	wg.Wait()
 
 	return nil
 }
 
+type repoStatusResult struct {
+	Repo   string          `json:"repo"`
+	Branch string          `json:"branch"`
+	Status string          `json:"status"`
+	Ahead  string          `json:"ahead"`
+	Behind string          `json:"behind"`
+	PR     *gitops.PRInfo  `json:"pr,omitempty"`
+}
+
+// collectRepoStatus gathers status for a single repo.
+func collectRepoStatus(r models.RepoWorktree) repoStatusResult {
+	rs := repoStatusResult{
+		Repo:   r.RepoName,
+		Branch: r.Branch,
+	}
+	status, err := gitops.RepoStatus(r.WorktreePath)
+	if err != nil {
+		rs.Status = "error: " + err.Error()
+		rs.Ahead = "-"
+		rs.Behind = "-"
+		return rs
+	}
+	if status == "" {
+		rs.Status = "clean"
+	} else {
+		rs.Status = status
+	}
+
+	upstream, _ := gitops.ResolveBaseBranch(r.SourceRepo)
+	if upstream == "" {
+		upstream = "origin/main"
+	}
+	ahead, behind, err := gitops.CommitsAheadBehind(r.WorktreePath, upstream)
+	if err == nil {
+		rs.Ahead = fmt.Sprintf("%d", ahead)
+		rs.Behind = fmt.Sprintf("%d", behind)
+	} else {
+		rs.Ahead = "-"
+		rs.Behind = "-"
+	}
+
+	return rs
+}
+
+// formatPR returns a display string for PR status.
+func formatPR(pr *gitops.PRInfo) string {
+	if pr == nil {
+		return "-"
+	}
+	switch pr.State {
+	case "MERGED":
+		return fmt.Sprintf("#%d merged", pr.Number)
+	case "CLOSED":
+		return fmt.Sprintf("#%d closed", pr.Number)
+	case "OPEN":
+		switch pr.ReviewDecision {
+		case "APPROVED":
+			return fmt.Sprintf("#%d ✓", pr.Number)
+		case "CHANGES_REQUESTED":
+			return fmt.Sprintf("#%d ✗", pr.Number)
+		default:
+			return fmt.Sprintf("#%d open", pr.Number)
+		}
+	default:
+		return fmt.Sprintf("#%d %s", pr.Number, pr.State)
+	}
+}
+
+// StatusOptions controls status output.
+type StatusOptions struct {
+	JSON    bool
+	Verbose bool
+	PR      bool
+}
+
 // Status displays git status for a workspace.
-func Status(wsName string, jsonOutput bool) error {
+func Status(wsName string, opts StatusOptions) error {
 	ws, err := state.GetWorkspace(wsName)
 	if err != nil {
 		return err
@@ -467,89 +710,149 @@ func Status(wsName string, jsonOutput bool) error {
 		return fmt.Errorf("Workspace %s not found", wsName)
 	}
 
-	if jsonOutput {
-		type repoStatus struct {
-			Repo   string `json:"repo"`
-			Branch string `json:"branch"`
-			Status string `json:"status"`
-			Ahead  string `json:"ahead"`
-			Behind string `json:"behind"`
-		}
-		type wsStatus struct {
-			Workspace string       `json:"workspace"`
-			Path      string       `json:"path"`
-			Repos     []repoStatus `json:"repos"`
-		}
+	// Collect status in parallel, results in input order
+	results := make([]repoStatusResult, len(ws.Repos))
+	var wg sync.WaitGroup
+	for i, r := range ws.Repos {
+		wg.Add(1)
+		go func(idx int, repo models.RepoWorktree) {
+			defer wg.Done()
+			results[idx] = collectRepoStatus(repo)
+			if opts.PR {
+				results[idx].PR = gitops.PRStatus(repo.WorktreePath)
+			}
+		}(i, r)
+	}
+	wg.Wait()
 
+	if opts.JSON {
+		type wsStatus struct {
+			Workspace string             `json:"workspace"`
+			Path      string             `json:"path"`
+			Repos     []repoStatusResult `json:"repos"`
+		}
 		result := wsStatus{
 			Workspace: ws.Name,
 			Path:      ws.Path,
+			Repos:     results,
 		}
-
-		for _, r := range ws.Repos {
-			rs := repoStatus{
-				Repo:   r.RepoName,
-				Branch: r.Branch,
-			}
-			status, err := gitops.RepoStatus(r.WorktreePath)
-			if err != nil {
-				rs.Status = "error: " + err.Error()
-			} else if status == "" {
-				rs.Status = "clean"
-			} else {
-				rs.Status = status
-			}
-
-			baseBranch := gitops.DefaultBranch(r.SourceRepo)
-			groveCfg, _ := gitops.ReadGroveConfig(r.SourceRepo)
-			if groveCfg != nil && groveCfg.BaseBranch != "" {
-				baseBranch = groveCfg.BaseBranch
-			}
-			ahead, behind, err := gitops.CommitsAheadBehind(r.WorktreePath, "origin/"+baseBranch)
-			if err == nil {
-				rs.Ahead = fmt.Sprintf("%d", ahead)
-				rs.Behind = fmt.Sprintf("%d", behind)
-			}
-
-			result.Repos = append(result.Repos, rs)
-		}
-
 		data, _ := json.MarshalIndent(result, "", "  ")
 		fmt.Println(string(data))
 		return nil
 	}
 
-	// Table output
-	fmt.Fprintf(os.Stderr, "Workspace: %s  (%s)\n\n", ws.Name, ws.Path)
-	fmt.Fprintf(os.Stderr, "%-20s %-25s %-8s %s\n", "Repo", "Branch", "↑↓", "Status")
-	fmt.Fprintf(os.Stderr, "%s\n", strings.Repeat("─", 80))
+	// Table output (to stdout for piping)
+	fmt.Fprintf(os.Stdout, "Workspace: %s  (%s)\n\n", ws.Name, ws.Path)
+	if opts.PR {
+		fmt.Fprintf(os.Stdout, "%-20s %-25s %-8s %-12s %s\n", "Repo", "Branch", "↑↓", "PR", "Status")
+	} else {
+		fmt.Fprintf(os.Stdout, "%-20s %-25s %-8s %s\n", "Repo", "Branch", "↑↓", "Status")
+	}
+	fmt.Fprintf(os.Stdout, "%s\n", strings.Repeat("─", 80))
 
-	for _, r := range ws.Repos {
-		status, err := gitops.RepoStatus(r.WorktreePath)
-		statusStr := "clean"
-		if err != nil {
-			statusStr = "error: " + err.Error()
-		} else if status != "" {
-			lines := strings.Count(status, "\n") + 1
+	for _, rs := range results {
+		statusStr := rs.Status
+		if rs.Status != "clean" && rs.Status != "" && !strings.HasPrefix(rs.Status, "error:") {
+			lines := strings.Count(rs.Status, "\n") + 1
 			statusStr = fmt.Sprintf("%d changed", lines)
 		}
 
-		baseBranch := gitops.DefaultBranch(r.SourceRepo)
-		groveCfg, _ := gitops.ReadGroveConfig(r.SourceRepo)
-		if groveCfg != nil && groveCfg.BaseBranch != "" {
-			baseBranch = groveCfg.BaseBranch
-		}
-
 		upDown := "-"
-		ahead, behind, err := gitops.CommitsAheadBehind(r.WorktreePath, "origin/"+baseBranch)
-		if err == nil {
-			upDown = fmt.Sprintf("%d↑ %d↓", ahead, behind)
+		if rs.Ahead != "-" && rs.Behind != "-" && rs.Ahead != "" && rs.Behind != "" {
+			upDown = fmt.Sprintf("%s↑ %s↓", rs.Ahead, rs.Behind)
 		}
 
-		fmt.Fprintf(os.Stderr, "%-20s %-25s %-8s %s\n", r.RepoName, r.Branch, upDown, statusStr)
+		if opts.PR {
+			prStr := "-"
+			if rs.PR != nil {
+				prStr = formatPR(rs.PR)
+			}
+			fmt.Fprintf(os.Stdout, "%-20s %-25s %-8s %-12s %s\n", rs.Repo, rs.Branch, upDown, prStr, statusStr)
+		} else {
+			fmt.Fprintf(os.Stdout, "%-20s %-25s %-8s %s\n", rs.Repo, rs.Branch, upDown, statusStr)
+		}
+	}
+
+	// Verbose: print raw git status for dirty repos
+	if opts.Verbose {
+		for _, rs := range results {
+			if rs.Status != "clean" && rs.Status != "" && !strings.HasPrefix(rs.Status, "error:") {
+				fmt.Fprintf(os.Stderr, "\n%s:\n%s\n", rs.Repo, rs.Status)
+			}
+		}
 	}
 
 	return nil
+}
+
+// WorkspaceSummary holds summary info for list --status.
+type WorkspaceSummary struct {
+	Name   string `json:"name"`
+	Branch string `json:"branch"`
+	Repos  int    `json:"repos"`
+	Status string `json:"status"`
+	Path   string `json:"path"`
+}
+
+// AllWorkspacesSummary returns a status summary for all workspaces.
+// Runs status checks in parallel across workspaces.
+func AllWorkspacesSummary() ([]WorkspaceSummary, error) {
+	workspaces, err := state.Load()
+	if err != nil {
+		return nil, err
+	}
+
+	if len(workspaces) == 0 {
+		return []WorkspaceSummary{}, nil
+	}
+
+	results := make([]WorkspaceSummary, len(workspaces))
+	var wg sync.WaitGroup
+	for i, ws := range workspaces {
+		wg.Add(1)
+		go func(idx int, w models.Workspace) {
+			defer wg.Done()
+			summary := WorkspaceSummary{
+				Name:   w.Name,
+				Branch: w.Branch,
+				Repos:  len(w.Repos),
+				Path:   w.Path,
+			}
+
+			// Collect status per repo
+			clean, dirty, errCount := 0, 0, 0
+			for _, r := range w.Repos {
+				status, err := gitops.RepoStatus(r.WorktreePath)
+				if err != nil {
+					errCount++
+				} else if status == "" {
+					clean++
+				} else {
+					dirty++
+				}
+			}
+
+			parts := []string{}
+			if clean > 0 {
+				parts = append(parts, fmt.Sprintf("%d clean", clean))
+			}
+			if dirty > 0 {
+				parts = append(parts, fmt.Sprintf("%d modified", dirty))
+			}
+			if errCount > 0 {
+				parts = append(parts, fmt.Sprintf("%d error", errCount))
+			}
+			summary.Status = strings.Join(parts, ", ")
+			if summary.Status == "" {
+				summary.Status = "empty"
+			}
+
+			results[idx] = summary
+		}(i, ws)
+	}
+	wg.Wait()
+
+	return results, nil
 }
 
 // Doctor checks workspace health and returns issues.
@@ -561,6 +864,24 @@ func Doctor(fix bool) ([]models.DoctorIssue, int, error) {
 
 	var issues []models.DoctorIssue
 	fixed := 0
+
+	// Check for orphaned Claude memory directories
+	cfg, _ := config.Load()
+	if cfg != nil && cfg.ClaudeMemorySync {
+		orphaned := claude.FindOrphanedMemoryDirs(ClaudeDir, cfg.WorkspaceDir)
+		for _, dir := range orphaned {
+			issues = append(issues, models.DoctorIssue{
+				Workspace:       "",
+				Repo:            nil,
+				Issue:           fmt.Sprintf("orphaned Claude memory: %s", filepath.Base(dir)),
+				SuggestedAction: "remove orphaned Claude memory directory",
+			})
+			if fix {
+				os.RemoveAll(dir)
+				fixed++
+			}
+		}
+	}
 
 	// Collect workspaces to remove (iterate safely)
 	var wsToRemove []string

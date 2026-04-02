@@ -4,8 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-
-	"github.com/nicksenap/grove/internal/gitops"
+	"strings"
 )
 
 // Repo represents a discovered git repository.
@@ -29,11 +28,12 @@ func FindRepos(dirs []string) []Repo {
 				continue
 			}
 			name := entry.Name()
-			if name == "." || name == ".." {
+			if strings.HasPrefix(name, ".") {
 				continue
 			}
 			repoPath := filepath.Join(dir, name)
-			if gitops.IsGitRepo(repoPath) && !seen[name] {
+			gitDir := filepath.Join(repoPath, ".git")
+			if info, err := os.Stat(gitDir); err == nil && info.IsDir() && !seen[name] {
 				seen[name] = true
 				repos = append(repos, Repo{Name: name, Path: repoPath})
 			}
