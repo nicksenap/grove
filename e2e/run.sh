@@ -42,8 +42,10 @@ done
 GROVE_SRC="${GROVE_SRC:-/src/grove}"
 if [ -d "${GROVE_SRC}/.git" ]; then
     git clone -q --local "${GROVE_SRC}" "${REPOS_DIR}/grove"
-    # Ensure we're on a named branch (CI checkouts may be detached HEAD)
-    (cd "${REPOS_DIR}/grove" && git checkout -q -B main HEAD 2>/dev/null || true)
+    # CI PR checkouts are detached HEAD — create a branch so the sync test works
+    if ! (cd "${REPOS_DIR}/grove" && git symbolic-ref --short HEAD 2>/dev/null) >/dev/null 2>&1; then
+        (cd "${REPOS_DIR}/grove" && git checkout -q -B main HEAD)
+    fi
     echo "Cloned Grove repo ($(cd "${REPOS_DIR}/grove" && git rev-list --count HEAD) commits)"
 else
     # Fallback: create a bare origin + clone so we have proper remote refs
