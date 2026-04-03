@@ -46,12 +46,16 @@ func NewInstaller() *Installer {
 }
 
 // ResolveGW finds the gw binary path.
+// Prefers PATH lookup; falls back to the current executable.
 func ResolveGW() (string, error) {
-	path, err := exec.LookPath("gw")
-	if err != nil {
-		return "", fmt.Errorf("gw not found on PATH; install Grove first")
+	if path, err := exec.LookPath("gw"); err == nil {
+		return path, nil
 	}
-	return path, nil
+	// Fallback: use the running binary itself
+	if exe, err := os.Executable(); err == nil {
+		return exe, nil
+	}
+	return "", fmt.Errorf("gw not found on PATH")
 }
 
 // IsInstalled checks if Grove hooks are present in settings.json.
