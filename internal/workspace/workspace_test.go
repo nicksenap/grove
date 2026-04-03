@@ -105,6 +105,16 @@ func (e *testEnv) run(dir string, name string, args ...string) string {
 	e.t.Helper()
 	cmd := exec.Command(name, args...)
 	cmd.Dir = dir
+	// Filter out GIT_DIR/GIT_WORK_TREE/GIT_INDEX_FILE to prevent leaking
+	// from parent process (e.g. when tests run inside a pre-commit hook).
+	for _, kv := range os.Environ() {
+		if strings.HasPrefix(kv, "GIT_DIR=") ||
+			strings.HasPrefix(kv, "GIT_WORK_TREE=") ||
+			strings.HasPrefix(kv, "GIT_INDEX_FILE=") {
+			continue
+		}
+		cmd.Env = append(cmd.Env, kv)
+	}
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		e.t.Fatalf("%s %s failed: %s\n%s", name, strings.Join(args, " "), err, out)
