@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+set -e
+uv run ruff format --check src/ tests/
+uv run ruff check src/ tests/
