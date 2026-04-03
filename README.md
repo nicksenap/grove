@@ -40,6 +40,15 @@ cd go && go build -o gw . && mv gw /usr/local/bin/
 uv tool install .
 ```
 
+### Migrating from Python to Go
+
+If you have the Python version installed via Homebrew, uninstall it first — both versions install a `gw` binary:
+
+```bash
+brew uninstall grove
+brew install --cask nicksenap/grove/grove-go
+```
+
 ### Upgrading
 
 ```bash
