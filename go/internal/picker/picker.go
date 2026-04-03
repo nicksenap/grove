@@ -4,9 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"os"
-	"os/signal"
 	"strings"
-	"syscall"
 
 	"github.com/nicksenap/grove/internal/console"
 	"golang.org/x/term"
@@ -370,6 +368,8 @@ func (m selectModel) View() string {
 // --- Terminal runner ---
 
 // runPicker runs the interactive picker using raw terminal I/O.
+// Uses blocking reads with no goroutines — this avoids goroutine leaks
+// that steal keypresses when pickers are called sequentially (e.g. gw go → back → pick dir).
 func runPicker(m selectModel) (selectModel, error) {
 	fd := int(os.Stdin.Fd())
 	oldState, err := term.MakeRaw(fd)
@@ -385,54 +385,28 @@ func runPicker(m selectModel) (selectModel, error) {
 	defer fmt.Fprint(w, "\x1b[?25h\x1b[?1049l")
 
 	// Get initial terminal size
-	width, height, err := term.GetSize(int(w.Fd()))
-	if err == nil && height > 0 {
+	if width, height, err := term.GetSize(int(w.Fd())); err == nil && height > 0 {
 		m, _ = m.Update(WindowSizeMsg{Width: width, Height: height})
 	}
 
-	// Handle SIGWINCH for terminal resize
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGWINCH)
-	defer signal.Stop(sigCh)
-
-	// Read keys in a goroutine so we can also handle resize signals.
-	// The quit channel prevents goroutine leaks when PickOne/PickMany
-	// is called multiple times in a single process (e.g. gw go → back → pick dir).
-	keyCh := make(chan KeyMsg, 1)
-	quit := make(chan struct{})
-	defer close(quit)
-	go func() {
-		for {
-			k := readKey(os.Stdin)
-			select {
-			case keyCh <- k:
-			case <-quit:
-				return
-			}
-		}
-	}()
-
-	// Initial render
 	renderView(w, m.View())
 
 	for {
-		select {
-		case <-sigCh:
-			width, height, err := term.GetSize(int(w.Fd()))
-			if err == nil && height > 0 {
-				m, _ = m.Update(WindowSizeMsg{Width: width, Height: height})
-				renderView(w, m.View())
-			}
-		case k := <-keyCh:
-			if k.Type == KeyUnknown {
-				continue
-			}
-			var quit bool
-			m, quit = m.Update(k)
-			renderView(w, m.View())
-			if quit {
-				return m, nil
-			}
+		k := readKey(os.Stdin)
+		if k.Type == KeyUnknown {
+			continue
+		}
+
+		// Recheck terminal size on each keypress (catches resize between presses)
+		if width, height, err := term.GetSize(int(w.Fd())); err == nil && height > 0 {
+			m, _ = m.Update(WindowSizeMsg{Width: width, Height: height})
+		}
+
+		var quit bool
+		m, quit = m.Update(k)
+		renderView(w, m.View())
+		if quit {
+			return m, nil
 		}
 	}
 }

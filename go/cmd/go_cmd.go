@@ -66,6 +66,12 @@ var goCmd = &cobra.Command{
 			name = pickWorkspaceForGo()
 		}
 
+		// pickWorkspaceForGo returns a directory path for "← back to repos"
+		if filepath.IsAbs(name) {
+			fmt.Print(name)
+			return
+		}
+
 		ws, err := state.GetWorkspace(name)
 		if err != nil {
 			exitError(err.Error())
