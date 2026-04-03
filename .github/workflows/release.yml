@@ -4,84 +4,31 @@ on:
   push:
     tags:
       - "v*"
-      - "!v*-go"
 
 permissions:
   contents: write
-  id-token: write
 
 jobs:
   release:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
-      - name: Extract version from tag
-        id: version
-        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
-
-      - name: Verify version matches pyproject.toml
-        run: |
-          project_version=$(python3 -c "
-          import re
-          with open('pyproject.toml') as f:
-              match = re.search(r'version\s*=\s*\"(.+?)\"', f.read())
-              print(match.group(1))
-          ")
-          if [ "$project_version" != "${{ steps.version.outputs.version }}" ]; then
-            echo "::error::Tag version (${{ steps.version.outputs.version }}) does not match pyproject.toml version ($project_version)"
-            exit 1
-          fi
-
-      - name: Create GitHub Release
-        run: |
-          if [ -f release_notes.md ]; then
-            gh release create "$GITHUB_REF_NAME" \
-              --title "Grove ${{ steps.version.outputs.version }}" \
-              --notes-file release_notes.md
-          else
-            gh release create "$GITHUB_REF_NAME" \
-              --title "Grove ${{ steps.version.outputs.version }}" \
-              --generate-notes
-          fi
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          fetch-depth: 0
 
-      - name: Build and publish to PyPI
-        run: |
-          pip install build
-          python -m build
-      - name: Publish to PyPI
-        uses: pypa/gh-action-pypi-publish@release/v1
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
 
-      - name: Update Homebrew tap
+      - name: Run tests
+        run: go test ./...
+
+      - name: Run GoReleaser
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          version: "~> v2"
+          args: release --clean
         env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAP_GITHUB_TOKEN: ${{ secrets.TAP_GITHUB_TOKEN }}
-        run: |
-          # Install grove to resolve all dependencies
-          pip install .
-
-          # Compute SHA256 of the release tarball
-          tarball_url="https://github.com/${{ github.repository }}/archive/refs/tags/${GITHUB_REF_NAME}.tar.gz"
-          sha256=$(curl -sL "$tarball_url" | sha256sum | awk '{print $1}')
-
-          # Generate the full formula from installed packages
-          python3 scripts/generate_formula.py "$tarball_url" "$sha256" > /tmp/grove.rb
-
-          # Clone the tap repo and update
-          git clone "https://x-access-token:${TAP_GITHUB_TOKEN}@github.com/nicksenap/homebrew-grove.git" tap
-          cd tap
-          cp /tmp/grove.rb Formula/grove.rb
-
-          # Commit and push
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add Formula/grove.rb
-          git diff --cached --quiet && exit 0
-          git commit -m "grove ${{ steps.version.outputs.version }}"
-          git push

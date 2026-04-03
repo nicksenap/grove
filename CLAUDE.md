@@ -8,26 +8,19 @@ Git Worktree Workspace Orchestrator — CLI tool invoked as `gw`. Manages multi-
 
 ## Development
 
-- Python 3.12+, managed with `uv`
-- Run `just check` for lint + format + tests
-- Run `just dev` for editable install
-- Run `just install` to install globally via uv tool
-- Run a single test: `uv run pytest tests/test_workspace.py::test_name -v`
-- Auto-fix lint: `just fix` / auto-format: `just fmt`
-- Linter: ruff (line-length 100, rules: E, F, I, N, UP, B, SIM)
+- Go 1.25+
+- Run `just check` for tests + vet
+- Run `just build` to build the `gw` binary
+- Run a single test: `go test ./internal/workspace -run TestName -v`
+- Run e2e tests: `just e2e`
 
 ## Release Process
 
-1. Bump version in `pyproject.toml`
-2. Run `uv lock` to update the lockfile
-3. Optionally write release notes in `release_notes.md` (root of repo)
-4. Commit everything
-5. Tag + push: `just release X.Y.Z`
-   - Validates version in pyproject.toml matches
+1. Commit everything
+2. Tag + push: `just release X.Y.Z`
    - Creates annotated tag `vX.Y.Z`
    - Pushes tag to origin (triggers release workflow)
-   - Workflow uses `release_notes.md` if present, otherwise auto-generates
-   - Workflow auto-generates Homebrew formula with all Python resources
+   - GoReleaser builds binaries and updates Homebrew tap automatically
 
 ## Per-repo config
 
@@ -37,26 +30,23 @@ Repos managed by Grove can have a `.grove.toml` at their root:
 
 ## Architecture
 
-All source lives in `src/grove/`. Entry point: `gw` → `grove.cli:app` (Typer).
+Entry point: `main.go` → `cmd.Execute()` (Cobra).
 
-### Data flow
+### Package layout
 
-`cli.py` → `workspace.py` → `git.py` (subprocess) + `state.py` (JSON persistence) + `config.py` (TOML)
-
-- **cli.py** — Typer commands and interactive pickers (simple-term-menu). Orchestrates user interaction.
-- **workspace.py** — Core worktree orchestration (create, delete, status). Uses `_parallel()` for concurrent multi-repo operations via ThreadPoolExecutor.
-- **git.py** — Thin wrappers around `git` subprocess calls. Raises `GitError` on failure. Includes `read_grove_config()` (LRU-cached — tests must clear it).
-- **state.py** — Workspace state persisted to `~/.grove/state.json`. Uses atomic writes.
-- **config.py** — Global config from `~/.grove/config.toml`. Defines `GROVE_DIR`, `CONFIG_PATH`, `DEFAULT_WORKSPACE_DIR` constants (patched in tests).
-- **models.py** — Pure dataclasses: `Config`, `Workspace`, `RepoWorktree` with `to_dict`/`from_dict` serialization.
-- **discover.py** — Finds git repos in configured directories. Caches remote URLs on disk (`~/.grove/cache/remotes.json`, 24h TTL).
-- **tui.py** — Textual TUI for running workspace processes with sidebar + log pane.
-- **claude.py** — Syncs Claude Code memory directories between source repos and worktrees.
-- **console.py** — Rich output helpers (`success`, `error`, `info`, `warning`, `make_table`).
-- **update.py** — Non-blocking version check (cached, background refresh).
-
-### Testing patterns
-
-- Tests use `tmp_grove` fixture (from `conftest.py`) which patches `GROVE_DIR`, `CONFIG_PATH`, `DEFAULT_WORKSPACE_DIR`, and `STATE_PATH` to temp directories.
-- `fake_repos` fixture creates mock repo directories with `.git` dirs (not real git repos).
-- The `read_grove_config` LRU cache is auto-cleared between tests via autouse fixture.
+- **cmd/** — Cobra commands and interactive pickers. Orchestrates user interaction.
+- **internal/workspace/** — Core worktree orchestration (create, delete, status, sync). Uses goroutines for concurrent multi-repo operations.
+- **internal/gitops/** — Thin wrappers around `git` subprocess calls. Includes `ReadGroveConfig()`.
+- **internal/state/** — Workspace state persisted to `~/.grove/state.json`. Uses atomic writes.
+- **internal/config/** — Global config from `~/.grove/config.toml`. Defines `GroveDir`, `ConfigPath`, `DefaultWorkspaceDir` constants.
+- **internal/models/** — Data structs with JSON serialization.
+- **internal/discover/** — Finds git repos in configured directories. Caches remote URLs on disk.
+- **internal/claude/** — Syncs Claude Code memory directories between source repos and worktrees.
+- **internal/console/** — Colored output helpers.
+- **internal/update/** — Non-blocking version check.
+- **internal/hook/** — Claude Code hook handler.
+- **internal/plugin/** — Plugin install/upgrade/remove from GitHub releases.
+- **internal/mcp/** — MCP JSON-RPC server for Claude Code.
+- **internal/picker/** — Interactive terminal menus.
+- **internal/stats/** — Workspace usage stats and heatmap.
+- **internal/logging/** — Structured logging.

@@ -1,4 +1,8 @@
 #!/usr/bin/env bash
 set -e
-uv run ruff format --check src/ tests/
-uv run ruff check src/ tests/
+
+# Clear git env vars so tests can create their own repos
+unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE
+
+go vet ./...
+go test ./...

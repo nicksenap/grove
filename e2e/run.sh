@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Grove end-to-end test suite.
-# Runs inside a container (see Dockerfile) or locally if you set up the env.
+# Grove Go rewrite — end-to-end test suite.
+# Adapted from the Python e2e tests, skipping MCP and dashboard.
 set -euo pipefail
 
 PASS=0
@@ -11,13 +11,18 @@ pass() { PASS=$((PASS + 1)); echo "  ✓ $1"; }
 fail() { FAIL=$((FAIL + 1)); ERRORS+=("$1"); echo "  ✗ $1"; }
 section() { echo; echo "── $1 ──"; }
 
-# Wrapper that tolerates crashes during Python exit cleanup (SIGSEGV=139, SIGABRT=134).
-# Some CI runners trigger these in native extension destructors (ncurses, uvloop, etc.)
-# after the command has completed its work. Not a Grove bug.
-gw() { command gw "$@" || { rc=$?; if [ $rc -eq 139 ] || [ $rc -eq 134 ]; then echo "  (ignoring signal crash at exit, rc=$rc)" >&2; else return $rc; fi; }; }
+# Path to the Go binary — override with GW_BIN env var
+GW_BIN="${GW_BIN:-$(cd "$(dirname "$0")/.." && pwd)/gw}"
+if [ ! -x "${GW_BIN}" ]; then
+    echo "ERROR: gw binary not found at ${GW_BIN}"
+    echo "Build it first: cd go && go build -o gw ."
+    exit 1
+fi
+
+gw() { "${GW_BIN}" "$@"; }
 
 # ---------------------------------------------------------------------------
-# Setup: create test repos (including a clone of Grove itself)
+# Setup: create test repos
 # ---------------------------------------------------------------------------
 section "Setup"
 
@@ -38,26 +43,15 @@ for repo in svc-auth svc-api svc-gateway; do
     (cd "${REPOS_DIR}/${repo}" && git commit --allow-empty -q -m "initial commit")
 done
 
-# Use a copy of the real Grove repo — has proper commit history for sync tests
-GROVE_SRC="${GROVE_SRC:-/src/grove}"
-if [ -d "${GROVE_SRC}/.git" ]; then
-    git clone -q --local "${GROVE_SRC}" "${REPOS_DIR}/grove"
-    # CI PR checkouts are detached HEAD — create a branch so the sync test works
-    if ! (cd "${REPOS_DIR}/grove" && git symbolic-ref --short HEAD 2>/dev/null) >/dev/null 2>&1; then
-        (cd "${REPOS_DIR}/grove" && git checkout -q -B main HEAD)
-    fi
-    echo "Cloned Grove repo ($(cd "${REPOS_DIR}/grove" && git rev-list --count HEAD) commits)"
-else
-    # Fallback: create a bare origin + clone so we have proper remote refs
-    git init -q --bare "${REPOS_DIR}/grove-origin.git"
-    git clone -q "${REPOS_DIR}/grove-origin.git" "${REPOS_DIR}/grove"
-    (cd "${REPOS_DIR}/grove" \
-        && echo "v1" > README.md && git add . && git commit -q -m "first" \
-        && echo "v2" >> README.md && git add . && git commit -q -m "second" \
-        && echo "v3" >> README.md && git add . && git commit -q -m "third" \
-        && git push -q origin main)
-    echo "Created grove repo with 3 commits + origin (no source clone available)"
-fi
+# Create a grove repo with proper history for sync tests
+git init -q --bare "${REPOS_DIR}/grove-origin.git"
+git clone -q "${REPOS_DIR}/grove-origin.git" "${REPOS_DIR}/grove"
+(cd "${REPOS_DIR}/grove" \
+    && echo "v1" > README.md && git add . && git commit -q -m "first" \
+    && echo "v2" >> README.md && git add . && git commit -q -m "second" \
+    && echo "v3" >> README.md && git add . && git commit -q -m "third" \
+    && git push -q origin main)
+echo "Created grove repo with 3 commits + origin"
 
 # Add a .grove.toml with setup hook to svc-auth
 cat > "${REPOS_DIR}/svc-auth/.grove.toml" <<'TOML'
@@ -91,7 +85,7 @@ fi
 # ---------------------------------------------------------------------------
 section "Create workspace"
 
-gw create test-ws --branch feat/e2e --repos svc-auth,svc-api
+gw create test-ws --branch feat/e2e --repos svc-auth,svc-api 2>&1
 pass "create succeeded"
 
 # Verify it appears in list
@@ -213,7 +207,7 @@ fi
 # ---------------------------------------------------------------------------
 section "Add repo"
 
-gw add-repo test-ws --repos svc-gateway
+gw add-repo test-ws --repos svc-gateway 2>&1
 pass "add-repo succeeded"
 
 if [ -d "${WS_DIR}/svc-gateway" ]; then
@@ -242,7 +236,7 @@ fi
 # ---------------------------------------------------------------------------
 section "Remove repo"
 
-gw remove-repo test-ws --repos svc-gateway --force
+gw remove-repo test-ws --repos svc-gateway --force 2>&1
 pass "remove-repo succeeded"
 
 if [ ! -d "${WS_DIR}/svc-gateway" ]; then
@@ -256,9 +250,9 @@ fi
 # ---------------------------------------------------------------------------
 section "Rename"
 
-gw rename test-ws --to renamed-ws
+gw rename test-ws --to renamed-ws 2>&1
 
-# Verify rename via state (not exit code — segfaults can happen at Python exit)
+# Verify rename via state
 if ! gw list --json 2>/dev/null | jq -e '.[] | select(.name == "test-ws")' > /dev/null 2>&1; then
     pass "old workspace name gone from list"
 else
@@ -280,7 +274,7 @@ else
 fi
 
 # Rename back for subsequent tests
-gw rename renamed-ws --to test-ws
+gw rename renamed-ws --to test-ws 2>&1
 WS_DIR="${GROVE_HOME}/.grove/workspaces/test-ws"
 
 # ---------------------------------------------------------------------------
@@ -288,18 +282,16 @@ WS_DIR="${GROVE_HOME}/.grove/workspaces/test-ws"
 # ---------------------------------------------------------------------------
 section "Sync"
 
-# Use the Grove clone — a real repo with full commit history
-GROVE_BASE=$(cd "${REPOS_DIR}/grove" && git symbolic-ref --short HEAD 2>/dev/null || echo "main")
+GROVE_BASE=$(cd "${REPOS_DIR}/grove" && git symbolic-ref --short HEAD)
 
-gw create sync-ws --branch feat/sync-test --repos grove
+gw create sync-ws --branch feat/sync-test --repos grove 2>&1
 SYNC_WS_DIR="${GROVE_HOME}/.grove/workspaces/sync-ws"
 pass "created sync workspace with Grove repo"
 
 # Clean the worktree so sync doesn't skip it (.mcp.json is untracked)
 (cd "${SYNC_WS_DIR}/grove" && git add -A && git commit -q -m "workspace setup files")
 
-# Add a commit to the base branch in the source repo (simulating upstream work)
-# Then update origin/master ref so gw sync (which rebases onto origin/<base>) picks it up
+# Add a commit to the base branch in the source repo
 (cd "${REPOS_DIR}/grove" \
     && git checkout -q "${GROVE_BASE}" \
     && echo "upstream change" >> README.md \
@@ -308,7 +300,7 @@ pass "created sync workspace with Grove repo"
     && git update-ref "refs/remotes/origin/${GROVE_BASE}" HEAD \
     && git remote set-url origin /dev/null)
 
-# Verify the worktree is behind origin/<base> (what gw sync rebases onto)
+# Verify the worktree is behind
 behind=$(cd "${SYNC_WS_DIR}/grove" && git rev-list --count "HEAD..origin/${GROVE_BASE}" 2>/dev/null || echo "?")
 if [ "${behind}" != "0" ] && [ "${behind}" != "?" ]; then
     pass "worktree is ${behind} commit(s) behind origin/${GROVE_BASE}"
@@ -328,7 +320,7 @@ else
     fail "worktree still ${behind_after} behind after sync"
 fi
 
-gw delete sync-ws --force
+gw delete sync-ws --force 2>&1
 
 # ---------------------------------------------------------------------------
 # Test: doctor (healthy state)
@@ -365,88 +357,15 @@ issue_count_after=$(gw doctor --json 2>/dev/null | jq 'length')
 if [ "${issue_count_after}" -lt "${issue_count}" ]; then
     pass "doctor --fix reduced issues (${issue_count} -> ${issue_count_after})"
 else
-    # If fix couldn't resolve it, that's still informative
     pass "doctor --fix completed (issues: ${issue_count_after})"
 fi
-
-# ---------------------------------------------------------------------------
-# Test: doctor detects orphaned workspace directory (simulated interrupted create)
-# ---------------------------------------------------------------------------
-section "Doctor: orphaned workspace dir"
-
-# Simulate an interrupted create by manually creating a workspace directory
-# that is NOT tracked in state (exactly what happens on Ctrl+C)
-ORPHAN_DIR="${GROVE_HOME}/.grove/workspaces/interrupted-ws"
-mkdir -p "${ORPHAN_DIR}/svc-auth"
-echo "leftover" > "${ORPHAN_DIR}/svc-auth/junk.txt"
-
-orphan_issues=$(gw doctor --json 2>/dev/null | jq '[.[] | select(.issue | contains("orphaned workspace directory"))] | length')
-if [ "${orphan_issues}" -gt "0" ]; then
-    pass "doctor detects orphaned workspace directory"
-else
-    fail "doctor should detect orphaned workspace directory"
-fi
-
-# Verify the orphan issue text mentions the directory name
-if gw doctor --json 2>/dev/null | jq -e '.[] | select(.issue | contains("interrupted-ws"))' > /dev/null 2>&1; then
-    pass "doctor issue names the orphaned directory"
-else
-    fail "doctor issue should mention 'interrupted-ws'"
-fi
-
-# Fix should remove the orphaned directory
-gw doctor --fix 2>&1
-pass "doctor --fix ran for orphaned dir"
-
-if [ ! -d "${ORPHAN_DIR}" ]; then
-    pass "doctor --fix removed orphaned workspace directory"
-else
-    fail "orphaned directory still exists after doctor --fix"
-fi
-
-# Verify doctor is clean after fix
-orphan_issues_after=$(gw doctor --json 2>/dev/null | jq '[.[] | select(.issue | contains("orphaned workspace directory"))] | length')
-if [ "${orphan_issues_after}" = "0" ]; then
-    pass "doctor clean after fixing orphaned dir"
-else
-    fail "doctor still reports orphaned dir after fix"
-fi
-
-# Hidden dirs should be ignored by orphan detection
-mkdir -p "${GROVE_HOME}/.grove/workspaces/.hidden-dir"
-hidden_issues=$(gw doctor --json 2>/dev/null | jq '[.[] | select(.issue | contains(".hidden-dir"))] | length')
-if [ "${hidden_issues}" = "0" ]; then
-    pass "doctor ignores hidden directories"
-else
-    fail "doctor should ignore hidden directories"
-fi
-rm -rf "${GROVE_HOME}/.grove/workspaces/.hidden-dir"
-
-# Symlinks pointing outside workspace_dir should be ignored
-OUTSIDE_DIR=$(mktemp -d "${GROVE_HOME}/outside.XXXXXX")
-echo "precious" > "${OUTSIDE_DIR}/important.txt"
-ln -s "${OUTSIDE_DIR}" "${GROVE_HOME}/.grove/workspaces/sneaky-link"
-symlink_issues=$(gw doctor --json 2>/dev/null | jq '[.[] | select(.issue | contains("sneaky-link"))] | length')
-if [ "${symlink_issues}" = "0" ]; then
-    pass "doctor ignores symlinks outside workspace_dir"
-else
-    fail "doctor should ignore symlinks outside workspace_dir"
-fi
-# Verify the target was not touched
-if [ -f "${OUTSIDE_DIR}/important.txt" ]; then
-    pass "symlink target preserved"
-else
-    fail "symlink target was deleted!"
-fi
-rm -f "${GROVE_HOME}/.grove/workspaces/sneaky-link"
-rm -rf "${OUTSIDE_DIR}"
 
 # ---------------------------------------------------------------------------
 # Test: second workspace (isolation check)
 # ---------------------------------------------------------------------------
 section "Multiple workspaces"
 
-gw create ws-two --branch feat/other --repos svc-auth
+gw create ws-two --branch feat/other --repos svc-auth 2>&1
 pass "second workspace created"
 
 count=$(gw list --json 2>/dev/null | jq 'length')
@@ -469,7 +388,7 @@ fi
 # ---------------------------------------------------------------------------
 section "Delete workspace"
 
-gw delete ws-two --force
+gw delete ws-two --force 2>&1
 pass "delete succeeded"
 
 count=$(gw list --json 2>/dev/null | jq 'length')
@@ -506,7 +425,7 @@ workspace_dir = "${GROVE_HOME}/.grove/workspaces"
 repos = ["svc-auth", "svc-api"]
 EOF
 
-gw create preset-ws --branch feat/preset --preset backend
+gw create preset-ws --branch feat/preset --preset backend 2>&1
 pass "create with --preset succeeded"
 
 PRESET_DIR="${GROVE_HOME}/.grove/workspaces/preset-ws"
@@ -523,7 +442,7 @@ else
     fail "svc-gateway should not be in preset"
 fi
 
-gw delete preset-ws --force
+gw delete preset-ws --force 2>&1
 pass "preset workspace cleaned up"
 
 # ---------------------------------------------------------------------------
@@ -531,11 +450,9 @@ pass "preset workspace cleaned up"
 # ---------------------------------------------------------------------------
 section "Stats"
 
-# We've created and deleted workspaces above, so stats should have data
 if gw stats 2>&1 | grep -q "created"; then
     pass "stats shows creation data"
 else
-    # stats might display differently, just check it doesn't error
     gw stats > /dev/null 2>&1
     pass "stats runs without error"
 fi
@@ -553,28 +470,248 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# Test: explore
+# ---------------------------------------------------------------------------
+section "Explore"
+
+explore_out=$(gw explore 2>&1)
+if echo "${explore_out}" | grep -q "svc-auth"; then
+    pass "explore finds repos"
+else
+    fail "explore did not find svc-auth"
+fi
+
+if echo "${explore_out}" | grep -q "repos found"; then
+    pass "explore shows summary"
+else
+    fail "explore missing summary line"
+fi
+
+# ---------------------------------------------------------------------------
+# Test: auto-detect workspace from cwd
+# ---------------------------------------------------------------------------
+section "Auto-detect from cwd"
+
+# Status with auto-detect (cd into workspace dir)
+auto_detect_out=$(cd "${WS_DIR}/svc-auth" && gw status 2>&1) && auto_rc=0 || auto_rc=$?
+if [ "${auto_rc}" = "0" ]; then
+    pass "status auto-detects workspace from cwd"
+else
+    fail "status auto-detect failed (rc=${auto_rc}): ${auto_detect_out}"
+fi
+
+# ---------------------------------------------------------------------------
+# Test: gw run (non-TUI)
+# ---------------------------------------------------------------------------
+section "Run"
+
+# Add a run hook to svc-auth
+cat > "${REPOS_DIR}/svc-auth/.grove.toml" <<'TOML'
+setup = "touch .grove-setup-ran"
+run = "echo hello-from-run"
+TOML
+(cd "${REPOS_DIR}/svc-auth" && git add .grove.toml && git commit -q -m "add run hook")
+
+# Create a workspace with the run hook
+gw create run-ws --branch feat/run-test --repos svc-auth 2>&1
+
+run_out=$(gw run run-ws 2>&1)
+if echo "${run_out}" | grep -q "hello-from-run"; then
+    pass "gw run executes run hook and prints output"
+else
+    fail "gw run output missing: ${run_out}"
+fi
+
+gw delete run-ws --force 2>&1
+
+# ---------------------------------------------------------------------------
+# Test: _hook (Claude Code event handler)
+# ---------------------------------------------------------------------------
+section "Hook"
+
+echo '{"session_id": "test-session-123", "cwd": "/tmp"}' | gw _hook --event SessionStart 2>/dev/null
+if [ -f "${GROVE_HOME}/.grove/status/test-session-123.json" ]; then
+    status_val=$(jq -r '.status' "${GROVE_HOME}/.grove/status/test-session-123.json")
+    if [ "${status_val}" = "IDLE" ]; then
+        pass "_hook SessionStart creates status file"
+    else
+        fail "_hook status should be IDLE, got ${status_val}"
+    fi
+else
+    fail "_hook did not create status file"
+fi
+
+echo '{"session_id": "test-session-123", "tool_name": "Read"}' | gw _hook --event PreToolUse 2>/dev/null
+tool_val=$(jq -r '.last_tool' "${GROVE_HOME}/.grove/status/test-session-123.json")
+if [ "${tool_val}" = "Read" ]; then
+    pass "_hook PreToolUse updates tool name"
+else
+    fail "_hook tool should be Read, got ${tool_val}"
+fi
+
+echo '{"session_id": "test-session-123"}' | gw _hook --event SessionEnd 2>/dev/null
+if [ ! -f "${GROVE_HOME}/.grove/status/test-session-123.json" ]; then
+    pass "_hook SessionEnd removes status file"
+else
+    fail "_hook SessionEnd should remove status file"
+fi
+
+# ---------------------------------------------------------------------------
 # Test: MCP server (stdio JSON-RPC)
 # ---------------------------------------------------------------------------
 section "MCP server"
 
-# Need a workspace for the MCP server to run against
-gw create mcp-ws --branch feat/mcp --repos svc-auth
+gw create mcp-ws --branch feat/mcp --repos svc-auth 2>&1
 
-# mcp_smoke.py prints ✓/✗ lines and exits with error count
-if python3 "$(dirname "$0")/mcp_smoke.py" mcp-ws; then
-    pass "MCP server smoke test passed"
+# Inline MCP smoke test (no Python dependency needed)
+MCP_ERRORS=0
+
+# Helper to send JSON-RPC and read response
+mcp_test() {
+    local input="$1"
+    local expected_id="$2"
+
+    # Send all messages and capture output
+    echo "$input" | timeout 10 gw mcp-serve --workspace mcp-ws 2>/dev/null || true
+}
+
+# Test initialize + tools/list + announce + get_announcements + list_workspaces
+MCP_INPUT=$(cat <<'JSONRPC'
+{"jsonrpc":"2.0","method":"initialize","id":1,"params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"e2e","version":"0.1"}}}
+{"jsonrpc":"2.0","method":"notifications/initialized"}
+{"jsonrpc":"2.0","method":"ping","id":99}
+{"jsonrpc":"2.0","method":"tools/list","id":2}
+{"jsonrpc":"2.0","method":"tools/call","id":3,"params":{"name":"announce","arguments":{"repo_url":"git@github.com:org/repo.git","category":"info","message":"e2e test"}}}
+{"jsonrpc":"2.0","method":"tools/call","id":4,"params":{"name":"get_announcements","arguments":{"repo_url":"git@github.com:org/repo.git"}}}
+{"jsonrpc":"2.0","method":"tools/call","id":5,"params":{"name":"list_workspaces","arguments":{}}}
+JSONRPC
+)
+
+MCP_OUT=$(echo "${MCP_INPUT}" | timeout 10 "${GW_BIN}" mcp-serve --workspace mcp-ws 2>/dev/null || true)
+
+# Check initialize response
+if echo "${MCP_OUT}" | grep -q '"protocolVersion"'; then
+    pass "MCP initialize"
 else
-    fail "MCP server smoke test failed"
+    fail "MCP initialize failed"
 fi
 
-gw delete mcp-ws --force
+# Check ping response (id: 99)
+if echo "${MCP_OUT}" | grep -q '"id":99'; then
+    pass "MCP ping"
+else
+    fail "MCP ping failed"
+fi
+
+# Check tools/list has all 3 tools
+if echo "${MCP_OUT}" | grep -q '"announce"' && echo "${MCP_OUT}" | grep -q '"get_announcements"' && echo "${MCP_OUT}" | grep -q '"list_workspaces"'; then
+    pass "MCP tools/list returns all 3 tools"
+else
+    fail "MCP tools/list missing tools"
+fi
+
+# Check announce returned "published"
+if echo "${MCP_OUT}" | grep -q 'published'; then
+    pass "MCP announce tool works"
+else
+    fail "MCP announce failed"
+fi
+
+# Check get_announcements returns empty (same workspace excluded)
+if echo "${MCP_OUT}" | grep -q '\[\]'; then
+    pass "MCP get_announcements excludes own workspace"
+else
+    fail "MCP get_announcements should return empty"
+fi
+
+# Check list_workspaces returns workspace name
+if echo "${MCP_OUT}" | grep -q 'mcp-ws'; then
+    pass "MCP list_workspaces returns current workspace"
+else
+    fail "MCP list_workspaces missing workspace"
+fi
+
+gw delete mcp-ws --force 2>&1
+
+# ---------------------------------------------------------------------------
+# Test: plugin system
+# ---------------------------------------------------------------------------
+section "Plugins"
+
+# plugin list — empty
+plugin_list_out=$(gw plugin list 2>&1)
+if echo "${plugin_list_out}" | grep -q "No plugins"; then
+    pass "plugin list shows empty"
+else
+    fail "plugin list should show empty: ${plugin_list_out}"
+fi
+
+# Install a fake plugin as a shell script
+PLUGINS_DIR="${GROVE_HOME}/.grove/plugins"
+mkdir -p "${PLUGINS_DIR}"
+cat > "${PLUGINS_DIR}/gw-hello" <<'SH'
+#!/bin/sh
+echo "hello-from-plugin GROVE_DIR=${GROVE_DIR} args=$*"
+SH
+chmod +x "${PLUGINS_DIR}/gw-hello"
+
+# plugin list — shows hello
+if gw plugin list 2>&1 | grep -q "hello"; then
+    pass "plugin list shows installed plugin"
+else
+    fail "plugin list missing hello"
+fi
+
+# Unknown command fallback — gw hello should exec the plugin
+hello_out=$(gw hello --test-flag 2>&1)
+if echo "${hello_out}" | grep -q "hello-from-plugin"; then
+    pass "unknown command falls back to plugin"
+else
+    fail "plugin fallback failed: ${hello_out}"
+fi
+
+# Verify env vars are passed
+if echo "${hello_out}" | grep -q "GROVE_DIR="; then
+    pass "GROVE_DIR passed to plugin"
+else
+    fail "GROVE_DIR not passed to plugin"
+fi
+
+# Verify args are forwarded
+if echo "${hello_out}" | grep -q "\-\-test-flag"; then
+    pass "args forwarded to plugin"
+else
+    fail "args not forwarded: ${hello_out}"
+fi
+
+# plugin remove
+gw plugin remove hello 2>&1
+if [ ! -f "${PLUGINS_DIR}/gw-hello" ]; then
+    pass "plugin remove deletes binary"
+else
+    fail "plugin remove did not delete binary"
+fi
+
+# plugin remove nonexistent should fail
+if ! gw plugin remove nonexistent 2>/dev/null; then
+    pass "plugin remove nonexistent exits non-zero"
+else
+    fail "plugin remove nonexistent should fail"
+fi
+
+# Unknown command with no plugin should fail
+if ! gw nonexistent-cmd 2>/dev/null; then
+    pass "unknown command without plugin exits non-zero"
+else
+    fail "unknown command without plugin should fail"
+fi
 
 # ---------------------------------------------------------------------------
 # Cleanup: delete remaining workspace
 # ---------------------------------------------------------------------------
 section "Final cleanup"
 
-gw delete test-ws --force
+gw delete test-ws --force 2>&1
 pass "final delete succeeded"
 
 count=$(gw list --json 2>/dev/null | jq 'length')

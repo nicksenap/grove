@@ -16,43 +16,22 @@ Grove gives you the multi-repo worktree workflow that monorepos get for free. On
 
 ## Install
 
-### Homebrew (Go — recommended)
-
-```bash
-brew install nicksenap/grove/grove-go
-```
-
-### Homebrew (Python)
+### Homebrew
 
 ```bash
 brew install nicksenap/grove/grove
 ```
 
-### From source (Go)
+### From source
 
 ```bash
-cd go && go build -o gw . && mv gw /usr/local/bin/
-```
-
-### From source (Python)
-
-```bash
-uv tool install .
-```
-
-### Migrating from Python to Go
-
-If you have the Python version installed via Homebrew, uninstall it first — both versions install a `gw` binary:
-
-```bash
-brew uninstall grove
-brew install nicksenap/grove/grove-go
+go build -o gw . && mv gw /usr/local/bin/
 ```
 
 ### Upgrading
 
 ```bash
-brew upgrade nicksenap/grove/grove-go
+brew upgrade nicksenap/grove/grove
 ```
 
 Then add shell integration to your `.zshrc` (or `.bashrc`):
@@ -62,6 +41,19 @@ eval "$(gw shell-init)"
 ```
 
 This enables `gw go` to change your working directory and auto-cds into new workspaces after `gw create`.
+
+### Migrating from Python
+
+If you previously had the Python version installed:
+
+```bash
+brew uninstall grove        # remove old Python formula
+brew install nicksenap/grove/grove  # install Go version
+```
+
+The Go version reads the same `~/.grove/` config and state files — your existing workspaces will work as before.
+
+> **Note:** The Python implementation has been archived at [grove-python](https://github.com/nicksenap/grove-python) and is no longer maintained.
 
 ## Usage
 
@@ -110,54 +102,6 @@ All interactive menus support **type-to-search** filtering, arrow-key navigation
 - [Agent dashboard](docs/dashboard.md) — `gw dash`, Zellij integration
 - [AI coding tools](docs/ai-tools.md) — Claude Code workflows, MCP server
 
-## Go rewrite
-
-Grove is being rewritten in Go. The Python version works but has real distribution pain — Python version conflicts, `pipx`/`uv` packaging quirks, and slow startup (~300ms import overhead). The Go binary is a single static executable with instant startup and zero dependencies.
-
-### Status
-
-The Go version covers the core workflow. What's missing are the TUI features.
-
-| Command | Go | Notes |
-|---|---|---|
-| `init`, `add-dir`, `remove-dir` | Done | |
-| `explore` | Done | Deep scan with remote URL caching |
-| `create` | Done | Parallel fetch, rollback, hooks |
-| `delete` | Done | Parallel teardown, hooks |
-| `list`, `ws show`, `status` | Done | Including `-s` summary and PR status |
-| `sync` | Done | Parallel rebase, conflict handling |
-| `go` | Done | Including `--close-tab` for Zellij |
-| `add-repo`, `remove-repo` | Done | |
-| `rename`, `doctor`, `stats` | Done | |
-| `preset` | Done | |
-| `shell-init` | Done | |
-| `mcp-serve` | Done | JSON-RPC server for Claude Code |
-| `hook` | Done | Claude Code hook handler |
-| `plugin` | Done | Install, list, upgrade, remove |
-| `run` | Partial | Inline prefix output, no split-pane TUI |
-| `dash` | Plugin | [`gw-dash`](https://github.com/nicksenap/gw-dash) — install with `gw plugin install nicksenap/gw-dash` |
-
-299 tests passing (229 unit + 70 e2e).
-
-### Performance
-
-The Go binary is significantly faster for everyday commands. Python spends ~100ms on import overhead (Typer, Rich, etc.) before any code runs; Go starts in under 15ms. For heavier commands that shell out to `git`, the gap narrows since git is the bottleneck.
-
-Benchmarked on Apple M1 Pro, 10 iterations each (`bench/run.sh`):
-
-| Command | Python | Go | Speedup |
-|---|---|---|---|
-| `--version` | 119 ms | 12 ms | **10x** |
-| `list` | 116 ms | 12 ms | **10x** |
-| `ws show --json` | 123 ms | 12 ms | **10x** |
-| `doctor --json` | 162 ms | 11 ms | **15x** |
-| `preset list` | 113 ms | 11 ms | **10x** |
-| `status` | 207 ms | 71 ms | **3x** |
-| `create + delete` | 427 ms | 153 ms | **3x** |
-
-Fast commands (list, show, doctor) are ~10x faster. Commands that call git subprocesses (status, create) are ~3x faster — git dominates the wall time.
-
 ## Requirements
 
-- **Go version:** No dependencies — single static binary
-- **Python version:** Python 3.12+ (installed automatically by Homebrew)
+No dependencies — single static binary. Requires `git` on PATH.

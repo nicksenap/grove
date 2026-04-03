@@ -1,18 +1,6 @@
-# Python-generated files
-__pycache__/
-*.py[oc]
-build/
+# Go binary
+gw
+gw_test
+
+# Build output
 dist/
-wheels/
-*.egg-info
-
-# Virtual environments
-.venv
-
-# Tool caches
-.pytest_cache/
-.ruff_cache/
-
-# Go binaries
-go/gw
-go/gw_test

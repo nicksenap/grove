@@ -1,6 +1,6 @@
 version: 2
 
-project_name: grove-go
+project_name: grove
 
 builds:
   - id: gw
@@ -35,14 +35,14 @@ changelog:
       - "^ci:"
 
 brews:
-  - name: grove-go
+  - name: grove
     repository:
       owner: nicksenap
       name: homebrew-grove
       token: "{{ .Env.TAP_GITHUB_TOKEN }}"
     directory: Formula
     homepage: https://github.com/nicksenap/grove
-    description: "Git Worktree Workspace Orchestrator (Go)"
+    description: "Git Worktree Workspace Orchestrator"
     license: MIT
     install: |
       bin.install "gw"
