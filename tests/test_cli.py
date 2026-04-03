@@ -303,8 +303,15 @@ class TestCreate:
 
 
 class TestList:
+    """Tests for ``gw list`` (top-level alias) and ``gw ws list``."""
+
     def test_empty(self, tmp_grove):
         result = runner.invoke(app, ["list"])
+        assert result.exit_code == 0
+        assert "No workspaces" in result.output
+
+    def test_ws_list_empty(self, tmp_grove):
+        result = runner.invoke(app, ["ws", "list"])
         assert result.exit_code == 0
         assert "No workspaces" in result.output
 
@@ -313,6 +320,14 @@ class TestList:
 
         state.add_workspace(sample_workspace)
         result = runner.invoke(app, ["list"])
+        assert result.exit_code == 0
+        assert "test-ws" in result.output
+
+    def test_ws_list_with_workspaces(self, tmp_grove, sample_workspace):
+        from grove import state
+
+        state.add_workspace(sample_workspace)
+        result = runner.invoke(app, ["ws", "list"])
         assert result.exit_code == 0
         assert "test-ws" in result.output
 
@@ -340,6 +355,25 @@ class TestList:
             result = runner.invoke(app, ["list", "--status"])
         assert result.exit_code == 0
         assert "No workspaces" in result.output
+
+
+class TestWsShow:
+    """Tests for ``gw ws show <name>``."""
+
+    def test_show_workspace(self, tmp_grove, sample_workspace):
+        from grove import state
+
+        state.add_workspace(sample_workspace)
+        result = runner.invoke(app, ["ws", "show", "test-ws"])
+        assert result.exit_code == 0
+        assert "test-ws" in result.output
+        assert "feat/test" in result.output
+        assert "Repo" in result.output
+
+    def test_show_not_found(self, tmp_grove):
+        result = runner.invoke(app, ["ws", "show", "nope"])
+        assert result.exit_code == 1
+        assert "not found" in result.output
 
 
 class TestDelete:
@@ -815,7 +849,26 @@ class TestPreset:
             result = runner.invoke(app, ["preset", "list"])
             assert result.exit_code == 0
             assert "backend" in result.output
+            assert "2" in result.output
+
+    def test_show(self, tmp_grove):
+        with patch("grove.cli.config.require_config") as mock_cfg:
+            cfg = self._make_config(tmp_grove)
+            cfg.presets = {"backend": ["svc-auth", "svc-api"]}
+            mock_cfg.return_value = cfg
+            result = runner.invoke(app, ["preset", "show", "backend"])
+            assert result.exit_code == 0
+            assert "backend" in result.output
             assert "svc-auth" in result.output
+            assert "svc-api" in result.output
+
+    def test_show_not_found(self, tmp_grove):
+        with patch("grove.cli.config.require_config") as mock_cfg:
+            cfg = self._make_config(tmp_grove)
+            mock_cfg.return_value = cfg
+            result = runner.invoke(app, ["preset", "show", "nope"])
+            assert result.exit_code == 1
+            assert "not found" in result.output
 
     def test_remove(self, tmp_grove):
         with (

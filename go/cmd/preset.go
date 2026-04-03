@@ -60,7 +60,29 @@ var presetListCmd = &cobra.Command{
 
 		table := console.NewTable(os.Stdout, []string{"Preset", "Repos"})
 		for name, preset := range cfg.Presets {
-			table.AddRow([]string{name, strings.Join(preset.Repos, ", ")})
+			table.AddRow([]string{name, fmt.Sprintf("%d", len(preset.Repos))})
+		}
+		table.Render()
+	},
+}
+
+var presetShowCmd = &cobra.Command{
+	Use:   "show NAME",
+	Short: "Show details for a preset",
+	Args:  cobra.ExactArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		cfg := config.RequireConfig()
+		preset, ok := cfg.Presets[args[0]]
+		if !ok {
+			exitError(fmt.Sprintf("Preset %s not found", args[0]))
+		}
+
+		fmt.Fprintf(os.Stderr, "Preset:  %s\n", args[0])
+		fmt.Fprintf(os.Stderr, "Repos:   %d\n\n", len(preset.Repos))
+
+		table := console.NewTable(os.Stderr, []string{"Repo"})
+		for _, repo := range preset.Repos {
+			table.AddRow([]string{repo})
 		}
 		table.Render()
 	},
@@ -90,5 +112,5 @@ var presetRemoveCmd = &cobra.Command{
 
 func init() {
 	presetAddCmd.Flags().StringVarP(&presetAddRepos, "repos", "r", "", "Comma-separated repo names")
-	presetCmd.AddCommand(presetAddCmd, presetListCmd, presetRemoveCmd)
+	presetCmd.AddCommand(presetAddCmd, presetListCmd, presetShowCmd, presetRemoveCmd)
 }

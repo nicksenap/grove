@@ -11,7 +11,7 @@ import (
 )
 
 // Version is set by goreleaser via -ldflags at build time.
-var Version = "0.13.3-go"
+var Version = "0.13.4-go"
 
 var verbose bool
 
@@ -38,6 +38,7 @@ func init() {
 		initCmd,
 		createCmd,
 		listCmd,
+		wsCmd,
 		deleteCmd,
 		goCmd,
 		statusCmd,

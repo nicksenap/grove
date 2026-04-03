@@ -15,27 +15,57 @@ import (
 var (
 	listJSON   bool
 	listStatus bool
+	wsShowJSON bool
 )
 
-var listCmd = &cobra.Command{
-	Use:   "list [NAME]",
-	Short: "List workspaces or show details for one",
-	Args:  cobra.MaximumNArgs(1),
+// wsCmd is the "gw ws" subcommand group.
+var wsCmd = &cobra.Command{
+	Use:   "ws",
+	Short: "Manage workspaces",
+}
+
+// wsListCmd is "gw ws list".
+var wsListCmd = &cobra.Command{
+	Use:   "list",
+	Short: "List all workspaces",
+	Args:  cobra.NoArgs,
 	Run: func(cmd *cobra.Command, args []string) {
-		if len(args) > 0 {
-			listOne(args[0])
-			return
-		}
-		listAll()
+		doListAll()
+	},
+}
+
+// wsShowCmd is "gw ws show <name>".
+var wsShowCmd = &cobra.Command{
+	Use:   "show NAME",
+	Short: "Show details for a workspace",
+	Args:  cobra.ExactArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		doShowOne(args[0])
+	},
+	ValidArgsFunction: completeWorkspaceNames,
+}
+
+// listCmd is the top-level alias "gw list" → "gw ws list".
+var listCmd = &cobra.Command{
+	Use:   "list",
+	Short: "List all workspaces (shortcut for gw ws list)",
+	Args:  cobra.NoArgs,
+	Run: func(cmd *cobra.Command, args []string) {
+		doListAll()
 	},
 }
 
 func init() {
+	wsListCmd.Flags().BoolVarP(&listJSON, "json", "j", false, "Output as JSON")
+	wsListCmd.Flags().BoolVarP(&listStatus, "status", "s", false, "Include git status")
+	wsShowCmd.Flags().BoolVarP(&wsShowJSON, "json", "j", false, "Output as JSON")
+	wsCmd.AddCommand(wsListCmd, wsShowCmd)
+
 	listCmd.Flags().BoolVarP(&listJSON, "json", "j", false, "Output as JSON")
 	listCmd.Flags().BoolVarP(&listStatus, "status", "s", false, "Include git status")
 }
 
-func listAll() {
+func doListAll() {
 	if listStatus {
 		listWithStatus()
 		return
@@ -57,19 +87,14 @@ func listAll() {
 		return
 	}
 
-	home, _ := os.UserHomeDir()
-	table := console.NewTable(os.Stdout, []string{"Name", "Branch", "Repos", "Path", "Created"})
+	table := console.NewTable(os.Stdout, []string{"Name", "Branch", "Repos", "Created"})
 	for _, ws := range workspaces {
 		repoCount := fmt.Sprintf("%d", len(ws.Repos))
 		created := ws.CreatedAt
 		if len(created) > 10 {
 			created = created[:10]
 		}
-		path := ws.Path
-		if home != "" {
-			path = strings.Replace(path, home, "~", 1)
-		}
-		table.AddRow([]string{ws.Name, ws.Branch, repoCount, path, created})
+		table.AddRow([]string{ws.Name, ws.Branch, repoCount, created})
 	}
 	table.Render()
 }
@@ -103,7 +128,7 @@ func listWithStatus() {
 	table.Render()
 }
 
-func listOne(name string) {
+func doShowOne(name string) {
 	ws, err := state.GetWorkspace(name)
 	if err != nil {
 		exitError(err.Error())
@@ -112,7 +137,7 @@ func listOne(name string) {
 		exitError("Workspace not found: " + name)
 	}
 
-	if listJSON {
+	if wsShowJSON {
 		data, _ := json.MarshalIndent(ws, "", "  ")
 		fmt.Println(string(data))
 		return
@@ -123,15 +148,32 @@ func listOne(name string) {
 		created = created[:19]
 	}
 
+	home, _ := os.UserHomeDir()
+	wsPath := ws.Path
+	if home != "" {
+		wsPath = strings.Replace(wsPath, home, "~", 1)
+	}
+
 	fmt.Fprintf(os.Stderr, "Name:      %s\n", ws.Name)
 	fmt.Fprintf(os.Stderr, "Branch:    %s\n", ws.Branch)
-	fmt.Fprintf(os.Stderr, "Path:      %s\n", ws.Path)
+	fmt.Fprintf(os.Stderr, "Path:      %s\n", wsPath)
 	fmt.Fprintf(os.Stderr, "Created:   %s\n", created)
 	fmt.Fprintf(os.Stderr, "Repos:     %d\n\n", len(ws.Repos))
 
-	table := console.NewTable(os.Stderr, []string{"Repo", "Branch", "Worktree Path", "Source Repo"})
+	wsPrefix := ws.Path + "/"
+	table := console.NewTable(os.Stderr, []string{"Repo", "Branch", "Worktree", "Source"})
 	for _, r := range ws.Repos {
-		table.AddRow([]string{r.RepoName, r.Branch, r.WorktreePath, r.SourceRepo})
+		wt := r.WorktreePath
+		if after, ok := strings.CutPrefix(wt, wsPrefix); ok {
+			wt = after
+		} else if home != "" {
+			wt = strings.Replace(wt, home, "~", 1)
+		}
+		src := r.SourceRepo
+		if home != "" {
+			src = strings.Replace(src, home, "~", 1)
+		}
+		table.AddRow([]string{r.RepoName, r.Branch, wt, src})
 	}
 	table.Render()
 }

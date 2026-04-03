@@ -136,6 +136,32 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# Test: ws list / ws show subcommands
+# ---------------------------------------------------------------------------
+section "ws list / ws show"
+
+# gw ws list should work same as gw list
+if gw ws list --json 2>/dev/null | jq -e '.[] | select(.name == "test-ws")' > /dev/null; then
+    pass "gw ws list --json shows workspace"
+else
+    fail "gw ws list --json missing workspace"
+fi
+
+# gw ws show should show detail
+if gw ws show test-ws --json 2>/dev/null | jq -e '.name == "test-ws"' > /dev/null; then
+    pass "gw ws show --json returns workspace detail"
+else
+    fail "gw ws show --json failed"
+fi
+
+# gw ws show with invalid name should fail
+if ! gw ws show nonexistent-ws 2>/dev/null; then
+    pass "gw ws show with invalid name exits non-zero"
+else
+    fail "gw ws show with invalid name should have failed"
+fi
+
+# ---------------------------------------------------------------------------
 # Test: duplicate workspace name rejected
 # ---------------------------------------------------------------------------
 section "Error handling"
@@ -198,7 +224,7 @@ else
 fi
 
 # Verify state reflects the new repo count
-repo_count=$(gw list test-ws --json 2>/dev/null | jq '.repos | length')
+repo_count=$(gw ws show test-ws --json 2>/dev/null | jq '.repos | length')
 if [ "${repo_count}" = "3" ]; then
     pass "state reflects 3 repos after add-repo"
 else

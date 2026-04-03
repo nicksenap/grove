@@ -508,42 +508,20 @@ def create(
         Path(cd_file).write_text(str(ws.path))
 
 
-@app.command("list")
-def list_workspaces(
-    name: str | None = typer.Argument(
-        None,
-        help="Workspace name to show details for",
-        autocompletion=complete_workspace_name,
-    ),
-    show_status: bool = typer.Option(False, "--status", "-s", help="Include git status summary"),
-    as_json: bool = typer.Option(False, "--json", "-j", help="Output as JSON"),
+# ---------------------------------------------------------------------------
+# Workspace subcommand group
+# ---------------------------------------------------------------------------
+
+ws_app = typer.Typer(help="Manage workspaces.")
+app.add_typer(ws_app, name="ws")
+
+
+def _ws_list(
+    show_status: bool = False,
+    as_json: bool = False,
 ) -> None:
-    """List all workspaces, or show details for a specific one."""
+    """Compact workspace listing (shared by ``gw list`` and ``gw ws list``)."""
     import json
-
-    # Detail view for a single workspace
-    if name is not None:
-        ws = state.get_workspace(name)
-        if ws is None:
-            error(f"Workspace [bold]{name}[/] not found")
-            raise typer.Exit(1)
-
-        if as_json:
-            print(json.dumps(ws.to_dict(), indent=2))
-            return
-
-        console.print(f"[bold]Name:[/]      {ws.name}")
-        console.print(f"[bold]Branch:[/]    {ws.branch}")
-        console.print(f"[bold]Path:[/]      {ws.path}")
-        console.print(f"[bold]Created:[/]   {ws.created_at[:19]}")
-        console.print(f"[bold]Repos:[/]     {len(ws.repos)}")
-        console.print()
-
-        table = make_table("Repo", "Branch", "Worktree Path", "Source Repo")
-        for r in ws.repos:
-            table.add_row(r.repo_name, r.branch, str(r.worktree_path), str(r.source_repo))
-        console.print(table)
-        return
 
     if show_status:
         summaries = workspace.all_workspaces_summary()
@@ -569,11 +547,70 @@ def list_workspaces(
         info("No workspaces. Create one with: gw create <name> -r repo1,repo2 -b branch")
         return
 
-    table = make_table("Name", "Branch", "Repos", "Path", "Created")
+    table = make_table("Name", "Branch", "Repos", "Created")
     for ws in workspaces:
-        repo_names = ", ".join(r.repo_name for r in ws.repos)
-        table.add_row(ws.name, ws.branch, repo_names, str(ws.path), ws.created_at[:10])
+        table.add_row(ws.name, ws.branch, str(len(ws.repos)), ws.created_at[:10])
     console.print(table)
+
+
+@ws_app.command("list")
+def ws_list(
+    show_status: bool = typer.Option(False, "--status", "-s", help="Include git status summary"),
+    as_json: bool = typer.Option(False, "--json", "-j", help="Output as JSON"),
+) -> None:
+    """List all workspaces."""
+    _ws_list(show_status=show_status, as_json=as_json)
+
+
+@ws_app.command("show")
+def ws_show(
+    name: str = typer.Argument(
+        ...,
+        help="Workspace name",
+        autocompletion=complete_workspace_name,
+    ),
+    as_json: bool = typer.Option(False, "--json", "-j", help="Output as JSON"),
+) -> None:
+    """Show details for a specific workspace."""
+    import json
+
+    ws = state.get_workspace(name)
+    if ws is None:
+        error(f"Workspace [bold]{name}[/] not found")
+        raise typer.Exit(1)
+
+    if as_json:
+        print(json.dumps(ws.to_dict(), indent=2))
+        return
+
+    home = str(Path.home())
+    ws_path = str(ws.path).replace(home, "~", 1)
+
+    console.print(f"[bold]Name:[/]      {ws.name}")
+    console.print(f"[bold]Branch:[/]    {ws.branch}")
+    console.print(f"[bold]Path:[/]      {ws_path}")
+    console.print(f"[bold]Created:[/]   {ws.created_at[:19]}")
+    console.print(f"[bold]Repos:[/]     {len(ws.repos)}")
+    console.print()
+
+    ws_prefix = str(ws.path) + "/"
+    table = make_table("Repo", "Branch", "Worktree", "Source")
+    for r in ws.repos:
+        wt = str(r.worktree_path)
+        wt = wt.replace(ws_prefix, "", 1) if wt.startswith(ws_prefix) else wt.replace(home, "~", 1)
+        src = str(r.source_repo).replace(home, "~", 1)
+        table.add_row(r.repo_name, r.branch, wt, src)
+    console.print(table)
+
+
+# Top-level alias: ``gw list`` → ``gw ws list``
+@app.command("list")
+def list_workspaces(
+    show_status: bool = typer.Option(False, "--status", "-s", help="Include git status summary"),
+    as_json: bool = typer.Option(False, "--json", "-j", help="Output as JSON"),
+) -> None:
+    """List all workspaces (shortcut for ``gw ws list``)."""
+    _ws_list(show_status=show_status, as_json=as_json)
 
 
 @app.command()
@@ -1350,7 +1387,32 @@ def preset_list() -> None:
 
     table = make_table("Preset", "Repos")
     for name, repos in cfg.presets.items():
-        table.add_row(name, ", ".join(repos))
+        table.add_row(name, str(len(repos)))
+    console.print(table)
+
+
+@preset_app.command("show")
+def preset_show(
+    name: str = typer.Argument(
+        ...,
+        help="Preset name",
+        autocompletion=complete_preset_name,
+    ),
+) -> None:
+    """Show details for a specific preset."""
+    cfg = config.require_config()
+    if name not in cfg.presets:
+        error(f"Preset [bold]{name}[/] not found")
+        raise typer.Exit(1)
+
+    repos = cfg.presets[name]
+    console.print(f"[bold]Preset:[/]  {name}")
+    console.print(f"[bold]Repos:[/]   {len(repos)}")
+    console.print()
+
+    table = make_table("Repo")
+    for repo in repos:
+        table.add_row(repo)
     console.print(table)
 
 
