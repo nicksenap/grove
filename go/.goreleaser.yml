@@ -34,19 +34,16 @@ changelog:
       - "^test:"
       - "^ci:"
 
-brews:
+homebrew_casks:
   - name: grove-go
     repository:
       owner: nicksenap
       name: homebrew-grove
       token: "{{ .Env.TAP_GITHUB_TOKEN }}"
-    directory: Formula
+    directory: Casks
     homepage: https://github.com/nicksenap/grove
     description: "Git Worktree Workspace Orchestrator (Go)"
-    license: MIT
+    binaries:
+      - gw
     conflicts:
       - grove
-    install: |
-      bin.install "gw"
-    test: |
-      assert_match version.to_s, shell_output("#{bin}/gw --version")
