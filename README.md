@@ -28,14 +28,6 @@ brew install --cask nicksenap/grove/grove-go
 brew install nicksenap/grove/grove
 ```
 
-### PyPI
-
-```bash
-pipx install gw-cli
-# or
-pip install gw-cli
-```
-
 ### From source (Go)
 
 ```bash
@@ -46,6 +38,12 @@ cd go && go build -o gw . && mv gw /usr/local/bin/
 
 ```bash
 uv tool install .
+```
+
+### Upgrading
+
+```bash
+brew upgrade --cask nicksenap/grove/grove-go
 ```
 
 Then add shell integration to your `.zshrc` (or `.bashrc`):
