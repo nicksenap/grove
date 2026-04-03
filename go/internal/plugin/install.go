@@ -59,6 +59,10 @@ func Install(repo string) error {
 	binName := "gw-" + pluginCmd
 	destPath := filepath.Join(dir, binName)
 
+	if !strings.HasPrefix(asset.BrowserDownloadURL, "https://") {
+		return fmt.Errorf("asset URL is not HTTPS: %s", asset.BrowserDownloadURL)
+	}
+
 	if err := downloadAndExtract(asset.BrowserDownloadURL, binName, destPath); err != nil {
 		return fmt.Errorf("downloading %s: %w", asset.Name, err)
 	}
@@ -134,8 +138,9 @@ func UpgradeAll() ([]string, error) {
 
 // parseRepo extracts owner/name from various formats.
 func parseRepo(repo string) (owner, name string, err error) {
-	// Strip github.com/ prefix if present
+	// Strip scheme and host prefix
 	repo = strings.TrimPrefix(repo, "https://")
+	repo = strings.TrimPrefix(repo, "http://")
 	repo = strings.TrimPrefix(repo, "github.com/")
 	repo = strings.TrimSuffix(repo, "/")
 
@@ -175,7 +180,8 @@ func fetchRelease(owner, repo string) (*ghRelease, error) {
 	}
 
 	var release ghRelease
-	if err := json.NewDecoder(resp.Body).Decode(&release); err != nil {
+	// Limit response body to 1 MiB to prevent memory exhaustion
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&release); err != nil {
 		return nil, fmt.Errorf("parsing release response: %w", err)
 	}
 	return &release, nil
@@ -219,6 +225,8 @@ func findAsset(release *ghRelease, _ string) (*ghAsset, error) {
 	return nil, fmt.Errorf("no asset found for %s/%s in release %s\navailable: %s",
 		goos, goarch, release.TagName, strings.Join(available, ", "))
 }
+
+const maxBinarySize = 256 << 20 // 256 MiB
 
 // downloadAndExtract downloads a .tar.gz and extracts the binary.
 func downloadAndExtract(url, binName, destPath string) error {
@@ -268,10 +276,16 @@ func downloadAndExtract(url, binName, destPath string) error {
 			if err != nil {
 				return err
 			}
-			if _, err := io.Copy(f, tr); err != nil {
+			n, err := io.Copy(f, io.LimitReader(tr, maxBinarySize+1))
+			if err != nil {
 				f.Close()
 				os.Remove(tmp)
 				return err
+			}
+			if n > maxBinarySize {
+				f.Close()
+				os.Remove(tmp)
+				return fmt.Errorf("binary exceeds maximum size (%d MiB)", maxBinarySize>>20)
 			}
 			f.Close()
 			return os.Rename(tmp, destPath)

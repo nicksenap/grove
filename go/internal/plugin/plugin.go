@@ -3,7 +3,9 @@
 package plugin
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -140,8 +142,11 @@ func Remove(name string) error {
 	bin := "gw-" + name
 	pluginPath := filepath.Join(Dir(), bin)
 
-	if _, err := os.Stat(pluginPath); os.IsNotExist(err) {
-		return fmt.Errorf("plugin %q is not installed", name)
+	if _, err := os.Stat(pluginPath); err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return fmt.Errorf("plugin %q is not installed", name)
+		}
+		return fmt.Errorf("checking plugin: %w", err)
 	}
 
 	// Clean up metadata file if present

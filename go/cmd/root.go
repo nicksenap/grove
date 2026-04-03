@@ -1,8 +1,10 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"strings"
 
 	"github.com/nicksenap/grove/internal/config"
@@ -79,10 +81,15 @@ func Execute() {
 				if pluginPath, findErr := plugin.Find(name); findErr == nil {
 					args := pluginArgs(name)
 					if execErr := plugin.Exec(pluginPath, args); execErr != nil {
+						// On Windows, Exec runs a child process — propagate its exit code
+						var exitErr *exec.ExitError
+						if errors.As(execErr, &exitErr) {
+							os.Exit(exitErr.ExitCode())
+						}
 						fmt.Fprintf(os.Stderr, "\033[1;31merror:\033[0m plugin %s: %s\n", name, execErr)
+						os.Exit(1)
 					}
-					// If Exec used syscall.Exec, we never reach here.
-					// On Windows (child process), exit with its code.
+					// If Exec used syscall.Exec (Unix), we never reach here.
 					os.Exit(0)
 				}
 			}
@@ -114,10 +121,11 @@ func extractUnknownCommand(err error) string {
 }
 
 // pluginArgs extracts the args after the plugin name from os.Args.
+// Skips os.Args[0] (the binary itself) to avoid false matches.
 func pluginArgs(name string) []string {
-	for i, arg := range os.Args {
+	for i, arg := range os.Args[1:] {
 		if arg == name {
-			return os.Args[i+1:]
+			return os.Args[i+2:] // +2 because we sliced from [1:]
 		}
 	}
 	return nil

@@ -14,6 +14,7 @@ func TestParseRepo(t *testing.T) {
 		{"nicksenap/gw-dash", "nicksenap", "gw-dash", false},
 		{"github.com/nicksenap/gw-dash", "nicksenap", "gw-dash", false},
 		{"https://github.com/nicksenap/gw-dash", "nicksenap", "gw-dash", false},
+		{"http://github.com/nicksenap/gw-dash", "nicksenap", "gw-dash", false},
 		{"github.com/nicksenap/gw-dash/", "nicksenap", "gw-dash", false},
 		{"invalid", "", "", true},
 		{"", "", "", true},
