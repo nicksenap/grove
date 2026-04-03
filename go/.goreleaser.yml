@@ -45,5 +45,3 @@ homebrew_casks:
     description: "Git Worktree Workspace Orchestrator (Go)"
     binaries:
       - gw
-    conflicts:
-      - formula: grove
