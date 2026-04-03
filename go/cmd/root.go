@@ -9,6 +9,7 @@ import (
 
 	"github.com/nicksenap/grove/internal/config"
 	"github.com/nicksenap/grove/internal/logging"
+	"github.com/nicksenap/grove/internal/picker"
 	"github.com/nicksenap/grove/internal/plugin"
 	"github.com/nicksenap/grove/internal/update"
 	"github.com/spf13/cobra"
@@ -135,4 +136,12 @@ func pluginArgs(name string) []string {
 func exitError(msg string) {
 	fmt.Fprintf(os.Stderr, "\033[1;31merror:\033[0m %s\n", msg)
 	os.Exit(1)
+}
+
+// exitOnPickerErr exits silently on user cancellation, or calls exitError for real errors.
+func exitOnPickerErr(err error) {
+	if errors.Is(err, picker.ErrCancelled) {
+		os.Exit(0)
+	}
+	exitError(err.Error())
 }

@@ -37,7 +37,7 @@ var deleteCmd = &cobra.Command{
 			}
 			selected, err := picker.PickMany("Select workspaces to delete:", choices)
 			if err != nil {
-				exitError(err.Error())
+				exitOnPickerErr(err)
 			}
 			names = selected
 		}

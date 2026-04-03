@@ -131,7 +131,7 @@ func resolveGoBack() string {
 	// Multiple parent dirs — let user pick
 	picked, err := picker.PickOne("Select repo directory:", parentList)
 	if err != nil {
-		exitError(err.Error())
+		exitOnPickerErr(err)
 	}
 	return picked
 }
@@ -162,7 +162,7 @@ func pickWorkspaceForGo() string {
 
 	picked, err := picker.PickOne("Select workspace", choices)
 	if err != nil {
-		exitError(err.Error())
+		exitOnPickerErr(err)
 	}
 
 	if picked == backToRepos {
@@ -172,7 +172,7 @@ func pickWorkspaceForGo() string {
 		} else if len(cfg.RepoDirs) > 1 {
 			dir, err := picker.PickOne("Select repo directory", cfg.RepoDirs)
 			if err != nil {
-				exitError(err.Error())
+				exitOnPickerErr(err)
 			}
 			return dir
 		}

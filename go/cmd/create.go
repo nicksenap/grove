@@ -51,29 +51,62 @@ var createCmd = &cobra.Command{
 			}
 		} else {
 			// Interactive
-			choices := make([]string, len(repos))
+			repoChoices := make([]string, len(repos))
 			for i, r := range repos {
-				choices[i] = r.Name
+				repoChoices[i] = r.Name
 			}
-			selected, err := picker.PickMany("Select repos for workspace:", choices)
-			if err != nil {
-				exitError(err.Error())
-			}
-			repoNames = selected
 
-			// Offer to save as preset
-			if len(cfg.Presets) == 0 && console.IsTerminal(os.Stdin) {
-				if console.Confirm("Save this selection as a preset?", false) {
-					presetName := console.Prompt("Preset name")
-					if presetName != "" {
-						if cfg.Presets == nil {
-							cfg.Presets = make(map[string]models.Preset)
+			// If presets exist, offer them first with a "Pick manually..." escape hatch
+			if len(cfg.Presets) > 0 {
+				presetNames := make([]string, 0, len(cfg.Presets))
+				presetChoices := make([]string, 0, len(cfg.Presets))
+				for name, p := range cfg.Presets {
+					presetNames = append(presetNames, name)
+					presetChoices = append(presetChoices, name+"  ("+strings.Join(p.Repos, ", ")+")")
+				}
+				presetChoices = append(presetChoices, "Pick manually…")
+
+				choice, err := picker.PickOne("Select repos from:", presetChoices)
+				if err != nil {
+					exitOnPickerErr(err)
+				}
+
+				if choice != "Pick manually…" {
+					// Extract preset name (before the double space)
+					for i, display := range presetChoices {
+						if display == choice && i < len(presetNames) {
+							repoNames = cfg.Presets[presetNames[i]].Repos
+							break
 						}
-						cfg.Presets[presetName] = models.Preset{Repos: repoNames}
-						if err := config.Save(cfg); err != nil {
-							console.Warningf("Could not save preset: %s", err)
-						} else {
-							console.Successf("Saved preset %q", presetName)
+					}
+				} else {
+					selected, err := picker.PickMany("Select repos for workspace:", repoChoices)
+					if err != nil {
+						exitOnPickerErr(err)
+					}
+					repoNames = selected
+				}
+			} else {
+				selected, err := picker.PickMany("Select repos for workspace:", repoChoices)
+				if err != nil {
+					exitOnPickerErr(err)
+				}
+				repoNames = selected
+
+				// Offer to save as preset when none exist yet
+				if console.IsTerminal(os.Stdin) && len(selected) < len(repos) {
+					if console.Confirm("Save this selection as a preset?", false) {
+						presetName := console.Prompt("Preset name")
+						if presetName != "" {
+							if cfg.Presets == nil {
+								cfg.Presets = make(map[string]models.Preset)
+							}
+							cfg.Presets[presetName] = models.Preset{Repos: repoNames}
+							if err := config.Save(cfg); err != nil {
+								console.Warningf("Could not save preset: %s", err)
+							} else {
+								console.Successf("Saved preset %q", presetName)
+							}
 						}
 					}
 				}

@@ -31,7 +31,7 @@ var renameCmd = &cobra.Command{
 			}
 			selected, err := picker.PickOne("Select workspace to rename:", choices)
 			if err != nil {
-				exitError(err.Error())
+				exitOnPickerErr(err)
 			}
 			name = selected
 		}
