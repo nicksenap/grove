@@ -1,0 +1,1 @@
+setup = ["touch .step1", "touch .step2"]
