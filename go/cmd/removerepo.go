@@ -38,7 +38,7 @@ var removeRepoCmd = &cobra.Command{
 			}
 			selected, err := picker.PickOne("Select workspace:", choices)
 			if err != nil {
-				exitError(err.Error())
+				exitOnPickerErr(err)
 			}
 			wsName = selected
 		}
@@ -64,7 +64,7 @@ var removeRepoCmd = &cobra.Command{
 			choices := ws.RepoNames()
 			selected, err := picker.PickMany("Select repos to remove:", choices)
 			if err != nil {
-				exitError(err.Error())
+				exitOnPickerErr(err)
 			}
 			repoNames = selected
 		}

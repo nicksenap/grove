@@ -93,6 +93,12 @@ gw preset list                                         # list presets (compact)
 gw preset show backend                                 # show preset details
 gw preset remove backend
 gw create my-feature -p backend                        # use a preset instead of -r
+
+# Plugins — extend gw with external commands
+gw plugin install nicksenap/gw-dash                    # install from GitHub
+gw plugin list                                         # list installed plugins
+gw plugin upgrade                                      # upgrade all plugins
+gw plugin remove dash                                  # uninstall a plugin
 ```
 
 All interactive menus support **type-to-search** filtering, arrow-key navigation (single-select), or arrow + tab (multi-select) with an `(all)` shortcut.
@@ -100,6 +106,7 @@ All interactive menus support **type-to-search** filtering, arrow-key navigation
 ## Documentation
 
 - [Per-repo config & hooks](docs/hooks.md) — `.grove.toml`, lifecycle hooks, `gw run`
+- [Plugins](docs/plugins.md) — extend gw with external commands
 - [Agent dashboard](docs/dashboard.md) — `gw dash`, Zellij integration
 - [AI coding tools](docs/ai-tools.md) — Claude Code workflows, MCP server
 
@@ -126,10 +133,11 @@ The Go version covers the core workflow. What's missing are the TUI features.
 | `shell-init` | Done | |
 | `mcp-serve` | Done | JSON-RPC server for Claude Code |
 | `hook` | Done | Claude Code hook handler |
+| `plugin` | Done | Install, list, upgrade, remove |
 | `run` | Partial | Inline prefix output, no split-pane TUI |
-| `dash` | Not yet | Planned as separate plugin/binary |
+| `dash` | Plugin | [`gw-dash`](https://github.com/nicksenap/gw-dash) — install with `gw plugin install nicksenap/gw-dash` |
 
-285 tests passing (226 unit + 59 e2e).
+299 tests passing (229 unit + 70 e2e).
 
 ### Performance
 

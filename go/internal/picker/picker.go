@@ -2,6 +2,7 @@ package picker
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -9,6 +10,9 @@ import (
 	"github.com/nicksenap/grove/internal/console"
 	"golang.org/x/term"
 )
+
+// ErrCancelled is returned when the user cancels a picker with Escape or Ctrl+C.
+var ErrCancelled = errors.New("selection cancelled")
 
 // PickOne shows a single-select picker with type-to-search.
 // Returns the selected item or error if cancelled.
@@ -30,7 +34,7 @@ func PickOne(prompt string, choices []string) (string, error) {
 	}
 
 	if m.cancelled {
-		return "", fmt.Errorf("selection cancelled")
+		return "", ErrCancelled
 	}
 	return m.selected[0], nil
 }
@@ -56,7 +60,7 @@ func PickMany(prompt string, choices []string) ([]string, error) {
 	}
 
 	if m.cancelled {
-		return nil, fmt.Errorf("selection cancelled")
+		return nil, ErrCancelled
 	}
 	if len(m.selected) == 0 {
 		return nil, fmt.Errorf("no items selected")

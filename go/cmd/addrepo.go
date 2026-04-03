@@ -35,7 +35,7 @@ var addRepoCmd = &cobra.Command{
 			}
 			selected, err := picker.PickOne("Select workspace:", choices)
 			if err != nil {
-				exitError(err.Error())
+				exitOnPickerErr(err)
 			}
 			wsName = selected
 		}
@@ -74,7 +74,7 @@ var addRepoCmd = &cobra.Command{
 			}
 			selected, err := picker.PickMany("Select repos to add:", choices)
 			if err != nil {
-				exitError(err.Error())
+				exitOnPickerErr(err)
 			}
 			repoNames = selected
 		}

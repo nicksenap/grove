@@ -42,6 +42,8 @@ done
 GROVE_SRC="${GROVE_SRC:-/src/grove}"
 if [ -d "${GROVE_SRC}/.git" ]; then
     git clone -q --local "${GROVE_SRC}" "${REPOS_DIR}/grove"
+    # Ensure we're on a named branch (CI checkouts may be detached HEAD)
+    (cd "${REPOS_DIR}/grove" && git checkout -q -B main HEAD 2>/dev/null || true)
     echo "Cloned Grove repo ($(cd "${REPOS_DIR}/grove" && git rev-list --count HEAD) commits)"
 else
     # Fallback: create a bare origin + clone so we have proper remote refs
@@ -285,7 +287,7 @@ WS_DIR="${GROVE_HOME}/.grove/workspaces/test-ws"
 section "Sync"
 
 # Use the Grove clone — a real repo with full commit history
-GROVE_BASE=$(cd "${REPOS_DIR}/grove" && git symbolic-ref --short HEAD)
+GROVE_BASE=$(cd "${REPOS_DIR}/grove" && git symbolic-ref --short HEAD 2>/dev/null || echo "main")
 
 gw create sync-ws --branch feat/sync-test --repos grove
 SYNC_WS_DIR="${GROVE_HOME}/.grove/workspaces/sync-ws"

@@ -7,7 +7,9 @@ import (
 
 	"github.com/nicksenap/grove/internal/config"
 	"github.com/nicksenap/grove/internal/console"
+	"github.com/nicksenap/grove/internal/discover"
 	"github.com/nicksenap/grove/internal/models"
+	"github.com/nicksenap/grove/internal/picker"
 	"github.com/spf13/cobra"
 )
 
@@ -23,28 +25,51 @@ var presetAddCmd = &cobra.Command{
 	Short: "Create or update a preset",
 	Args:  cobra.MaximumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
-		if len(args) == 0 {
+		cfg := config.RequireConfig()
+
+		// Interactive name prompt if not provided
+		name := ""
+		if len(args) > 0 {
+			name = args[0]
+		} else if console.IsTerminal(os.Stdin) {
+			name = console.Prompt("Preset name")
+		}
+		if name == "" {
 			exitError("preset name required")
 		}
-		if presetAddRepos == "" {
-			exitError("--repos is required")
-		}
 
-		cfg := config.RequireConfig()
 		if cfg.Presets == nil {
 			cfg.Presets = make(map[string]models.Preset)
 		}
 
-		repos := strings.Split(presetAddRepos, ",")
-		for i := range repos {
-			repos[i] = strings.TrimSpace(repos[i])
+		var repoNames []string
+		if presetAddRepos != "" {
+			repoNames = strings.Split(presetAddRepos, ",")
+			for i := range repoNames {
+				repoNames[i] = strings.TrimSpace(repoNames[i])
+			}
+		} else {
+			// Interactive: pick repos
+			available := discover.FindAllRepos(cfg.RepoDirs)
+			if len(available) == 0 {
+				exitError("No repos found. Run: gw add-dir <path>")
+			}
+			choices := make([]string, len(available))
+			for i, r := range available {
+				choices[i] = r.Name
+			}
+			selected, err := picker.PickMany("Select repos for preset:", choices)
+			if err != nil {
+				exitOnPickerErr(err)
+			}
+			repoNames = selected
 		}
 
-		cfg.Presets[args[0]] = models.Preset{Repos: repos}
+		cfg.Presets[name] = models.Preset{Repos: repoNames}
 		if err := config.Save(cfg); err != nil {
 			exitError(err.Error())
 		}
-		console.Successf("Preset %s saved", args[0])
+		console.Successf("Preset %s saved: %s", name, strings.Join(repoNames, ", "))
 	},
 }
 
@@ -93,20 +118,36 @@ var presetRemoveCmd = &cobra.Command{
 	Short: "Remove a preset",
 	Args:  cobra.MaximumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
-		if len(args) == 0 {
-			exitError("preset name required")
-		}
-
 		cfg := config.RequireConfig()
-		if _, ok := cfg.Presets[args[0]]; !ok {
-			exitError(fmt.Sprintf("Preset %s not found", args[0]))
+		if len(cfg.Presets) == 0 {
+			exitError("No presets to remove")
 		}
 
-		delete(cfg.Presets, args[0])
+		name := ""
+		if len(args) > 0 {
+			name = args[0]
+		} else {
+			// Interactive: pick preset to remove
+			names := make([]string, 0, len(cfg.Presets))
+			for n := range cfg.Presets {
+				names = append(names, n)
+			}
+			selected, err := picker.PickOne("Select preset to remove:", names)
+			if err != nil {
+				exitOnPickerErr(err)
+			}
+			name = selected
+		}
+
+		if _, ok := cfg.Presets[name]; !ok {
+			exitError(fmt.Sprintf("Preset %s not found", name))
+		}
+
+		delete(cfg.Presets, name)
 		if err := config.Save(cfg); err != nil {
 			exitError(err.Error())
 		}
-		console.Successf("Preset %s removed", args[0])
+		console.Successf("Preset %s removed", name)
 	},
 }
 

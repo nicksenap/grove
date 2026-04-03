@@ -54,7 +54,7 @@ var removeDirCmd = &cobra.Command{
 		} else {
 			selected, err := picker.PickOne("Select directory to remove:", cfg.RepoDirs)
 			if err != nil {
-				exitError(err.Error())
+				exitOnPickerErr(err)
 			}
 			absPath = selected
 		}
