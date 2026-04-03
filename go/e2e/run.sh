@@ -634,6 +634,79 @@ fi
 gw delete mcp-ws --force 2>&1
 
 # ---------------------------------------------------------------------------
+# Test: plugin system
+# ---------------------------------------------------------------------------
+section "Plugins"
+
+# plugin list — empty
+plugin_list_out=$(gw plugin list 2>&1)
+if echo "${plugin_list_out}" | grep -q "No plugins"; then
+    pass "plugin list shows empty"
+else
+    fail "plugin list should show empty: ${plugin_list_out}"
+fi
+
+# Install a fake plugin as a shell script
+PLUGINS_DIR="${GROVE_HOME}/.grove/plugins"
+mkdir -p "${PLUGINS_DIR}"
+cat > "${PLUGINS_DIR}/gw-hello" <<'SH'
+#!/bin/sh
+echo "hello-from-plugin GROVE_DIR=${GROVE_DIR} args=$*"
+SH
+chmod +x "${PLUGINS_DIR}/gw-hello"
+
+# plugin list — shows hello
+if gw plugin list 2>&1 | grep -q "hello"; then
+    pass "plugin list shows installed plugin"
+else
+    fail "plugin list missing hello"
+fi
+
+# Unknown command fallback — gw hello should exec the plugin
+hello_out=$(gw hello --test-flag 2>&1)
+if echo "${hello_out}" | grep -q "hello-from-plugin"; then
+    pass "unknown command falls back to plugin"
+else
+    fail "plugin fallback failed: ${hello_out}"
+fi
+
+# Verify env vars are passed
+if echo "${hello_out}" | grep -q "GROVE_DIR="; then
+    pass "GROVE_DIR passed to plugin"
+else
+    fail "GROVE_DIR not passed to plugin"
+fi
+
+# Verify args are forwarded
+if echo "${hello_out}" | grep -q "\-\-test-flag"; then
+    pass "args forwarded to plugin"
+else
+    fail "args not forwarded: ${hello_out}"
+fi
+
+# plugin remove
+gw plugin remove hello 2>&1
+if [ ! -f "${PLUGINS_DIR}/gw-hello" ]; then
+    pass "plugin remove deletes binary"
+else
+    fail "plugin remove did not delete binary"
+fi
+
+# plugin remove nonexistent should fail
+if ! gw plugin remove nonexistent 2>/dev/null; then
+    pass "plugin remove nonexistent exits non-zero"
+else
+    fail "plugin remove nonexistent should fail"
+fi
+
+# Unknown command with no plugin should fail
+if ! gw nonexistent-cmd 2>/dev/null; then
+    pass "unknown command without plugin exits non-zero"
+else
+    fail "unknown command without plugin should fail"
+fi
+
+# ---------------------------------------------------------------------------
 # Cleanup: delete remaining workspace
 # ---------------------------------------------------------------------------
 section "Final cleanup"
