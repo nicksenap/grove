@@ -41,12 +41,14 @@ func isAuthError(output string) bool {
 	return false
 }
 
-// runGit executes a git command in the given directory.
-func runGit(dir string, args ...string) (string, error) {
-	cmd := exec.Command("git", args...)
-	cmd.Dir = dir
+// gitEnv is computed once at init and reused for every runGit call.
+// This avoids copying os.Environ() and scanning it on every git invocation.
+var gitEnv []string
 
-	// Build env: preserve existing GIT_SSH_COMMAND if set, otherwise set ours
+// devNull is opened once and kept for the process lifetime (read-only, safe to share).
+var devNull *os.File
+
+func init() {
 	env := os.Environ()
 	hasSSHCmd := false
 	for _, e := range env {
@@ -59,17 +61,19 @@ func runGit(dir string, args ...string) (string, error) {
 	if !hasSSHCmd {
 		env = append(env, "GIT_SSH_COMMAND=ssh -o BatchMode=yes")
 	}
-	cmd.Env = env
-	// Prevent git from reading stdin (interactive prompts)
-	devnull, derr := os.Open(os.DevNull)
-	if derr == nil {
-		cmd.Stdin = devnull
-	}
+	gitEnv = env
+
+	devNull, _ = os.Open(os.DevNull)
+}
+
+// runGit executes a git command in the given directory.
+func runGit(dir string, args ...string) (string, error) {
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	cmd.Env = gitEnv
+	cmd.Stdin = devNull
 
 	out, err := cmd.CombinedOutput()
-	if devnull != nil {
-		devnull.Close()
-	}
 	output := strings.TrimSpace(string(out))
 	if err != nil {
 		if isAuthError(output) {
@@ -412,7 +416,11 @@ func glabMRStatus(path string) *PRInfo {
 }
 
 // groveConfigCache caches .grove.toml reads per-process.
-var groveConfigCache sync.Map
+// A map+RWMutex is faster than sync.Map for this low-contention, read-heavy pattern.
+var (
+	groveConfigMu    sync.RWMutex
+	groveConfigCache = make(map[string]*groveConfigEntry)
+)
 
 type groveConfigEntry struct {
 	cfg *models.GroveConfig
@@ -422,19 +430,25 @@ type groveConfigEntry struct {
 // ReadGroveConfig reads a .grove.toml from a repo directory.
 // Results are cached per-process (never re-read within a single command).
 func ReadGroveConfig(repoPath string) (*models.GroveConfig, error) {
-	if entry, ok := groveConfigCache.Load(repoPath); ok {
-		e := entry.(*groveConfigEntry)
-		return e.cfg, e.err
+	groveConfigMu.RLock()
+	entry, ok := groveConfigCache[repoPath]
+	groveConfigMu.RUnlock()
+	if ok {
+		return entry.cfg, entry.err
 	}
 
 	cfg, err := readGroveConfigFromDisk(repoPath)
-	groveConfigCache.Store(repoPath, &groveConfigEntry{cfg: cfg, err: err})
+	groveConfigMu.Lock()
+	groveConfigCache[repoPath] = &groveConfigEntry{cfg: cfg, err: err}
+	groveConfigMu.Unlock()
 	return cfg, err
 }
 
 // ClearGroveConfigCache clears the cache. Call in tests.
 func ClearGroveConfigCache() {
-	groveConfigCache = sync.Map{}
+	groveConfigMu.Lock()
+	groveConfigCache = make(map[string]*groveConfigEntry)
+	groveConfigMu.Unlock()
 }
 
 func readGroveConfigFromDisk(repoPath string) (*models.GroveConfig, error) {

@@ -1,12 +1,15 @@
 package picker
 
 import (
+	"bytes"
 	"fmt"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 
-	tea "github.com/charmbracelet/bubbletea"
 	"github.com/nicksenap/grove/internal/console"
+	"golang.org/x/term"
 )
 
 // PickOne shows a single-select picker with type-to-search.
@@ -23,17 +26,15 @@ func PickOne(prompt string, choices []string) (string, error) {
 	}
 
 	m := newSelectModel(prompt, choices, false)
-	p := tea.NewProgram(m, tea.WithInput(os.Stdin), tea.WithOutput(os.Stderr), tea.WithAltScreen())
-	result, err := p.Run()
+	m, err := runPicker(m)
 	if err != nil {
 		return "", err
 	}
 
-	model := result.(selectModel)
-	if model.cancelled {
+	if m.cancelled {
 		return "", fmt.Errorf("selection cancelled")
 	}
-	return model.selected[0], nil
+	return m.selected[0], nil
 }
 
 // PickMany shows a multi-select picker with type-to-search.
@@ -51,30 +52,100 @@ func PickMany(prompt string, choices []string) ([]string, error) {
 	display := append([]string{"(all)"}, choices...)
 
 	m := newSelectModel(prompt, display, true)
-	p := tea.NewProgram(m, tea.WithInput(os.Stdin), tea.WithOutput(os.Stderr), tea.WithAltScreen())
-	result, err := p.Run()
+	m, err := runPicker(m)
 	if err != nil {
 		return nil, err
 	}
 
-	model := result.(selectModel)
-	if model.cancelled {
+	if m.cancelled {
 		return nil, fmt.Errorf("selection cancelled")
 	}
-	if len(model.selected) == 0 {
+	if len(m.selected) == 0 {
 		return nil, fmt.Errorf("no items selected")
 	}
 
 	// If "(all)" was selected, return all original choices
-	for _, s := range model.selected {
+	for _, s := range m.selected {
 		if s == "(all)" {
 			return choices, nil
 		}
 	}
-	return model.selected, nil
+	return m.selected, nil
 }
 
-// selectModel is the bubbletea model for select/multiselect.
+// --- Key and message types ---
+
+// KeyType identifies the kind of key event.
+type KeyType int
+
+const (
+	KeyRunes     KeyType = iota // printable character(s)
+	KeyUp                       // ↑
+	KeyDown                     // ↓
+	KeyEnter                    // Enter/Return
+	KeyEsc                      // Escape
+	KeyTab                      // Tab
+	KeyBackspace                // Backspace/Delete
+	KeyCtrlC                    // Ctrl+C
+	KeyPgUp                     // Page Up
+	KeyPgDown                   // Page Down
+	KeyHome                     // Home
+	KeyEnd                      // End
+	KeySpace                    // Space bar
+	KeyUnknown                  // unrecognised sequence
+)
+
+// KeyMsg represents a keyboard event.
+type KeyMsg struct {
+	Type  KeyType
+	Runes []rune
+}
+
+// String returns a human-readable name, matching the strings the model switches on.
+func (k KeyMsg) String() string {
+	switch k.Type {
+	case KeyUp:
+		return "up"
+	case KeyDown:
+		return "down"
+	case KeyEnter:
+		return "enter"
+	case KeyEsc:
+		return "esc"
+	case KeyTab:
+		return "tab"
+	case KeyBackspace:
+		return "backspace"
+	case KeyCtrlC:
+		return "ctrl+c"
+	case KeyPgUp:
+		return "pgup"
+	case KeyPgDown:
+		return "pgdown"
+	case KeyHome:
+		return "home"
+	case KeyEnd:
+		return "end"
+	case KeySpace:
+		return " "
+	case KeyRunes:
+		return string(k.Runes)
+	}
+	return ""
+}
+
+// WindowSizeMsg is sent when the terminal is resized.
+type WindowSizeMsg struct {
+	Width  int
+	Height int
+}
+
+// Msg is a picker event (KeyMsg or WindowSizeMsg).
+type Msg any
+
+// --- Model ---
+
+// selectModel is the model for select/multiselect.
 type selectModel struct {
 	prompt    string
 	choices   []string
@@ -109,13 +180,10 @@ func newSelectModel(prompt string, choices []string, multi bool) selectModel {
 	}
 }
 
-func (m selectModel) Init() tea.Cmd {
-	return nil
-}
-
-func (m selectModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+// Update processes a message and returns the updated model and whether to quit.
+func (m selectModel) Update(msg Msg) (selectModel, bool) {
 	switch msg := msg.(type) {
-	case tea.WindowSizeMsg:
+	case WindowSizeMsg:
 		m.termHeight = msg.Height
 		// Reserve lines for header (prompt + hint + filter + padding + footer)
 		overhead := 6
@@ -128,11 +196,11 @@ func (m selectModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.viewHeight = available
 
-	case tea.KeyMsg:
+	case KeyMsg:
 		switch msg.String() {
 		case "ctrl+c", "esc":
 			m.cancelled = true
-			return m, tea.Quit
+			return m, true
 
 		case "up", "k":
 			if m.cursor > 0 {
@@ -186,7 +254,7 @@ func (m selectModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			} else if len(m.filtered) > 0 {
 				m.selected = []string{m.choices[m.filtered[m.cursor]]}
 			}
-			return m, tea.Quit
+			return m, true
 
 		case "backspace":
 			if len(m.filter) > 0 {
@@ -201,7 +269,7 @@ func (m selectModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 	}
-	return m, nil
+	return m, false
 }
 
 func (m *selectModel) scrollToCursor() {
@@ -246,12 +314,12 @@ func (m selectModel) View() string {
 	}
 
 	if m.filter != "" {
-		b.WriteString(fmt.Sprintf("  filter: %s\n\n", m.filter))
+		fmt.Fprintf(&b, "  filter: %s\n\n", m.filter)
 	}
 
 	// Count selected for multi-select
 	if m.multi && len(m.checked) > 0 {
-		b.WriteString(fmt.Sprintf("  %d selected\n\n", len(m.checked)))
+		fmt.Fprintf(&b, "  %d selected\n\n", len(m.checked))
 	}
 
 	total := len(m.filtered)
@@ -268,7 +336,7 @@ func (m selectModel) View() string {
 
 	// Show scroll indicator at top if not at the start
 	if m.offset > 0 {
-		b.WriteString(fmt.Sprintf("  ↑ %d more\n", m.offset))
+		fmt.Fprintf(&b, "  ↑ %d more\n", m.offset)
 	}
 
 	for i := m.offset; i < end; i++ {
@@ -284,23 +352,165 @@ func (m selectModel) View() string {
 			if m.checked[idx] {
 				check = "[✓]"
 			}
-			b.WriteString(fmt.Sprintf("%s%s %s\n", cursor, check, m.choices[idx]))
+			fmt.Fprintf(&b, "%s%s %s\n", cursor, check, m.choices[idx])
 		} else {
-			b.WriteString(fmt.Sprintf("%s%s\n", cursor, m.choices[idx]))
+			fmt.Fprintf(&b, "%s%s\n", cursor, m.choices[idx])
 		}
 	}
 
 	// Show scroll indicator at bottom if more items below
 	if end < total {
-		b.WriteString(fmt.Sprintf("  ↓ %d more\n", total-end))
+		fmt.Fprintf(&b, "  ↓ %d more\n", total-end)
 	}
 
 	return b.String()
 }
 
-func max(a, b int) int {
-	if a > b {
-		return a
+// --- Terminal runner ---
+
+// runPicker runs the interactive picker using raw terminal I/O.
+func runPicker(m selectModel) (selectModel, error) {
+	fd := int(os.Stdin.Fd())
+	oldState, err := term.MakeRaw(fd)
+	if err != nil {
+		return m, fmt.Errorf("failed to set raw mode: %w", err)
 	}
-	return b
+	defer term.Restore(fd, oldState)
+
+	w := os.Stderr
+
+	// Enter alt screen, hide cursor
+	fmt.Fprint(w, "\x1b[?1049h\x1b[?25l")
+	defer fmt.Fprint(w, "\x1b[?25h\x1b[?1049l")
+
+	// Get initial terminal size
+	width, height, err := term.GetSize(int(w.Fd()))
+	if err == nil && height > 0 {
+		m, _ = m.Update(WindowSizeMsg{Width: width, Height: height})
+	}
+
+	// Handle SIGWINCH for terminal resize
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGWINCH)
+	defer signal.Stop(sigCh)
+
+	// Read keys in a goroutine so we can also handle resize signals
+	keyCh := make(chan KeyMsg, 1)
+	go func() {
+		for {
+			k := readKey(os.Stdin)
+			keyCh <- k
+		}
+	}()
+
+	// Initial render
+	renderView(w, m.View())
+
+	for {
+		select {
+		case <-sigCh:
+			width, height, err := term.GetSize(int(w.Fd()))
+			if err == nil && height > 0 {
+				m, _ = m.Update(WindowSizeMsg{Width: width, Height: height})
+				renderView(w, m.View())
+			}
+		case k := <-keyCh:
+			if k.Type == KeyUnknown {
+				continue
+			}
+			var quit bool
+			m, quit = m.Update(k)
+			renderView(w, m.View())
+			if quit {
+				return m, nil
+			}
+		}
+	}
+}
+
+// renderView clears the screen and draws the view.
+// In raw mode \n alone moves down without carriage return, so we translate to \r\n.
+func renderView(w *os.File, view string) {
+	var buf bytes.Buffer
+	buf.WriteString("\x1b[H\x1b[2J")
+	buf.WriteString(strings.ReplaceAll(view, "\n", "\r\n"))
+	w.Write(buf.Bytes())
+}
+
+// readKey reads a single key event from the terminal in raw mode.
+// Escape sequences are parsed into the appropriate KeyType.
+func readKey(f *os.File) KeyMsg {
+	buf := make([]byte, 8)
+	n, err := f.Read(buf)
+	if err != nil || n == 0 {
+		return KeyMsg{Type: KeyUnknown}
+	}
+
+	// Single byte
+	if n == 1 {
+		switch buf[0] {
+		case 0x03: // Ctrl+C
+			return KeyMsg{Type: KeyCtrlC}
+		case 0x0d, 0x0a: // Enter
+			return KeyMsg{Type: KeyEnter}
+		case 0x1b: // Bare escape (no more bytes followed)
+			return KeyMsg{Type: KeyEsc}
+		case 0x7f, 0x08: // Backspace
+			return KeyMsg{Type: KeyBackspace}
+		case 0x09: // Tab
+			return KeyMsg{Type: KeyTab}
+		case ' ':
+			return KeyMsg{Type: KeySpace}
+		default:
+			if buf[0] >= 0x20 && buf[0] < 0x7f {
+				return KeyMsg{Type: KeyRunes, Runes: []rune{rune(buf[0])}}
+			}
+		}
+		return KeyMsg{Type: KeyUnknown}
+	}
+
+	// Escape sequences: ESC [ ...
+	if buf[0] == 0x1b && n >= 3 && buf[1] == '[' {
+		switch buf[2] {
+		case 'A':
+			return KeyMsg{Type: KeyUp}
+		case 'B':
+			return KeyMsg{Type: KeyDown}
+		case 'H':
+			return KeyMsg{Type: KeyHome}
+		case 'F':
+			return KeyMsg{Type: KeyEnd}
+		case '5':
+			if n >= 4 && buf[3] == '~' {
+				return KeyMsg{Type: KeyPgUp}
+			}
+		case '6':
+			if n >= 4 && buf[3] == '~' {
+				return KeyMsg{Type: KeyPgDown}
+			}
+		case '1':
+			// ESC [ 1 ~ = Home (some terminals)
+			if n >= 4 && buf[3] == '~' {
+				return KeyMsg{Type: KeyHome}
+			}
+			// ESC [ 1 ; 5 A = Ctrl+Up (ignore)
+		case '4':
+			// ESC [ 4 ~ = End (some terminals)
+			if n >= 4 && buf[3] == '~' {
+				return KeyMsg{Type: KeyEnd}
+			}
+		}
+	}
+
+	// ESC O H / ESC O F — Home/End on some terminals
+	if buf[0] == 0x1b && n >= 3 && buf[1] == 'O' {
+		switch buf[2] {
+		case 'H':
+			return KeyMsg{Type: KeyHome}
+		case 'F':
+			return KeyMsg{Type: KeyEnd}
+		}
+	}
+
+	return KeyMsg{Type: KeyUnknown}
 }

@@ -20,20 +20,27 @@ type JSONRPCRequest struct {
 	hasID   bool
 }
 
-// UnmarshalJSONRPC parses a JSON-RPC message, distinguishing notifications (no "id" key)
-// from requests ("id" key present, even if value is null).
+// unmarshalRequest parses a JSON-RPC message in a single pass, distinguishing
+// notifications (no "id" key) from requests ("id" key present, even if value is null).
 func unmarshalRequest(data []byte) (JSONRPCRequest, bool) {
-	var req JSONRPCRequest
-	if err := json.Unmarshal(data, &req); err != nil {
-		return req, false
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return JSONRPCRequest{}, false
 	}
 
-	// Check if "id" key is present in the raw JSON.
-	// Notifications have no "id" field at all.
-	// Requests have "id" (could be number, string, or null).
-	var raw map[string]json.RawMessage
-	if err := json.Unmarshal(data, &raw); err == nil {
-		_, req.hasID = raw["id"]
+	var req JSONRPCRequest
+	if v, ok := raw["jsonrpc"]; ok {
+		json.Unmarshal(v, &req.JSONRPC)
+	}
+	if v, ok := raw["method"]; ok {
+		json.Unmarshal(v, &req.Method)
+	}
+	if v, ok := raw["params"]; ok {
+		req.Params = v
+	}
+	if v, ok := raw["id"]; ok {
+		req.ID = v
+		req.hasID = true
 	}
 
 	return req, true

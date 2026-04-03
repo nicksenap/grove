@@ -9,17 +9,11 @@ import (
 
 // ANSI color codes
 const (
-	reset     = "\033[0m"
-	bold      = "\033[1m"
-	dim       = "\033[2m"
-	red       = "\033[31m"
-	green     = "\033[32m"
-	yellow    = "\033[33m"
-	cyan      = "\033[36m"
-	boldRed   = "\033[1;31m"
-	boldGreen = "\033[1;32m"
+	reset      = "\033[0m"
+	dim        = "\033[2m"
+	boldRed    = "\033[1;31m"
+	boldGreen  = "\033[1;32m"
 	boldYellow = "\033[1;33m"
-	boldCyan  = "\033[1;36m"
 )
 
 // Error prints an error message to stderr.
@@ -28,7 +22,7 @@ func Error(msg string) {
 }
 
 // Errorf prints a formatted error message to stderr.
-func Errorf(format string, args ...interface{}) {
+func Errorf(format string, args ...any) {
 	Error(fmt.Sprintf(format, args...))
 }
 
@@ -38,7 +32,7 @@ func Success(msg string) {
 }
 
 // Successf prints a formatted success message to stderr.
-func Successf(format string, args ...interface{}) {
+func Successf(format string, args ...any) {
 	Success(fmt.Sprintf(format, args...))
 }
 
@@ -48,7 +42,7 @@ func Info(msg string) {
 }
 
 // Infof prints a formatted info message to stderr.
-func Infof(format string, args ...interface{}) {
+func Infof(format string, args ...any) {
 	Info(fmt.Sprintf(format, args...))
 }
 
@@ -58,7 +52,7 @@ func Warning(msg string) {
 }
 
 // Warningf prints a formatted warning message to stderr.
-func Warningf(format string, args ...interface{}) {
+func Warningf(format string, args ...any) {
 	Warning(fmt.Sprintf(format, args...))
 }
 

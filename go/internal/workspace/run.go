@@ -1,6 +1,7 @@
 package workspace
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"os/exec"
@@ -8,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"syscall"
+	"time"
 
 	"github.com/nicksenap/grove/internal/console"
 	"github.com/nicksenap/grove/internal/gitops"
@@ -67,6 +69,7 @@ func Run(wsName string) error {
 	// Handle Ctrl+C
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	shuttingDown := false
 
 	var wg sync.WaitGroup
 	for _, r := range runnable {
@@ -74,6 +77,9 @@ func Run(wsName string) error {
 		cmd := exec.Command("sh", "-c", cmdStr)
 		cmd.Dir = r.WorktreePath
 		cmd.Stdin = nil
+		// Give each child its own process group so the terminal's Ctrl+C
+		// SIGINT doesn't reach them directly — only gw receives it.
+		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 
 		// Prefix output with repo name
 		cmd.Stdout = &prefixWriter{prefix: fmt.Sprintf("[%s] ", r.RepoName), w: os.Stdout}
@@ -93,7 +99,9 @@ func Run(wsName string) error {
 		go func(name string, c *exec.Cmd) {
 			defer wg.Done()
 			if err := c.Wait(); err != nil {
-				console.Warningf("%s: exited with error: %s", name, err)
+				if !shuttingDown {
+					console.Warningf("%s: exited with error: %s", name, err)
+				}
 			} else {
 				console.Infof("%s: exited (0)", name)
 			}
@@ -109,15 +117,39 @@ func Run(wsName string) error {
 
 	select {
 	case <-sigCh:
-		console.Warning("Received signal, terminating processes...")
+		shuttingDown = true
+		console.Info("Shutting down...")
 		mu.Lock()
+		// Send SIGINT first — this is what processes expect from Ctrl+C
+		// and handle most gracefully (Flask, pnpm, node all have SIGINT handlers).
 		for _, p := range procs {
 			if p.Process != nil {
-				p.Process.Signal(syscall.SIGTERM)
+				syscall.Kill(-p.Process.Pid, syscall.SIGINT)
 			}
 		}
 		mu.Unlock()
+		// Escalate: SIGTERM after 3s, SIGKILL after 8s
+		termTimer := time.AfterFunc(3*time.Second, func() {
+			mu.Lock()
+			for _, p := range procs {
+				if p.Process != nil {
+					syscall.Kill(-p.Process.Pid, syscall.SIGTERM)
+				}
+			}
+			mu.Unlock()
+		})
+		killTimer := time.AfterFunc(8*time.Second, func() {
+			mu.Lock()
+			for _, p := range procs {
+				if p.Process != nil {
+					syscall.Kill(-p.Process.Pid, syscall.SIGKILL)
+				}
+			}
+			mu.Unlock()
+		})
 		wg.Wait()
+		termTimer.Stop()
+		killTimer.Stop()
 	case <-done:
 	}
 
@@ -162,19 +194,17 @@ type prefixWriter struct {
 func (pw *prefixWriter) Write(p []byte) (int, error) {
 	pw.buf = append(pw.buf, p...)
 	for {
-		idx := -1
-		for i, b := range pw.buf {
-			if b == '\n' {
-				idx = i
-				break
-			}
-		}
+		idx := bytes.IndexByte(pw.buf, '\n')
 		if idx < 0 {
 			break
 		}
-		line := string(pw.buf[:idx])
+		fmt.Fprintf(pw.w, "%s%s\n", pw.prefix, pw.buf[:idx])
 		pw.buf = pw.buf[idx+1:]
-		fmt.Fprintf(pw.w, "%s%s\n", pw.prefix, line)
+	}
+	// Prevent unbounded growth: flush partial line if buffer exceeds 64KB
+	if len(pw.buf) > 65536 {
+		fmt.Fprintf(pw.w, "%s%s", pw.prefix, pw.buf)
+		pw.buf = pw.buf[:0]
 	}
 	return len(p), nil
 }

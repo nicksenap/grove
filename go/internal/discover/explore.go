@@ -19,72 +19,16 @@ type ExploredRepo struct {
 // Explore does a deep scan (up to depth 3) of configured directories.
 func Explore(dirs []string) []ExploredRepo {
 	var results []ExploredRepo
-	seen := make(map[string]bool) // resolved paths for symlink loop prevention
 
-	for _, dir := range dirs {
-		repos := deepScan(dir, dir, 0, 3, seen)
-		results = append(results, repos...)
-	}
-
-	return results
-}
-
-func deepScan(rootDir, currentDir string, depth, maxDepth int, seen map[string]bool) []ExploredRepo {
-	if depth > maxDepth {
-		return nil
-	}
-
-	// Resolve symlinks for loop detection
-	resolved, err := filepath.EvalSymlinks(currentDir)
-	if err != nil {
-		resolved = currentDir
-	}
-	if seen[resolved] {
-		return nil
-	}
-	seen[resolved] = true
-
-	entries, err := os.ReadDir(currentDir)
-	if err != nil {
-		return nil
-	}
-
-	var results []ExploredRepo
-
-	for _, entry := range entries {
-		if !entry.IsDir() {
-			continue
-		}
-		name := entry.Name()
-		// Skip hidden dirs and known non-repo dirs
-		if strings.HasPrefix(name, ".") || name == "node_modules" || name == "__pycache__" {
-			continue
-		}
-
-		path := filepath.Join(currentDir, name)
-
-		// Check if this is a git repo
-		gitDir := filepath.Join(path, ".git")
-		if info, err := os.Stat(gitDir); err == nil && info.IsDir() {
-			nested := depth > 0
-			results = append(results, ExploredRepo{
-				Name:      name,
-				Path:      path,
-				Nested:    nested,
-				ParentDir: rootDir,
-			})
-			// Still scan inside for nested repos
-			nestedRepos := deepScan(rootDir, path, depth+1, maxDepth, seen)
-			for i := range nestedRepos {
-				nestedRepos[i].Nested = true
-			}
-			results = append(results, nestedRepos...)
-			continue
-		}
-
-		// Not a repo — recurse
-		results = append(results, deepScan(rootDir, path, depth+1, maxDepth, seen)...)
-	}
+	WalkRepos(dirs, 3, func(path, rootDir string, depth int, insideRepo bool) bool {
+		results = append(results, ExploredRepo{
+			Name:      filepath.Base(path),
+			Path:      path,
+			Nested:    depth > 0 || insideRepo,
+			ParentDir: rootDir,
+		})
+		return true // descend into repos to find nested repos
+	})
 
 	return results
 }

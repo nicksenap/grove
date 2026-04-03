@@ -1,10 +1,8 @@
 package discover
 
 import (
-	"os"
 	"path/filepath"
 	"sort"
-	"strings"
 
 	"github.com/nicksenap/grove/internal/config"
 	"github.com/nicksenap/grove/internal/gitops"
@@ -60,11 +58,11 @@ func DiscoverRepos(dirs []string, fetcher func(string) string) []RepoInfo {
 func DiscoverReposWithRemoteCache(dirs []string, cache map[string]CacheEntry, fetcher func(string) string) []RepoInfo {
 	// Phase 1: filesystem scan
 	var candidates []repoCandidate
-	seen := make(map[string]bool)
 
-	for _, dir := range dirs {
-		collectRepoPaths(dir, dir, 0, 3, seen, &candidates)
-	}
+	WalkRepos(dirs, 3, func(path, rootDir string, depth int, insideRepo bool) bool {
+		candidates = append(candidates, repoCandidate{path: path, root: rootDir})
+		return false // don't descend into repos
+	})
 
 	if len(candidates) == 0 {
 		return nil
@@ -133,51 +131,6 @@ func DiscoverReposWithRemoteCache(dirs []string, cache map[string]CacheEntry, fe
 	return infos
 }
 
-func collectRepoPaths(rootDir, currentDir string, depth, maxDepth int, seen map[string]bool, out *[]repoCandidate) {
-	if depth > maxDepth {
-		return
-	}
-
-	resolved, err := filepath.EvalSymlinks(currentDir)
-	if err != nil {
-		resolved = currentDir
-	}
-	if seen[resolved] {
-		return
-	}
-	seen[resolved] = true
-
-	entries, err := os.ReadDir(currentDir)
-	if err != nil {
-		return
-	}
-
-	for _, entry := range entries {
-		if !entry.IsDir() {
-			continue
-		}
-		name := entry.Name()
-		if strings.HasPrefix(name, ".") || name == "node_modules" || name == "__pycache__" {
-			continue
-		}
-
-		path := filepath.Join(currentDir, name)
-		gitDir := filepath.Join(path, ".git")
-		if info, err := os.Stat(gitDir); err == nil && info.IsDir() {
-			resolvedPath, err := filepath.EvalSymlinks(path)
-			if err != nil {
-				resolvedPath = path
-			}
-			if !seen[resolvedPath] {
-				seen[resolvedPath] = true
-				*out = append(*out, repoCandidate{path: path, root: rootDir})
-			}
-			// Don't descend into repos
-		} else {
-			collectRepoPaths(rootDir, path, depth+1, maxDepth, seen, out)
-		}
-	}
-}
 
 // displayNameFromURL derives "owner/repo" from a remote URL, falling back to the given name.
 func displayNameFromURL(url, fallback string) string {

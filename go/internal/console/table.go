@@ -7,7 +7,7 @@ import (
 	"strings"
 	"text/tabwriter"
 
-	"github.com/charmbracelet/x/term"
+	"golang.org/x/term"
 )
 
 // Table is a simple table formatter that adapts to terminal width.
@@ -50,7 +50,7 @@ func (t *Table) termWidth() int {
 		return t.TermWidth
 	}
 	if f, ok := t.w.(*os.File); ok {
-		w, _, err := term.GetSize(f.Fd())
+		w, _, err := term.GetSize(int(f.Fd()))
 		if err == nil && w > 0 {
 			return w
 		}

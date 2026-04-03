@@ -179,7 +179,17 @@ func (s *Store) FindWorkspaceByPath(path string) (*models.Workspace, error) {
 // These delegate to a Store created from the global config.
 // CLI code can use these; test code should create Store directly.
 
-func defaultStore() *Store { return NewStore(config.GroveDir) }
+var cachedStore *Store
+var cachedStoreDir string
+
+func defaultStore() *Store {
+	// Re-create if GroveDir changed (tests patch config.GroveDir)
+	if cachedStore == nil || cachedStoreDir != config.GroveDir {
+		cachedStore = NewStore(config.GroveDir)
+		cachedStoreDir = config.GroveDir
+	}
+	return cachedStore
+}
 
 // StatePath returns the path to state.json.
 func StatePath() string           { return defaultStore().Path }
