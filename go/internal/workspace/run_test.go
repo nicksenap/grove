@@ -1,8 +1,10 @@
 package workspace
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
@@ -52,24 +54,24 @@ func TestChildProcessGetsOwnProcessGroup(t *testing.T) {
 // TestSignalTerminatesProcessGroup verifies that sending SIGTERM to
 // a process group (-pid) kills the entire child tree.
 func TestSignalTerminatesProcessGroup(t *testing.T) {
-	// Spawn a shell that spawns a child — simulates "sh -c 'npm start'" spawning node
-	cmd := exec.Command("sh", "-c", "sleep 60 & echo $! && wait")
+	// Write grandchild PID to a temp file to avoid racing on stdout
+	pidFile := filepath.Join(t.TempDir(), "grandchild.pid")
+	cmd := exec.Command("sh", "-c", fmt.Sprintf("sleep 60 & echo $! > %s && wait", pidFile))
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Stdin = nil
-
-	out := &strings.Builder{}
-	cmd.Stdout = out
+	cmd.Stdout = os.Stderr
 	cmd.Stderr = os.Stderr
 
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("failed to start: %v", err)
 	}
 
-	// Give time for the background sleep to start
+	// Give time for the background sleep to start and write PID file
 	time.Sleep(200 * time.Millisecond)
 
-	// Parse the grandchild PID from output
-	grandchildPidStr := strings.TrimSpace(out.String())
+	// Read grandchild PID from file
+	pidBytes, _ := os.ReadFile(pidFile)
+	grandchildPidStr := strings.TrimSpace(string(pidBytes))
 	grandchildPid, err := strconv.Atoi(grandchildPidStr)
 	if err != nil {
 		// Can still test process group kill even without grandchild PID
@@ -108,7 +110,6 @@ func TestSignalTerminatesProcessGroup(t *testing.T) {
 // TestPrefixWriterUsesIndexByte verifies the prefixWriter handles
 // various output patterns correctly.
 func TestPrefixWriterLines(t *testing.T) {
-	out := &strings.Builder{}
 	f, _ := os.CreateTemp(t.TempDir(), "pw")
 	defer f.Close()
 
@@ -122,7 +123,6 @@ func TestPrefixWriterLines(t *testing.T) {
 
 	f.Seek(0, 0)
 	data, _ := os.ReadFile(f.Name())
-	_ = out
 
 	lines := strings.Split(strings.TrimRight(string(data), "\n"), "\n")
 	expected := []string{

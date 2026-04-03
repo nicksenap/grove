@@ -8,6 +8,7 @@ import (
 	"os/signal"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -69,7 +70,7 @@ func Run(wsName string) error {
 	// Handle Ctrl+C
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-	shuttingDown := false
+	var shuttingDown atomic.Bool
 
 	var wg sync.WaitGroup
 	for _, r := range runnable {
@@ -99,7 +100,7 @@ func Run(wsName string) error {
 		go func(name string, c *exec.Cmd) {
 			defer wg.Done()
 			if err := c.Wait(); err != nil {
-				if !shuttingDown {
+				if !shuttingDown.Load() {
 					console.Warningf("%s: exited with error: %s", name, err)
 				}
 			} else {
@@ -117,7 +118,7 @@ func Run(wsName string) error {
 
 	select {
 	case <-sigCh:
-		shuttingDown = true
+		shuttingDown.Store(true)
 		console.Info("Shutting down...")
 		mu.Lock()
 		// Send SIGINT first — this is what processes expect from Ctrl+C

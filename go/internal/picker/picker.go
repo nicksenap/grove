@@ -258,7 +258,8 @@ func (m selectModel) Update(msg Msg) (selectModel, bool) {
 
 		case "backspace":
 			if len(m.filter) > 0 {
-				m.filter = m.filter[:len(m.filter)-1]
+				runes := []rune(m.filter)
+				m.filter = string(runes[:len(runes)-1])
 				m.updateFilter()
 			}
 
@@ -394,12 +395,20 @@ func runPicker(m selectModel) (selectModel, error) {
 	signal.Notify(sigCh, syscall.SIGWINCH)
 	defer signal.Stop(sigCh)
 
-	// Read keys in a goroutine so we can also handle resize signals
+	// Read keys in a goroutine so we can also handle resize signals.
+	// The quit channel prevents goroutine leaks when PickOne/PickMany
+	// is called multiple times in a single process (e.g. gw go → back → pick dir).
 	keyCh := make(chan KeyMsg, 1)
+	quit := make(chan struct{})
+	defer close(quit)
 	go func() {
 		for {
 			k := readKey(os.Stdin)
-			keyCh <- k
+			select {
+			case keyCh <- k:
+			case <-quit:
+				return
+			}
 		}
 	}()
 
