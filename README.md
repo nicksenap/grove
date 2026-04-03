@@ -16,7 +16,14 @@ Grove gives you the multi-repo worktree workflow that monorepos get for free. On
 
 ## Install
 
-### Homebrew
+### Homebrew (Go — recommended)
+
+```bash
+brew tap nicksenap/grove
+brew install --cask grove-go
+```
+
+### Homebrew (Python)
 
 ```bash
 brew tap nicksenap/grove
@@ -31,10 +38,16 @@ pipx install gw-cli
 pip install gw-cli
 ```
 
-### From source
+### From source (Python)
 
 ```bash
 uv tool install .
+```
+
+### From source (Go)
+
+```bash
+cd go && go build -o gw . && mv gw /usr/local/bin/
 ```
 
 Then add shell integration to your `.zshrc` (or `.bashrc`):
@@ -186,6 +199,37 @@ gw delete fix-auth-bug   # removes worktrees, branches, and workspace
 
 Grove copies your `CLAUDE.md` into new workspaces, so your agent gets project context from the start.
 
+## Go rewrite
+
+Grove is being rewritten in Go. The Python version works but has real distribution pain — Python version conflicts, `pipx`/`uv` packaging quirks, and slow startup (~300ms import overhead). The Go binary is a single static executable with instant startup and zero dependencies.
+
+### Status
+
+The Go version covers the core workflow. What's missing are the TUI features.
+
+| Command | Go | Notes |
+|---|---|---|
+| `init`, `add-dir`, `remove-dir` | Done | |
+| `explore` | Done | Deep scan with remote URL caching |
+| `create` | Done | Parallel fetch, rollback, hooks |
+| `delete` | Done | Parallel teardown, hooks |
+| `list`, `status` | Done | Including `-s` summary and PR status |
+| `sync` | Done | Parallel rebase, conflict handling |
+| `go` | Done | Including `--close-tab` for Zellij |
+| `add-repo`, `remove-repo` | Done | |
+| `rename`, `doctor`, `stats` | Done | |
+| `preset` | Done | |
+| `shell-init` | Done | |
+| `mcp-serve` | Done | JSON-RPC server for Claude Code |
+| `hook` | Done | Claude Code hook handler |
+| `run` | Partial | Inline prefix output, no split-pane TUI |
+| `dash` | Not yet | Planned as separate plugin/binary |
+
+285 tests passing (226 unit + 59 e2e).
+
+Install the Go version with `brew install --cask nicksenap/grove/grove-go`, or build from source in `go/`.
+
 ## Requirements
 
-Python 3.12+ (installed automatically by Homebrew)
+- **Go version:** No dependencies — single static binary
+- **Python version:** Python 3.12+ (installed automatically by Homebrew)

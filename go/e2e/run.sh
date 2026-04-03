@@ -561,7 +561,12 @@ MCP_INPUT=$(cat <<'JSONRPC'
 JSONRPC
 )
 
-MCP_OUT=$(echo "${MCP_INPUT}" | timeout 10 gw mcp-serve --workspace mcp-ws 2>/dev/null || true)
+MCP_ERR=$(mktemp)
+MCP_OUT=$(echo "${MCP_INPUT}" | timeout 10 gw mcp-serve --workspace mcp-ws 2>"${MCP_ERR}" || true)
+if [ -s "${MCP_ERR}" ]; then
+    echo "  MCP stderr: $(cat "${MCP_ERR}")"
+fi
+rm -f "${MCP_ERR}"
 
 # Check initialize response
 if echo "${MCP_OUT}" | grep -q '"protocolVersion"'; then
