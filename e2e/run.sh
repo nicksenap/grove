@@ -33,6 +33,7 @@ trap 'rm -rf "${GROVE_HOME}"' EXIT
 REPOS_DIR="${GROVE_HOME}/repos"
 mkdir -p "${REPOS_DIR}"
 
+# Safe: HOME is overridden above, so --global writes to $GROVE_HOME/.gitconfig
 git config --global user.email "e2e@grove.test"
 git config --global user.name "Grove E2E"
 git config --global init.defaultBranch main
@@ -704,6 +705,82 @@ if ! gw nonexistent-cmd 2>/dev/null; then
     pass "unknown command without plugin exits non-zero"
 else
     fail "unknown command without plugin should fail"
+fi
+
+# ---------------------------------------------------------------------------
+# Test: hook install / status / uninstall
+# ---------------------------------------------------------------------------
+section "Hook installer"
+
+SETTINGS="${GROVE_HOME}/.claude/settings.json"
+
+# Status before install
+if gw hook status 2>&1 | grep -q "not installed"; then
+    pass "hook status: not installed initially"
+else
+    fail "hook status should show not installed"
+fi
+
+# Install (non-interactive: pipe yes)
+echo "y" | gw hook install 2>&1
+if [ -f "${SETTINGS}" ]; then
+    pass "hook install created settings.json"
+else
+    fail "hook install did not create settings.json"
+fi
+
+# Verify all hook events are present
+hook_count=$(jq '.hooks | keys | length' "${SETTINGS}")
+if [ "${hook_count}" = "13" ]; then
+    pass "hook install registered all 13 events"
+else
+    fail "expected 13 hook events, got ${hook_count}"
+fi
+
+# Verify hook command points to gw
+if jq -r '.hooks.SessionStart[0].hooks[0].command' "${SETTINGS}" | grep -q "gw _hook"; then
+    pass "hook command uses gw _hook"
+else
+    fail "hook command wrong"
+fi
+
+# Status after install
+if gw hook status 2>&1 | grep -q "installed"; then
+    pass "hook status: installed"
+else
+    fail "hook status should show installed"
+fi
+
+# Reinstall (should update, not duplicate)
+echo "y" | gw hook install 2>&1
+hook_count_after=$(jq '.hooks.SessionStart | length' "${SETTINGS}")
+if [ "${hook_count_after}" = "1" ]; then
+    pass "hook reinstall updates without duplicating"
+else
+    fail "hook reinstall duplicated entries: ${hook_count_after}"
+fi
+
+# Backup should exist
+backup_count=$(ls "${SETTINGS}".bak.* 2>/dev/null | wc -l | tr -d ' ')
+if [ "${backup_count}" -ge "1" ]; then
+    pass "hook install created backup(s)"
+else
+    fail "hook install did not create backup"
+fi
+
+# Uninstall
+echo "y" | gw hook uninstall 2>&1
+if jq -e '.hooks' "${SETTINGS}" > /dev/null 2>&1; then
+    fail "hooks key should be removed after uninstall"
+else
+    pass "hook uninstall removed all hooks"
+fi
+
+# Status after uninstall
+if gw hook status 2>&1 | grep -q "not installed"; then
+    pass "hook status: not installed after uninstall"
+else
+    fail "hook status should show not installed after uninstall"
 fi
 
 # ---------------------------------------------------------------------------
