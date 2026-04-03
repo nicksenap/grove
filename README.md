@@ -99,6 +99,11 @@ gw plugin install nicksenap/gw-dash                    # install from GitHub
 gw plugin list                                         # list installed plugins
 gw plugin upgrade                                      # upgrade all plugins
 gw plugin remove dash                                  # uninstall a plugin
+
+# Claude Code integration
+gw hook install                                        # register hooks in ~/.claude/settings.json
+gw hook status                                         # check if hooks are installed
+gw hook uninstall                                      # remove hooks
 ```
 
 All interactive menus support **type-to-search** filtering, arrow-key navigation (single-select), or arrow + tab (multi-select) with an `(all)` shortcut.
@@ -107,7 +112,6 @@ All interactive menus support **type-to-search** filtering, arrow-key navigation
 
 - [Per-repo config & hooks](docs/hooks.md) — `.grove.toml`, lifecycle hooks, `gw run`
 - [Plugins](docs/plugins.md) — extend gw with external commands
-- [Agent dashboard](docs/dashboard.md) — `gw dash`, Zellij integration
 - [AI coding tools](docs/ai-tools.md) — Claude Code workflows, MCP server
 
 ## Requirements
