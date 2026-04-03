@@ -13,33 +13,49 @@ the canonical reference for reimplementing Grove in Go.
 |---|---|---|---|
 | Data Model | Done | 9 | All structs, JSON roundtrip, backward compat |
 | Config (TOML) | Done | 13 | Load/save, migration, preset validation |
-| State (JSON) | Done | 16 | CRUD, find-by-path, atomic writes, error on corrupt |
+| State (JSON) | Done | 16 | Store struct, CRUD, find-by-path, atomic writes, error on corrupt |
 | Git Operations | Done | 24 | Real git repos, auth detection, PRStatus (gh+glab), ReadGroveConfig cache |
 | Discovery (shallow) | Done | 10 | Hidden dir filter, first-occurrence dedup |
-| Discovery (deep) | Partial | — | Symlink loop prevention done; remote URL cache/dedup NOT implemented |
-| Workspace Create | Done | 7 | Rollback, auto-branch, MCP config, CD file, setup hooks |
-| Workspace Delete | Done | 3 | Parallel teardown, branch cleanup, partial-failure preservation |
-| Workspace Sync | Done | 4 | Parallel, rebase, dirty skip, pre/post hooks |
-| Workspace Status | Done | 5 | Parallel, JSON, verbose, PR (gh+glab) |
+| Discovery (deep) | Done | 10 | Symlink loop prevention, remote URL cache (mtime+TTL), batch parallel resolve, dedup |
+| Discovery Remote Cache | Done | 16 | mtime+TTL dual invalidation, batch parallel fetch, injectable clock/mtime/fetcher |
+| Workspace Create | Done | 10 | Parallel fetch, rollback, auto-branch, MCP config, CD file, setup hooks, progress output |
+| Workspace Delete | Done | 5 | Parallel teardown, branch cleanup, teardown hooks, partial-failure preservation |
+| Workspace Sync | Done | 7 | Parallel, rebase, conflict abort, dirty skip, pre/post hooks via RunCmdSilent |
+| Workspace Status | Done | 5 | Parallel, JSON, verbose, PR (gh+glab), tabwriter tables |
 | Workspace Rename | Done | 4 | State-first with rollback, created_at preserved |
-| Workspace Add/Remove Repo | Done | 5 | Parallel remove, no-op on duplicate/missing |
-| Doctor | Done | 5 | Missing worktree/dir, orphaned Claude memory |
-| Stats + Heatmap | Done | 11 | Events, heatmap grid, corrupt handling |
-| Claude Memory Sync | Done | 12 | Rehydrate, harvest, migrate, orphan detection, atomic copy |
-| Hook Handler | Done | 14 | Session lifecycle, state machine, path traversal prevention |
+| Workspace Add/Remove Repo | Done | 8 | Branch conflict, setup hooks on add, teardown on remove, ws-not-found |
+| Doctor | Done | 5 | Missing worktree/dir, orphaned Claude memory (fast: no recursive walk), progress output |
+| Stats + Heatmap | Done | 15 | Injectable clock, heatmap alignment, month label positioning, boundary tests |
+| Claude Memory Sync | Done | 12 | Rehydrate, harvest, migrate, fast orphan detection (2-level ReadDir) |
+| Hook Handler | Done | 17 | Handler struct, injectable pid/env/git/clock, session lifecycle, state machine |
 | MCP Server | Done (e2e) | — | Tested via e2e (JSON-RPC: init, ping, tools, announce, get, list) |
-| Update Check | Done | 6 | 24h cache, background refresh, version comparison |
+| Update Check | Done | 9 | Checker struct, injectable clock/fetcher, background fetch verify, cache write test |
 | Logging | Done | 4 | Rotating file, 1MB max, 3 backups |
-| Console Output | Done | — | stderr/stdout separation, ANSI colors, confirm/prompt helpers |
-| Interactive Pickers | Done | — | Bubbletea single/multi-select with type-to-search |
+| Console Output | Done | 7 | tabwriter tables (kubectl-style), uppercase headers, alignment tests |
+| Interactive Pickers | Done | 6 | Bubbletea on stderr (pipeable stdout), terminal guard, single-choice auto-select |
 | Shell Completions | Done | — | --repos, --preset, workspace names via Cobra |
 | CLI Commands | Done | — | All 20+ commands with flags, pickers, confirmations |
+| Workspace Service | Done | 57 | Service struct with injectable State/Stats/ClaudeDir/RunCmd/RunCmdSilent |
 | gw dash TUI | Deferred | — | Planned as separate plugin/binary |
 | gw run TUI | Partial | — | Inline with prefix output (no split-pane TUI) |
 | Zellij Integration | Partial | — | gw go --close-tab works; full tab matching deferred to dash |
-| Discovery Remote Cache | Not started | — | See TODO.md |
 
-**Totals: 166 unit tests + 59 e2e tests = 225, all passing**
+**Totals: 226 unit tests + 59 e2e tests = 285, all passing**
+
+### Architecture: Testability
+
+All packages use **dependency injection** via structs with injectable function fields:
+
+| Package | Struct | Injected Dependencies |
+|---|---|---|
+| `workspace` | `Service` | `*state.Store`, `*stats.Tracker`, `ClaudeDir`, `WorkspaceDir`, `RunCmd`, `RunCmdSilent` |
+| `stats` | `Tracker` | `StatsPath`, `NowFn` |
+| `hook` | `Handler` | `StatusDir`, `NowFn`, `PidFn`, `EnvFn`, `GitBranchFn`, `GitDirtyFn` |
+| `update` | `Checker` | `CachePath`, `NowFn`, `FetchLatestFn` |
+| `state` | `Store` | `Path` |
+| `discover` | (functions) | `fetcher`, `nowFn`, `mtimeFn` params |
+
+No test mutates `config.GroveDir` (except `config_test.go` itself). All tests create isolated instances.
 
 ---
 

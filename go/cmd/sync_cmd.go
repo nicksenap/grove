@@ -21,7 +21,7 @@ var syncCmd = &cobra.Command{
 			exitError(err.Error())
 		}
 
-		if err := workspace.Sync(ws.Name); err != nil {
+		if err := workspace.NewService().Sync(ws.Name); err != nil {
 			exitError(err.Error())
 		}
 	},

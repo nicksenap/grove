@@ -9,16 +9,30 @@ import (
 	"strings"
 	"time"
 
-	"github.com/nicksenap/grove/internal/config"
 	"github.com/nicksenap/grove/internal/models"
 )
 
-func statsPath() string {
-	return filepath.Join(config.GroveDir, "stats.json")
+// Tracker records and reports workspace usage statistics.
+// Use NewTracker for production; inject a custom NowFn for tests.
+type Tracker struct {
+	StatsPath string
+	NowFn     func() time.Time
 }
 
-func loadEvents() ([]models.StatsEvent, error) {
-	data, err := os.ReadFile(statsPath())
+// NewTracker creates a Tracker using the given grove dir and real clock.
+func NewTracker(groveDir string) *Tracker {
+	return &Tracker{
+		StatsPath: filepath.Join(groveDir, "stats.json"),
+		NowFn:     time.Now,
+	}
+}
+
+func (t *Tracker) now() time.Time {
+	return t.NowFn()
+}
+
+func (t *Tracker) loadEvents() ([]models.StatsEvent, error) {
+	data, err := os.ReadFile(t.StatsPath)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return []models.StatsEvent{}, nil
@@ -35,54 +49,53 @@ func loadEvents() ([]models.StatsEvent, error) {
 	return events, nil
 }
 
-func saveEvents(events []models.StatsEvent) error {
-	path := statsPath()
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+func (t *Tracker) saveEvents(events []models.StatsEvent) error {
+	if err := os.MkdirAll(filepath.Dir(t.StatsPath), 0o755); err != nil {
 		return err
 	}
 	data, err := json.MarshalIndent(events, "", "  ")
 	if err != nil {
 		return err
 	}
-	tmp := path + ".tmp"
+	tmp := t.StatsPath + ".tmp"
 	if err := os.WriteFile(tmp, data, 0o644); err != nil {
 		return err
 	}
-	return os.Rename(tmp, path)
+	return os.Rename(tmp, t.StatsPath)
 }
 
 // RecordCreated logs a workspace creation event.
-func RecordCreated(ws models.Workspace) error {
-	events, err := loadEvents()
+func (t *Tracker) RecordCreated(ws models.Workspace) error {
+	events, err := t.loadEvents()
 	if err != nil {
 		return err
 	}
 	events = append(events, models.StatsEvent{
 		Event:         "workspace_created",
-		Timestamp:     time.Now().Format("2006-01-02T15:04:05.000000"),
+		Timestamp:     t.now().Format("2006-01-02T15:04:05.000000"),
 		WorkspaceName: ws.Name,
 		Branch:        ws.Branch,
 		RepoNames:     ws.RepoNames(),
 		RepoCount:     len(ws.Repos),
 	})
-	return saveEvents(events)
+	return t.saveEvents(events)
 }
 
 // RecordDeleted logs a workspace deletion event.
-func RecordDeleted(ws models.Workspace) error {
-	events, err := loadEvents()
+func (t *Tracker) RecordDeleted(ws models.Workspace) error {
+	events, err := t.loadEvents()
 	if err != nil {
 		return err
 	}
 	events = append(events, models.StatsEvent{
 		Event:         "workspace_deleted",
-		Timestamp:     time.Now().Format("2006-01-02T15:04:05.000000"),
+		Timestamp:     t.now().Format("2006-01-02T15:04:05.000000"),
 		WorkspaceName: ws.Name,
 		Branch:        ws.Branch,
 		RepoNames:     ws.RepoNames(),
 		RepoCount:     len(ws.Repos),
 	})
-	return saveEvents(events)
+	return t.saveEvents(events)
 }
 
 // activityByDate counts workspace_created events per date (YYYY-MM-DD).
@@ -105,11 +118,11 @@ func activityByDate(events []models.StatsEvent) map[string]int {
 
 // BuildHeatmap generates a GitHub-style contribution grid.
 // Returns lines of text with ANSI coloring.
-func BuildHeatmap(events []models.StatsEvent, weeks int) []string {
+func (t *Tracker) BuildHeatmap(events []models.StatsEvent, weeks int) []string {
 	counts := activityByDate(events)
 
 	// Find the Monday at the start of our range
-	now := time.Now()
+	now := t.now()
 	start := now.AddDate(0, 0, -7*weeks)
 	// Snap to Monday
 	for start.Weekday() != time.Monday {
@@ -145,6 +158,14 @@ func BuildHeatmap(events []models.StatsEvent, weeks int) []string {
 		d = d.AddDate(0, 0, 1)
 	}
 
+	// Pad all rows to the same number of columns
+	maxCols := 0
+	for _, row := range grid {
+		if len(row) > maxCols {
+			maxCols = len(row)
+		}
+	}
+
 	// Find max for intensity scaling
 	maxCount := 1
 	for _, ev := range counts {
@@ -166,40 +187,46 @@ func BuildHeatmap(events []models.StatsEvent, weeks int) []string {
 
 	var lines []string
 
-	// Month labels row
-	monthLine := "     "
+	// Month labels — place at exact column positions, skip if overlapping previous
+	monthRow := make([]byte, maxCols)
+	for i := range monthRow {
+		monthRow[i] = ' '
+	}
 	prevMonth := ""
-	for col := 0; col < numWeeks && col < len(grid[0]); col++ {
-		month := ""
-		if col < len(grid[0]) {
-			t, _ := time.Parse("2006-01-02", grid[0][col].date)
-			month = t.Format("Jan")
-		}
+	nextFree := 0 // first column available for a new label
+	for col := 0; col < maxCols && col < len(grid[0]); col++ {
+		mt, _ := time.Parse("2006-01-02", grid[0][col].date)
+		month := mt.Format("Jan")
 		if month != prevMonth {
-			monthLine += month
 			prevMonth = month
-		} else {
-			monthLine += " "
+			if col >= nextFree && col+len(month) <= maxCols {
+				copy(monthRow[col:], month)
+				nextFree = col + len(month) + 1 // +1 for gap between labels
+			}
 		}
 	}
-	lines = append(lines, monthLine)
+	lines = append(lines, "     "+string(monthRow))
 
-	// Data rows
+	// Data rows — pad to maxCols so all rows are the same width
 	for row := 0; row < 7; row++ {
 		line := dayLabels[row] + "  "
-		for col := 0; col < len(grid[row]); col++ {
-			c := grid[row][col]
-			if c.count == 0 {
-				line += levels[0]
+		for col := 0; col < maxCols; col++ {
+			if col >= len(grid[row]) {
+				line += levels[0] // pad with dim dot to match grid width
 			} else {
-				level := c.count * 4 / maxCount
-				if level > 4 {
-					level = 4
+				c := grid[row][col]
+				if c.count == 0 {
+					line += levels[0]
+				} else {
+					level := c.count * 4 / maxCount
+					if level > 4 {
+						level = 4
+					}
+					if level < 1 {
+						level = 1
+					}
+					line += levels[level]
 				}
-				if level < 1 {
-					level = 1
-				}
-				line += levels[level]
 			}
 		}
 		lines = append(lines, line)
@@ -217,8 +244,8 @@ func BuildHeatmap(events []models.StatsEvent, weeks int) []string {
 }
 
 // PrintStats outputs workspace usage statistics.
-func PrintStats() error {
-	events, err := loadEvents()
+func (t *Tracker) PrintStats() error {
+	events, err := t.loadEvents()
 	if err != nil {
 		return err
 	}
@@ -229,7 +256,7 @@ func PrintStats() error {
 	}
 
 	// Heatmap
-	heatmapLines := BuildHeatmap(events, 52)
+	heatmapLines := t.BuildHeatmap(events, 52)
 	fmt.Fprintln(os.Stderr)
 	for _, line := range heatmapLines {
 		fmt.Fprintln(os.Stderr, line)
@@ -237,7 +264,7 @@ func PrintStats() error {
 
 	var created, deleted int
 	var thisWeek, thisMonth int
-	now := time.Now()
+	now := t.now()
 	weekAgo := now.AddDate(0, 0, -7)
 	monthAgo := now.AddDate(0, -1, 0)
 

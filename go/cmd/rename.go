@@ -40,7 +40,7 @@ var renameCmd = &cobra.Command{
 			exitError("--to is required")
 		}
 
-		if err := workspace.Rename(name, renameTo); err != nil {
+		if err := workspace.NewService().Rename(name, renameTo); err != nil {
 			exitError(err.Error())
 		}
 	},

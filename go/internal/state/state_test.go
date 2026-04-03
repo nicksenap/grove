@@ -5,26 +5,23 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/nicksenap/grove/internal/config"
 	"github.com/nicksenap/grove/internal/models"
 )
 
-func setupTestEnv(t *testing.T) string {
+func testStore(t *testing.T) *Store {
 	t.Helper()
 	dir := t.TempDir()
-	config.GroveDir = filepath.Join(dir, ".grove")
-	config.ConfigPath = filepath.Join(config.GroveDir, "config.toml")
-	config.DefaultWorkspaceDir = filepath.Join(config.GroveDir, "workspaces")
-	os.MkdirAll(config.GroveDir, 0o755)
-	// Write empty state
-	os.WriteFile(StatePath(), []byte("[]"), 0o644)
-	return dir
+	groveDir := filepath.Join(dir, ".grove")
+	os.MkdirAll(groveDir, 0o755)
+	s := NewStore(groveDir)
+	os.WriteFile(s.Path, []byte("[]"), 0o644)
+	return s
 }
 
 func TestLoadEmpty(t *testing.T) {
-	setupTestEnv(t)
+	s := testStore(t)
 
-	workspaces, err := Load()
+	workspaces, err := s.Load()
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
@@ -35,9 +32,9 @@ func TestLoadEmpty(t *testing.T) {
 
 func TestLoadNonexistent(t *testing.T) {
 	dir := t.TempDir()
-	config.GroveDir = filepath.Join(dir, ".grove")
+	s := NewStore(filepath.Join(dir, ".grove"))
 
-	workspaces, err := Load()
+	workspaces, err := s.Load()
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
@@ -47,18 +44,18 @@ func TestLoadNonexistent(t *testing.T) {
 }
 
 func TestAddAndGet(t *testing.T) {
-	setupTestEnv(t)
+	s := testStore(t)
 
 	ws := models.NewWorkspace("test", "/tmp/test", "feat/test")
 	ws.Repos = []models.RepoWorktree{
 		{RepoName: "api", SourceRepo: "/src/api", WorktreePath: "/tmp/test/api", Branch: "feat/test"},
 	}
 
-	if err := AddWorkspace(ws); err != nil {
+	if err := s.AddWorkspace(ws); err != nil {
 		t.Fatalf("add: %v", err)
 	}
 
-	got, err := GetWorkspace("test")
+	got, err := s.GetWorkspace("test")
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}
@@ -74,9 +71,9 @@ func TestAddAndGet(t *testing.T) {
 }
 
 func TestGetNonexistent(t *testing.T) {
-	setupTestEnv(t)
+	s := testStore(t)
 
-	got, err := GetWorkspace("nonexistent")
+	got, err := s.GetWorkspace("nonexistent")
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}
@@ -86,39 +83,38 @@ func TestGetNonexistent(t *testing.T) {
 }
 
 func TestRemove(t *testing.T) {
-	setupTestEnv(t)
+	s := testStore(t)
 
 	ws := models.NewWorkspace("test", "/tmp/test", "main")
-	AddWorkspace(ws)
+	s.AddWorkspace(ws)
 
-	if err := RemoveWorkspace("test"); err != nil {
+	if err := s.RemoveWorkspace("test"); err != nil {
 		t.Fatalf("remove: %v", err)
 	}
 
-	got, _ := GetWorkspace("test")
+	got, _ := s.GetWorkspace("test")
 	if got != nil {
 		t.Error("expected nil after removal")
 	}
 }
 
 func TestRemoveNonexistentIsNoop(t *testing.T) {
-	setupTestEnv(t)
+	s := testStore(t)
 
-	// Should not error
-	if err := RemoveWorkspace("nonexistent"); err != nil {
+	if err := s.RemoveWorkspace("nonexistent"); err != nil {
 		t.Fatalf("remove nonexistent: %v", err)
 	}
 }
 
 func TestMultipleWorkspaces(t *testing.T) {
-	setupTestEnv(t)
+	s := testStore(t)
 
 	ws1 := models.NewWorkspace("ws1", "/tmp/ws1", "feat/a")
 	ws2 := models.NewWorkspace("ws2", "/tmp/ws2", "feat/b")
-	AddWorkspace(ws1)
-	AddWorkspace(ws2)
+	s.AddWorkspace(ws1)
+	s.AddWorkspace(ws2)
 
-	all, err := Load()
+	all, err := s.Load()
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
@@ -126,8 +122,8 @@ func TestMultipleWorkspaces(t *testing.T) {
 		t.Fatalf("expected 2 workspaces, got %d", len(all))
 	}
 
-	got1, _ := GetWorkspace("ws1")
-	got2, _ := GetWorkspace("ws2")
+	got1, _ := s.GetWorkspace("ws1")
+	got2, _ := s.GetWorkspace("ws2")
 	if got1 == nil || got2 == nil {
 		t.Fatal("expected both workspaces to exist")
 	}
@@ -137,53 +133,51 @@ func TestMultipleWorkspaces(t *testing.T) {
 }
 
 func TestUpdateWorkspace(t *testing.T) {
-	setupTestEnv(t)
+	s := testStore(t)
 
 	ws := models.NewWorkspace("test", "/tmp/test", "main")
-	AddWorkspace(ws)
+	s.AddWorkspace(ws)
 
 	ws.Branch = "updated"
-	if err := UpdateWorkspace(ws); err != nil {
+	if err := s.UpdateWorkspace(ws); err != nil {
 		t.Fatalf("update: %v", err)
 	}
 
-	got, _ := GetWorkspace("test")
+	got, _ := s.GetWorkspace("test")
 	if got.Branch != "updated" {
 		t.Errorf("branch: got %q, want 'updated'", got.Branch)
 	}
 }
 
 func TestUpdateNonexistent(t *testing.T) {
-	setupTestEnv(t)
+	s := testStore(t)
 
 	ws := models.NewWorkspace("nonexistent", "/tmp/test", "main")
-	err := UpdateWorkspace(ws)
+	err := s.UpdateWorkspace(ws)
 	if err == nil {
 		t.Error("expected error for nonexistent workspace")
 	}
 }
 
 func TestRenameWorkspace(t *testing.T) {
-	setupTestEnv(t)
+	s := testStore(t)
 
 	ws := models.NewWorkspace("old", "/tmp/old", "main")
 	ws.Repos = []models.RepoWorktree{
 		{RepoName: "api", SourceRepo: "/src/api", WorktreePath: "/tmp/old/api", Branch: "main"},
 	}
-	AddWorkspace(ws)
+	s.AddWorkspace(ws)
 
-	if err := RenameWorkspace("old", "new", "/tmp/new"); err != nil {
+	if err := s.RenameWorkspace("old", "new", "/tmp/new"); err != nil {
 		t.Fatalf("rename: %v", err)
 	}
 
-	// Old name should be gone
-	got, _ := GetWorkspace("old")
+	got, _ := s.GetWorkspace("old")
 	if got != nil {
 		t.Error("old name should not exist")
 	}
 
-	// New name should exist with updated paths
-	got, _ = GetWorkspace("new")
+	got, _ = s.GetWorkspace("new")
 	if got == nil {
 		t.Fatal("new workspace not found")
 	}
@@ -196,24 +190,24 @@ func TestRenameWorkspace(t *testing.T) {
 }
 
 func TestRenameNonexistent(t *testing.T) {
-	setupTestEnv(t)
+	s := testStore(t)
 
-	err := RenameWorkspace("nonexistent", "new", "/tmp/new")
+	err := s.RenameWorkspace("nonexistent", "new", "/tmp/new")
 	if err == nil {
 		t.Error("expected error for nonexistent workspace")
 	}
 }
 
 func TestFindWorkspaceByExactPath(t *testing.T) {
-	setupTestEnv(t)
+	s := testStore(t)
 
 	wsPath := filepath.Join(t.TempDir(), "ws-find")
 	os.MkdirAll(wsPath, 0o755)
 
 	ws := models.NewWorkspace("findme", wsPath, "main")
-	AddWorkspace(ws)
+	s.AddWorkspace(ws)
 
-	got, err := FindWorkspaceByPath(wsPath)
+	got, err := s.FindWorkspaceByPath(wsPath)
 	if err != nil {
 		t.Fatalf("find: %v", err)
 	}
@@ -226,16 +220,16 @@ func TestFindWorkspaceByExactPath(t *testing.T) {
 }
 
 func TestFindWorkspaceBySubdir(t *testing.T) {
-	setupTestEnv(t)
+	s := testStore(t)
 
 	wsPath := filepath.Join(t.TempDir(), "ws-sub")
 	subDir := filepath.Join(wsPath, "api", "src")
 	os.MkdirAll(subDir, 0o755)
 
 	ws := models.NewWorkspace("subtest", wsPath, "main")
-	AddWorkspace(ws)
+	s.AddWorkspace(ws)
 
-	got, err := FindWorkspaceByPath(subDir)
+	got, err := s.FindWorkspaceByPath(subDir)
 	if err != nil {
 		t.Fatalf("find: %v", err)
 	}
@@ -248,9 +242,9 @@ func TestFindWorkspaceBySubdir(t *testing.T) {
 }
 
 func TestFindWorkspaceByPathNotFound(t *testing.T) {
-	setupTestEnv(t)
+	s := testStore(t)
 
-	got, err := FindWorkspaceByPath("/completely/unrelated/path")
+	got, err := s.FindWorkspaceByPath("/completely/unrelated/path")
 	if err != nil {
 		t.Fatalf("find: %v", err)
 	}
@@ -260,17 +254,16 @@ func TestFindWorkspaceByPathNotFound(t *testing.T) {
 }
 
 func TestStatePersistsAsJSON(t *testing.T) {
-	setupTestEnv(t)
+	s := testStore(t)
 
 	ws := models.NewWorkspace("json-test", "/tmp/json", "main")
-	AddWorkspace(ws)
+	s.AddWorkspace(ws)
 
-	data, err := os.ReadFile(StatePath())
+	data, err := os.ReadFile(s.Path)
 	if err != nil {
 		t.Fatalf("read: %v", err)
 	}
 
-	// Should be valid JSON
 	content := string(data)
 	if content[0] != '[' {
 		t.Errorf("expected JSON array, got: %s", content[:20])
@@ -278,13 +271,12 @@ func TestStatePersistsAsJSON(t *testing.T) {
 }
 
 func TestAtomicWrite(t *testing.T) {
-	setupTestEnv(t)
+	s := testStore(t)
 
 	ws := models.NewWorkspace("atomic", "/tmp/atomic", "main")
-	AddWorkspace(ws)
+	s.AddWorkspace(ws)
 
-	// No tmp file should remain
-	tmpPath := StatePath() + ".tmp"
+	tmpPath := s.Path + ".tmp"
 	if _, err := os.Stat(tmpPath); !os.IsNotExist(err) {
 		t.Error("temp file should be cleaned up")
 	}

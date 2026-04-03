@@ -3,6 +3,7 @@ package cmd
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 
 	"github.com/nicksenap/grove/internal/console"
 	"github.com/nicksenap/grove/internal/workspace"
@@ -18,7 +19,7 @@ var doctorCmd = &cobra.Command{
 	Use:   "doctor",
 	Short: "Diagnose workspace health issues",
 	Run: func(cmd *cobra.Command, args []string) {
-		issues, fixed, err := workspace.Doctor(doctorFix)
+		issues, fixed, err := workspace.NewService().Doctor(doctorFix)
 		if err != nil {
 			exitError(err.Error())
 		}
@@ -34,13 +35,15 @@ var doctorCmd = &cobra.Command{
 			return
 		}
 
+		table := console.NewTable(os.Stdout, []string{"Workspace", "Repo", "Issue", "Action"})
 		for _, issue := range issues {
-			repo := "(workspace)"
+			repo := "—"
 			if issue.Repo != nil {
 				repo = *issue.Repo
 			}
-			fmt.Printf("%-20s %-15s %-30s %s\n", issue.Workspace, repo, issue.Issue, issue.SuggestedAction)
+			table.AddRow([]string{issue.Workspace, repo, issue.Issue, issue.SuggestedAction})
 		}
+		table.Render()
 
 		if doctorFix {
 			console.Successf("Fixed %d issue(s)", fixed)

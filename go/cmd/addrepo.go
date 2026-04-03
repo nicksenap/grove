@@ -79,7 +79,7 @@ var addRepoCmd = &cobra.Command{
 			repoNames = selected
 		}
 
-		if err := workspace.AddRepos(wsName, repoNames, repoMap); err != nil {
+		if err := workspace.NewService().AddRepos(wsName, repoNames, repoMap); err != nil {
 			exitError(err.Error())
 		}
 	},

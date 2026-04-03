@@ -4,12 +4,14 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/nicksenap/grove/internal/config"
 	"github.com/nicksenap/grove/internal/logging"
 	"github.com/nicksenap/grove/internal/update"
 	"github.com/spf13/cobra"
 )
 
-const Version = "0.13.0-go"
+// Version is set by goreleaser via -ldflags at build time.
+var Version = "0.13.0-go"
 
 var verbose bool
 
@@ -57,7 +59,7 @@ func init() {
 
 func Execute() {
 	// Non-blocking version check
-	if notice := update.FormatNotice(Version); notice != "" {
+	if notice := update.NewChecker(config.GroveDir).FormatNotice(Version); notice != "" {
 		fmt.Fprintf(os.Stderr, "\033[2m%s\033[0m\n", notice)
 	}
 

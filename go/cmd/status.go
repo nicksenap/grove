@@ -33,7 +33,7 @@ var statusCmd = &cobra.Command{
 			exitError(err.Error())
 		}
 
-		if err := workspace.Status(ws.Name, workspace.StatusOptions{
+		if err := workspace.NewService().Status(ws.Name, workspace.StatusOptions{
 			JSON:    statusJSON,
 			Verbose: statusVerbose,
 			PR:      statusPR,

@@ -13,32 +13,36 @@ import (
 	"time"
 )
 
-// CacheDir is the directory for the cache file. Override in tests.
-var CacheDir string
-
-func init() {
-	home, _ := os.UserHomeDir()
-	CacheDir = filepath.Join(home, ".grove")
-}
-
-func cachePath() string {
-	return filepath.Join(CacheDir, "update-check.json")
-}
-
 // CacheData is the on-disk cache format.
 type CacheData struct {
 	LastCheck int64  `json:"last_check"`
 	Latest    string `json:"latest"`
 }
 
+// Checker performs version checks with injectable dependencies.
+type Checker struct {
+	CachePath    string
+	NowFn        func() time.Time
+	FetchLatestFn func() (string, error) // returns latest version string
+}
+
+// NewChecker creates a Checker with real dependencies.
+func NewChecker(groveDir string) *Checker {
+	return &Checker{
+		CachePath:    filepath.Join(groveDir, "update-check.json"),
+		NowFn:        time.Now,
+		FetchLatestFn: fetchLatestFromGitHub,
+	}
+}
+
 // GetNewerVersion returns the latest version if it's newer than current,
 // or "" if current is up-to-date or unknown. Never blocks on network.
-func GetNewerVersion(current string) string {
-	cache := loadCache()
+func (c *Checker) GetNewerVersion(current string) string {
+	cache := c.loadCache()
 
 	// Trigger background refresh if stale (>24h) or missing
-	if cache == nil || time.Now().Unix()-cache.LastCheck >= 86400 {
-		go fetchAndCache()
+	if cache == nil || c.NowFn().Unix()-cache.LastCheck >= 86400 {
+		go c.fetchAndCache()
 	}
 
 	if cache == nil || cache.Latest == "" {
@@ -51,8 +55,8 @@ func GetNewerVersion(current string) string {
 	return ""
 }
 
-func loadCache() *CacheData {
-	data, err := os.ReadFile(cachePath())
+func (c *Checker) loadCache() *CacheData {
+	data, err := os.ReadFile(c.CachePath)
 	if err != nil {
 		return nil
 	}
@@ -63,48 +67,55 @@ func loadCache() *CacheData {
 	return &cache
 }
 
-func fetchAndCache() {
-	client := &http.Client{Timeout: 5 * time.Second}
-	req, err := http.NewRequest("GET", "https://api.github.com/repos/nicksenap/grove/releases/latest", nil)
-	if err != nil {
+func (c *Checker) fetchAndCache() {
+	version, err := c.FetchLatestFn()
+	if err != nil || version == "" {
 		return
 	}
-	req.Header.Set("User-Agent", "grove")
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != 200 {
-		return
-	}
-
-	var release struct {
-		TagName string `json:"tag_name"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&release); err != nil {
-		return
-	}
-
-	version := strings.TrimPrefix(release.TagName, "v")
 
 	cache := CacheData{
-		LastCheck: time.Now().Unix(),
-		Latest:   version,
+		LastCheck: c.NowFn().Unix(),
+		Latest:    version,
 	}
 	data, err := json.Marshal(cache)
 	if err != nil {
 		return
 	}
 
-	os.MkdirAll(filepath.Dir(cachePath()), 0o755)
-	tmp := cachePath() + ".tmp"
+	os.MkdirAll(filepath.Dir(c.CachePath), 0o755)
+	tmp := c.CachePath + ".tmp"
 	if err := os.WriteFile(tmp, data, 0o644); err != nil {
 		return
 	}
-	os.Rename(tmp, cachePath())
+	os.Rename(tmp, c.CachePath)
+}
+
+func fetchLatestFromGitHub() (string, error) {
+	client := &http.Client{Timeout: 5 * time.Second}
+	req, err := http.NewRequest("GET", "https://api.github.com/repos/nicksenap/grove/releases/latest", nil)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("User-Agent", "grove")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		return "", fmt.Errorf("GitHub API returned %d", resp.StatusCode)
+	}
+
+	var release struct {
+		TagName string `json:"tag_name"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&release); err != nil {
+		return "", err
+	}
+
+	return strings.TrimPrefix(release.TagName, "v"), nil
 }
 
 // compareVersions compares two semver strings.
@@ -142,8 +153,8 @@ func parseVersion(v string) []int {
 }
 
 // FormatNotice returns a user-facing update notice, or "" if up-to-date.
-func FormatNotice(current string) string {
-	newer := GetNewerVersion(current)
+func (c *Checker) FormatNotice(current string) string {
+	newer := c.GetNewerVersion(current)
 	if newer == "" {
 		return ""
 	}

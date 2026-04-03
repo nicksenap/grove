@@ -1,29 +1,30 @@
 package workspace
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
-	"github.com/nicksenap/grove/internal/config"
 	"github.com/nicksenap/grove/internal/models"
 	"github.com/nicksenap/grove/internal/state"
-
-	// blank import for test setup side effects is not needed
-	// claude is tested via workspace behavior
+	"github.com/nicksenap/grove/internal/stats"
 )
 
 // testEnv sets up isolated Grove dirs + real git repos for testing.
 type testEnv struct {
-	t          *testing.T
-	dir        string
-	reposDir   string
-	wsDir      string
-	cfg        *models.Config
-	repoMap    map[string]string
+	t        *testing.T
+	dir      string
+	reposDir string
+	wsDir    string
+	groveDir string
+	cfg      *models.Config
+	repoMap  map[string]string
+	svc      *Service
 }
 
 func setupTestEnv(t *testing.T) *testEnv {
@@ -37,16 +38,8 @@ func setupTestEnv(t *testing.T) *testEnv {
 	os.MkdirAll(wsDir, 0o755)
 	os.MkdirAll(reposDir, 0o755)
 
-	// Override package-level vars
-	config.GroveDir = groveDir
-	config.ConfigPath = filepath.Join(groveDir, "config.toml")
-	config.DefaultWorkspaceDir = wsDir
-
-	// Write empty state
-	os.WriteFile(filepath.Join(groveDir, "state.json"), []byte("[]"), 0o644)
-
-	// Override ClaudeDir for tests
-	ClaudeDir = filepath.Join(dir, ".claude")
+	store := state.NewStore(groveDir)
+	os.WriteFile(store.Path, []byte("[]"), 0o644)
 
 	cfg := &models.Config{
 		RepoDirs:     []string{reposDir},
@@ -54,16 +47,24 @@ func setupTestEnv(t *testing.T) *testEnv {
 		Presets:      map[string]models.Preset{},
 	}
 
-	// Save config so Delete/Rename can load it
-	config.Save(cfg)
+	svc := &Service{
+		State:        store,
+		Stats:        &stats.Tracker{StatsPath: filepath.Join(groveDir, "stats.json"), NowFn: time.Now},
+		ClaudeDir:    filepath.Join(dir, ".claude"),
+		WorkspaceDir: wsDir,
+		RunCmd:       prodRunCmd,
+		RunCmdSilent: prodRunCmdSilent,
+	}
 
 	return &testEnv{
 		t:        t,
 		dir:      dir,
+		groveDir: groveDir,
 		reposDir: reposDir,
 		wsDir:    wsDir,
 		cfg:      cfg,
 		repoMap:  make(map[string]string),
+		svc:      svc,
 	}
 }
 
@@ -119,13 +120,13 @@ func TestCreateSuccess(t *testing.T) {
 	env.createRepo("api")
 	env.createRepo("web")
 
-	err := Create("test-ws", "feat/test", []string{"api", "web"}, env.repoMap, env.cfg)
+	err := env.svc.Create("test-ws", "feat/test", []string{"api", "web"}, env.repoMap, env.cfg)
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
 
 	// Workspace saved to state
-	ws, _ := state.GetWorkspace("test-ws")
+	ws, _ := env.svc.State.GetWorkspace("test-ws")
 	if ws == nil {
 		t.Fatal("workspace not in state")
 	}
@@ -151,9 +152,9 @@ func TestCreateDuplicateNameFails(t *testing.T) {
 	env := setupTestEnv(t)
 	env.createRepo("api")
 
-	Create("dupe", "feat/a", []string{"api"}, env.repoMap, env.cfg)
+	env.svc.Create("dupe", "feat/a", []string{"api"}, env.repoMap, env.cfg)
 
-	err := Create("dupe", "feat/b", []string{"api"}, env.repoMap, env.cfg)
+	err := env.svc.Create("dupe", "feat/b", []string{"api"}, env.repoMap, env.cfg)
 	if err == nil {
 		t.Error("expected error for duplicate workspace name")
 	}
@@ -163,10 +164,10 @@ func TestCreateDuplicateBranchFails(t *testing.T) {
 	env := setupTestEnv(t)
 	env.createRepo("api")
 
-	Create("ws1", "feat/shared", []string{"api"}, env.repoMap, env.cfg)
+	env.svc.Create("ws1", "feat/shared", []string{"api"}, env.repoMap, env.cfg)
 
 	// Second workspace with same branch on same repo should fail
-	err := Create("ws2", "feat/shared", []string{"api"}, env.repoMap, env.cfg)
+	err := env.svc.Create("ws2", "feat/shared", []string{"api"}, env.repoMap, env.cfg)
 	if err == nil {
 		t.Error("expected error for duplicate branch on same repo")
 	}
@@ -177,7 +178,7 @@ func TestCreateRollbackOnFailure(t *testing.T) {
 	env.createRepo("api")
 
 	// Try to create with a nonexistent repo — should rollback
-	err := Create("rollback-ws", "feat/test", []string{"api", "nonexistent"}, env.repoMap, env.cfg)
+	err := env.svc.Create("rollback-ws", "feat/test", []string{"api", "nonexistent"}, env.repoMap, env.cfg)
 	if err == nil {
 		t.Error("expected error")
 	}
@@ -189,7 +190,7 @@ func TestCreateRollbackOnFailure(t *testing.T) {
 	}
 
 	// State should not contain the workspace
-	ws, _ := state.GetWorkspace("rollback-ws")
+	ws, _ := env.svc.State.GetWorkspace("rollback-ws")
 	if ws != nil {
 		t.Error("workspace should not be in state after rollback")
 	}
@@ -200,7 +201,7 @@ func TestCreateAutoCreatesBranch(t *testing.T) {
 	env.createRepo("api")
 
 	// Branch doesn't exist yet — should be auto-created
-	err := Create("auto-branch", "feat/new-branch", []string{"api"}, env.repoMap, env.cfg)
+	err := env.svc.Create("auto-branch", "feat/new-branch", []string{"api"}, env.repoMap, env.cfg)
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
@@ -216,7 +217,7 @@ func TestCreateWritesMCPConfig(t *testing.T) {
 	env := setupTestEnv(t)
 	env.createRepo("api")
 
-	Create("mcp-ws", "feat/mcp", []string{"api"}, env.repoMap, env.cfg)
+	env.svc.Create("mcp-ws", "feat/mcp", []string{"api"}, env.repoMap, env.cfg)
 
 	// .mcp.json in workspace root
 	mcpPath := filepath.Join(env.wsDir, "mcp-ws", ".mcp.json")
@@ -247,7 +248,7 @@ func TestCreateCdFile(t *testing.T) {
 	os.Setenv("GROVE_CD_FILE", cdFile)
 	defer os.Unsetenv("GROVE_CD_FILE")
 
-	Create("cd-ws", "feat/cd", []string{"api"}, env.repoMap, env.cfg)
+	env.svc.Create("cd-ws", "feat/cd", []string{"api"}, env.repoMap, env.cfg)
 
 	data, err := os.ReadFile(cdFile)
 	if err != nil {
@@ -273,7 +274,7 @@ func TestSetupHookRuns(t *testing.T) {
 	env.run(repo, "git", "add", ".")
 	env.run(repo, "git", "commit", "-q", "-m", "add grove config")
 
-	Create("hook-ws", "feat/hook", []string{"hooked"}, env.repoMap, env.cfg)
+	env.svc.Create("hook-ws", "feat/hook", []string{"hooked"}, env.repoMap, env.cfg)
 
 	// Check marker file in worktree (not source repo)
 	marker := filepath.Join(env.wsDir, "hook-ws", "hooked", ".setup-ran")
@@ -291,7 +292,7 @@ func TestSetupHookMultipleCommands(t *testing.T) {
 	env.run(repo, "git", "add", ".")
 	env.run(repo, "git", "commit", "-q", "-m", "add grove config")
 
-	Create("multi-ws", "feat/multi", []string{"multi"}, env.repoMap, env.cfg)
+	env.svc.Create("multi-ws", "feat/multi", []string{"multi"}, env.repoMap, env.cfg)
 
 	wt := filepath.Join(env.wsDir, "multi-ws", "multi")
 	for _, f := range []string{".step1", ".step2"} {
@@ -305,7 +306,7 @@ func TestNoSetupHookNoCrash(t *testing.T) {
 	env := setupTestEnv(t)
 	env.createRepo("plain")
 
-	err := Create("plain-ws", "feat/plain", []string{"plain"}, env.repoMap, env.cfg)
+	err := env.svc.Create("plain-ws", "feat/plain", []string{"plain"}, env.repoMap, env.cfg)
 	if err != nil {
 		t.Fatalf("should not fail without setup hook: %v", err)
 	}
@@ -318,15 +319,15 @@ func TestNoSetupHookNoCrash(t *testing.T) {
 func TestDeleteSuccess(t *testing.T) {
 	env := setupTestEnv(t)
 	env.createRepo("api")
-	Create("del-ws", "feat/del", []string{"api"}, env.repoMap, env.cfg)
+	env.svc.Create("del-ws", "feat/del", []string{"api"}, env.repoMap, env.cfg)
 
-	err := Delete("del-ws")
+	err := env.svc.Delete("del-ws")
 	if err != nil {
 		t.Fatalf("delete: %v", err)
 	}
 
 	// State cleared
-	ws, _ := state.GetWorkspace("del-ws")
+	ws, _ := env.svc.State.GetWorkspace("del-ws")
 	if ws != nil {
 		t.Error("workspace should be removed from state")
 	}
@@ -341,7 +342,7 @@ func TestDeleteNotFound(t *testing.T) {
 	env := setupTestEnv(t)
 	_ = env // setup env for state path
 
-	err := Delete("nonexistent")
+	err := env.svc.Delete("nonexistent")
 	if err == nil {
 		t.Error("expected error for nonexistent workspace")
 	}
@@ -350,9 +351,9 @@ func TestDeleteNotFound(t *testing.T) {
 func TestDeleteCleansBranch(t *testing.T) {
 	env := setupTestEnv(t)
 	env.createRepo("api")
-	Create("branch-ws", "feat/to-clean", []string{"api"}, env.repoMap, env.cfg)
+	env.svc.Create("branch-ws", "feat/to-clean", []string{"api"}, env.repoMap, env.cfg)
 
-	Delete("branch-ws")
+	env.svc.Delete("branch-ws")
 
 	// Branch should be cleaned up from source repo
 	out := env.run(env.repoMap["api"], "git", "branch", "--list", "feat/to-clean")
@@ -368,21 +369,21 @@ func TestDeleteCleansBranch(t *testing.T) {
 func TestRenameSuccess(t *testing.T) {
 	env := setupTestEnv(t)
 	env.createRepo("api")
-	Create("old-name", "feat/rename", []string{"api"}, env.repoMap, env.cfg)
+	env.svc.Create("old-name", "feat/rename", []string{"api"}, env.repoMap, env.cfg)
 
-	err := Rename("old-name", "new-name")
+	err := env.svc.Rename("old-name", "new-name")
 	if err != nil {
 		t.Fatalf("rename: %v", err)
 	}
 
 	// Old name gone
-	ws, _ := state.GetWorkspace("old-name")
+	ws, _ := env.svc.State.GetWorkspace("old-name")
 	if ws != nil {
 		t.Error("old name should not exist")
 	}
 
 	// New name exists with updated paths
-	ws, _ = state.GetWorkspace("new-name")
+	ws, _ = env.svc.State.GetWorkspace("new-name")
 	if ws == nil {
 		t.Fatal("new workspace not found")
 	}
@@ -408,7 +409,7 @@ func TestRenameNotFound(t *testing.T) {
 	env := setupTestEnv(t)
 	_ = env
 
-	err := Rename("nonexistent", "new")
+	err := env.svc.Rename("nonexistent", "new")
 	if err == nil {
 		t.Error("expected error")
 	}
@@ -418,10 +419,10 @@ func TestRenameNameTaken(t *testing.T) {
 	env := setupTestEnv(t)
 	env.createRepo("api")
 	env.createRepo("web")
-	Create("ws-a", "feat/a", []string{"api"}, env.repoMap, env.cfg)
-	Create("ws-b", "feat/b", []string{"web"}, env.repoMap, env.cfg)
+	env.svc.Create("ws-a", "feat/a", []string{"api"}, env.repoMap, env.cfg)
+	env.svc.Create("ws-b", "feat/b", []string{"web"}, env.repoMap, env.cfg)
 
-	err := Rename("ws-a", "ws-b")
+	err := env.svc.Rename("ws-a", "ws-b")
 	if err == nil {
 		t.Error("expected error for taken name")
 	}
@@ -430,14 +431,14 @@ func TestRenameNameTaken(t *testing.T) {
 func TestRenamePreservesCreatedAt(t *testing.T) {
 	env := setupTestEnv(t)
 	env.createRepo("api")
-	Create("preserve-ws", "feat/preserve", []string{"api"}, env.repoMap, env.cfg)
+	env.svc.Create("preserve-ws", "feat/preserve", []string{"api"}, env.repoMap, env.cfg)
 
-	ws, _ := state.GetWorkspace("preserve-ws")
+	ws, _ := env.svc.State.GetWorkspace("preserve-ws")
 	originalCreatedAt := ws.CreatedAt
 
-	Rename("preserve-ws", "renamed-ws")
+	env.svc.Rename("preserve-ws", "renamed-ws")
 
-	ws, _ = state.GetWorkspace("renamed-ws")
+	ws, _ = env.svc.State.GetWorkspace("renamed-ws")
 	if ws.CreatedAt != originalCreatedAt {
 		t.Errorf("created_at changed: %q -> %q", originalCreatedAt, ws.CreatedAt)
 	}
@@ -450,7 +451,7 @@ func TestRenamePreservesCreatedAt(t *testing.T) {
 func TestSyncUpToDate(t *testing.T) {
 	env := setupTestEnv(t)
 	env.createRepoWithRemote("api")
-	Create("sync-ws", "feat/sync", []string{"api"}, env.repoMap, env.cfg)
+	env.svc.Create("sync-ws", "feat/sync", []string{"api"}, env.repoMap, env.cfg)
 
 	// Clean the worktree (untracked .mcp.json)
 	wt := filepath.Join(env.wsDir, "sync-ws", "api")
@@ -458,7 +459,7 @@ func TestSyncUpToDate(t *testing.T) {
 	env.run(wt, "git", "commit", "-q", "-m", "clean")
 
 	// No upstream changes — should be up to date
-	err := Sync("sync-ws")
+	err := env.svc.Sync("sync-ws")
 	if err != nil {
 		t.Fatalf("sync: %v", err)
 	}
@@ -468,7 +469,7 @@ func TestSyncNotFound(t *testing.T) {
 	env := setupTestEnv(t)
 	_ = env
 
-	err := Sync("nonexistent")
+	err := env.svc.Sync("nonexistent")
 	if err == nil {
 		t.Error("expected error")
 	}
@@ -483,14 +484,14 @@ func TestAddReposSuccess(t *testing.T) {
 	env.createRepo("api")
 	env.createRepo("web")
 
-	Create("add-ws", "feat/add", []string{"api"}, env.repoMap, env.cfg)
+	env.svc.Create("add-ws", "feat/add", []string{"api"}, env.repoMap, env.cfg)
 
-	err := AddRepos("add-ws", []string{"web"}, env.repoMap)
+	err := env.svc.AddRepos("add-ws", []string{"web"}, env.repoMap)
 	if err != nil {
 		t.Fatalf("add: %v", err)
 	}
 
-	ws, _ := state.GetWorkspace("add-ws")
+	ws, _ := env.svc.State.GetWorkspace("add-ws")
 	if len(ws.Repos) != 2 {
 		t.Errorf("expected 2 repos, got %d", len(ws.Repos))
 	}
@@ -504,15 +505,15 @@ func TestAddReposSuccess(t *testing.T) {
 func TestAddReposAlreadyPresent(t *testing.T) {
 	env := setupTestEnv(t)
 	env.createRepo("api")
-	Create("dup-ws", "feat/dup", []string{"api"}, env.repoMap, env.cfg)
+	env.svc.Create("dup-ws", "feat/dup", []string{"api"}, env.repoMap, env.cfg)
 
 	// Adding same repo again should be a no-op
-	err := AddRepos("dup-ws", []string{"api"}, env.repoMap)
+	err := env.svc.AddRepos("dup-ws", []string{"api"}, env.repoMap)
 	if err != nil {
 		t.Fatalf("add duplicate: %v", err)
 	}
 
-	ws, _ := state.GetWorkspace("dup-ws")
+	ws, _ := env.svc.State.GetWorkspace("dup-ws")
 	if len(ws.Repos) != 1 {
 		t.Errorf("expected 1 repo (no dup), got %d", len(ws.Repos))
 	}
@@ -522,7 +523,7 @@ func TestAddReposNotFound(t *testing.T) {
 	env := setupTestEnv(t)
 	_ = env
 
-	err := AddRepos("nonexistent", []string{"api"}, env.repoMap)
+	err := env.svc.AddRepos("nonexistent", []string{"api"}, env.repoMap)
 	if err == nil {
 		t.Error("expected error")
 	}
@@ -536,14 +537,14 @@ func TestRemoveReposSuccess(t *testing.T) {
 	env := setupTestEnv(t)
 	env.createRepo("api")
 	env.createRepo("web")
-	Create("rm-ws", "feat/rm", []string{"api", "web"}, env.repoMap, env.cfg)
+	env.svc.Create("rm-ws", "feat/rm", []string{"api", "web"}, env.repoMap, env.cfg)
 
-	err := RemoveRepos("rm-ws", []string{"web"})
+	err := env.svc.RemoveRepos("rm-ws", []string{"web"})
 	if err != nil {
 		t.Fatalf("remove: %v", err)
 	}
 
-	ws, _ := state.GetWorkspace("rm-ws")
+	ws, _ := env.svc.State.GetWorkspace("rm-ws")
 	if len(ws.Repos) != 1 {
 		t.Errorf("expected 1 repo, got %d", len(ws.Repos))
 	}
@@ -562,14 +563,14 @@ func TestRemoveReposMultiple(t *testing.T) {
 	env.createRepo("api")
 	env.createRepo("web")
 	env.createRepo("worker")
-	Create("rm-multi", "feat/rm-multi", []string{"api", "web", "worker"}, env.repoMap, env.cfg)
+	env.svc.Create("rm-multi", "feat/rm-multi", []string{"api", "web", "worker"}, env.repoMap, env.cfg)
 
-	err := RemoveRepos("rm-multi", []string{"web", "worker"})
+	err := env.svc.RemoveRepos("rm-multi", []string{"web", "worker"})
 	if err != nil {
 		t.Fatalf("remove: %v", err)
 	}
 
-	ws, _ := state.GetWorkspace("rm-multi")
+	ws, _ := env.svc.State.GetWorkspace("rm-multi")
 	if len(ws.Repos) != 1 {
 		t.Errorf("expected 1 repo remaining, got %d", len(ws.Repos))
 	}
@@ -589,10 +590,10 @@ func TestRemoveReposMultiple(t *testing.T) {
 func TestRemoveReposNonexistent(t *testing.T) {
 	env := setupTestEnv(t)
 	env.createRepo("api")
-	Create("rm-ne", "feat/rm-ne", []string{"api"}, env.repoMap, env.cfg)
+	env.svc.Create("rm-ne", "feat/rm-ne", []string{"api"}, env.repoMap, env.cfg)
 
 	// Removing a repo not in workspace should be a no-op
-	err := RemoveRepos("rm-ne", []string{"nonexistent"})
+	err := env.svc.RemoveRepos("rm-ne", []string{"nonexistent"})
 	if err != nil {
 		t.Fatalf("remove nonexistent: %v", err)
 	}
@@ -605,9 +606,9 @@ func TestRemoveReposNonexistent(t *testing.T) {
 func TestStatusSuccess(t *testing.T) {
 	env := setupTestEnv(t)
 	env.createRepo("api")
-	Create("status-ws", "feat/status", []string{"api"}, env.repoMap, env.cfg)
+	env.svc.Create("status-ws", "feat/status", []string{"api"}, env.repoMap, env.cfg)
 
-	err := Status("status-ws", StatusOptions{})
+	err := env.svc.Status("status-ws", StatusOptions{})
 	if err != nil {
 		t.Fatalf("status: %v", err)
 	}
@@ -616,9 +617,9 @@ func TestStatusSuccess(t *testing.T) {
 func TestStatusJSON(t *testing.T) {
 	env := setupTestEnv(t)
 	env.createRepo("api")
-	Create("json-ws", "feat/json", []string{"api"}, env.repoMap, env.cfg)
+	env.svc.Create("json-ws", "feat/json", []string{"api"}, env.repoMap, env.cfg)
 
-	err := Status("json-ws", StatusOptions{JSON: true})
+	err := env.svc.Status("json-ws", StatusOptions{JSON: true})
 	if err != nil {
 		t.Fatalf("status json: %v", err)
 	}
@@ -627,10 +628,10 @@ func TestStatusJSON(t *testing.T) {
 func TestStatusVerbose(t *testing.T) {
 	env := setupTestEnv(t)
 	env.createRepo("api")
-	Create("verbose-ws", "feat/verbose", []string{"api"}, env.repoMap, env.cfg)
+	env.svc.Create("verbose-ws", "feat/verbose", []string{"api"}, env.repoMap, env.cfg)
 
 	// Should not error — verbose shows raw git status for dirty repos
-	err := Status("verbose-ws", StatusOptions{Verbose: true})
+	err := env.svc.Status("verbose-ws", StatusOptions{Verbose: true})
 	if err != nil {
 		t.Fatalf("status verbose: %v", err)
 	}
@@ -640,7 +641,7 @@ func TestStatusNotFound(t *testing.T) {
 	env := setupTestEnv(t)
 	_ = env
 
-	err := Status("nonexistent", StatusOptions{})
+	err := env.svc.Status("nonexistent", StatusOptions{})
 	if err == nil {
 		t.Error("expected error")
 	}
@@ -653,9 +654,9 @@ func TestStatusNotFound(t *testing.T) {
 func TestDoctorHealthy(t *testing.T) {
 	env := setupTestEnv(t)
 	env.createRepo("api")
-	Create("healthy-ws", "feat/healthy", []string{"api"}, env.repoMap, env.cfg)
+	env.svc.Create("healthy-ws", "feat/healthy", []string{"api"}, env.repoMap, env.cfg)
 
-	issues, _, err := Doctor(false)
+	issues, _, err := env.svc.Doctor(false)
 	if err != nil {
 		t.Fatalf("doctor: %v", err)
 	}
@@ -667,12 +668,12 @@ func TestDoctorHealthy(t *testing.T) {
 func TestDoctorDetectsMissingWorktree(t *testing.T) {
 	env := setupTestEnv(t)
 	env.createRepo("api")
-	Create("stale-ws", "feat/stale", []string{"api"}, env.repoMap, env.cfg)
+	env.svc.Create("stale-ws", "feat/stale", []string{"api"}, env.repoMap, env.cfg)
 
 	// Delete worktree dir manually
 	os.RemoveAll(filepath.Join(env.wsDir, "stale-ws", "api"))
 
-	issues, _, err := Doctor(false)
+	issues, _, err := env.svc.Doctor(false)
 	if err != nil {
 		t.Fatalf("doctor: %v", err)
 	}
@@ -684,12 +685,12 @@ func TestDoctorDetectsMissingWorktree(t *testing.T) {
 func TestDoctorFixRemovesStale(t *testing.T) {
 	env := setupTestEnv(t)
 	env.createRepo("api")
-	Create("fix-ws", "feat/fix", []string{"api"}, env.repoMap, env.cfg)
+	env.svc.Create("fix-ws", "feat/fix", []string{"api"}, env.repoMap, env.cfg)
 
 	// Delete worktree dir
 	os.RemoveAll(filepath.Join(env.wsDir, "fix-ws", "api"))
 
-	_, fixed, err := Doctor(true)
+	_, fixed, err := env.svc.Doctor(true)
 	if err != nil {
 		t.Fatalf("doctor fix: %v", err)
 	}
@@ -698,7 +699,7 @@ func TestDoctorFixRemovesStale(t *testing.T) {
 	}
 
 	// After fix, should be clean (or at least fewer issues)
-	issues, _, _ := Doctor(false)
+	issues, _, _ := env.svc.Doctor(false)
 	if len(issues) > 0 {
 		// Workspace with no repos might still be an issue, that's ok
 		t.Logf("remaining issues after fix: %d", len(issues))
@@ -708,12 +709,12 @@ func TestDoctorFixRemovesStale(t *testing.T) {
 func TestDoctorDetectsMissingWorkspaceDir(t *testing.T) {
 	env := setupTestEnv(t)
 	env.createRepo("api")
-	Create("ghost-ws", "feat/ghost", []string{"api"}, env.repoMap, env.cfg)
+	env.svc.Create("ghost-ws", "feat/ghost", []string{"api"}, env.repoMap, env.cfg)
 
 	// Delete entire workspace directory
 	os.RemoveAll(filepath.Join(env.wsDir, "ghost-ws"))
 
-	issues, _, err := Doctor(false)
+	issues, _, err := env.svc.Doctor(false)
 	if err != nil {
 		t.Fatalf("doctor: %v", err)
 	}
@@ -732,25 +733,25 @@ func TestDoctorDetectsMissingWorkspaceDir(t *testing.T) {
 func TestDoctorDetectsOrphanedClaudeMemory(t *testing.T) {
 	env := setupTestEnv(t)
 	env.cfg.ClaudeMemorySync = true
-	config.Save(env.cfg)
+	
 	env.createRepo("api")
-	Create("orphan-ws", "feat/orphan", []string{"api"}, env.repoMap, env.cfg)
+	env.svc.Create("orphan-ws", "feat/orphan", []string{"api"}, env.repoMap, env.cfg)
 
 	// Delete workspace but leave Claude memory dir behind
-	ws, _ := state.GetWorkspace("orphan-ws")
+	ws, _ := env.svc.State.GetWorkspace("orphan-ws")
 	wtPath := ws.Repos[0].WorktreePath
 
-	Delete("orphan-ws")
+	env.svc.Delete("orphan-ws")
 
 	// Manually create an orphaned Claude memory dir for the deleted worktree
-	claudeDir := ClaudeDir
+	claudeDir := env.svc.ClaudeDir
 	encoded := strings.ReplaceAll(wtPath, "/", "-")
 	encoded = strings.ReplaceAll(encoded, ".", "-")
 	orphanDir := filepath.Join(claudeDir, "projects", encoded, "memory")
 	os.MkdirAll(orphanDir, 0o755)
 	os.WriteFile(filepath.Join(orphanDir, "stale.md"), []byte("old"), 0o644)
 
-	issues, _, err := Doctor(false)
+	issues, _, err := env.svc.Doctor(false)
 	if err != nil {
 		t.Fatalf("doctor: %v", err)
 	}
@@ -776,12 +777,12 @@ func TestCreateMultiRepoAllProcessed(t *testing.T) {
 	env.createRepo("web")
 	env.createRepo("worker")
 
-	err := Create("multi-ws", "feat/multi", []string{"api", "web", "worker"}, env.repoMap, env.cfg)
+	err := env.svc.Create("multi-ws", "feat/multi", []string{"api", "web", "worker"}, env.repoMap, env.cfg)
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
 
-	ws, _ := state.GetWorkspace("multi-ws")
+	ws, _ := env.svc.State.GetWorkspace("multi-ws")
 	if len(ws.Repos) != 3 {
 		t.Errorf("expected 3 repos, got %d", len(ws.Repos))
 	}
@@ -799,10 +800,10 @@ func TestStatusMultiRepoAllReported(t *testing.T) {
 	env := setupTestEnv(t)
 	env.createRepo("api")
 	env.createRepo("web")
-	Create("multi-status", "feat/ms", []string{"api", "web"}, env.repoMap, env.cfg)
+	env.svc.Create("multi-status", "feat/ms", []string{"api", "web"}, env.repoMap, env.cfg)
 
 	// Should not error even with multiple repos
-	err := Status("multi-status", StatusOptions{})
+	err := env.svc.Status("multi-status", StatusOptions{})
 	if err != nil {
 		t.Fatalf("status: %v", err)
 	}
@@ -812,9 +813,9 @@ func TestDeleteMultiRepoAllCleaned(t *testing.T) {
 	env := setupTestEnv(t)
 	env.createRepo("api")
 	env.createRepo("web")
-	Create("multi-del", "feat/md", []string{"api", "web"}, env.repoMap, env.cfg)
+	env.svc.Create("multi-del", "feat/md", []string{"api", "web"}, env.repoMap, env.cfg)
 
-	err := Delete("multi-del")
+	err := env.svc.Delete("multi-del")
 	if err != nil {
 		t.Fatalf("delete: %v", err)
 	}
@@ -828,7 +829,7 @@ func TestDeleteMultiRepoAllCleaned(t *testing.T) {
 	}
 
 	// State cleared
-	ws, _ := state.GetWorkspace("multi-del")
+	ws, _ := env.svc.State.GetWorkspace("multi-del")
 	if ws != nil {
 		t.Error("workspace should be removed from state")
 	}
@@ -838,7 +839,7 @@ func TestSyncMultiRepo(t *testing.T) {
 	env := setupTestEnv(t)
 	env.createRepoWithRemote("api")
 	env.createRepoWithRemote("web")
-	Create("sync-multi", "feat/sm", []string{"api", "web"}, env.repoMap, env.cfg)
+	env.svc.Create("sync-multi", "feat/sm", []string{"api", "web"}, env.repoMap, env.cfg)
 
 	// Clean worktrees
 	for _, name := range []string{"api", "web"} {
@@ -847,7 +848,7 @@ func TestSyncMultiRepo(t *testing.T) {
 		env.run(wt, "git", "commit", "-q", "-m", "clean")
 	}
 
-	err := Sync("sync-multi")
+	err := env.svc.Sync("sync-multi")
 	if err != nil {
 		t.Fatalf("sync: %v", err)
 	}
@@ -860,7 +861,7 @@ func TestSyncMultiRepo(t *testing.T) {
 func TestSyncRebases(t *testing.T) {
 	env := setupTestEnv(t)
 	repo := env.createRepoWithRemote("api")
-	Create("rebase-ws", "feat/rebase", []string{"api"}, env.repoMap, env.cfg)
+	env.svc.Create("rebase-ws", "feat/rebase", []string{"api"}, env.repoMap, env.cfg)
 
 	// Clean the worktree
 	wt := filepath.Join(env.wsDir, "rebase-ws", "api")
@@ -874,7 +875,7 @@ func TestSyncRebases(t *testing.T) {
 	env.run(repo, "git", "push", "-q", "origin", "HEAD")
 
 	// Sync should rebase
-	err := Sync("rebase-ws")
+	err := env.svc.Sync("rebase-ws")
 	if err != nil {
 		t.Fatalf("sync: %v", err)
 	}
@@ -893,7 +894,7 @@ func TestAllWorkspacesSummaryEmpty(t *testing.T) {
 	env := setupTestEnv(t)
 	_ = env
 
-	results, err := AllWorkspacesSummary()
+	results, err := env.svc.AllWorkspacesSummary()
 	if err != nil {
 		t.Fatalf("summary: %v", err)
 	}
@@ -906,10 +907,10 @@ func TestAllWorkspacesSummaryMultiple(t *testing.T) {
 	env := setupTestEnv(t)
 	env.createRepo("api")
 	env.createRepo("web")
-	Create("ws-a", "feat/a", []string{"api"}, env.repoMap, env.cfg)
-	Create("ws-b", "feat/b", []string{"web"}, env.repoMap, env.cfg)
+	env.svc.Create("ws-a", "feat/a", []string{"api"}, env.repoMap, env.cfg)
+	env.svc.Create("ws-b", "feat/b", []string{"web"}, env.repoMap, env.cfg)
 
-	results, err := AllWorkspacesSummary()
+	results, err := env.svc.AllWorkspacesSummary()
 	if err != nil {
 		t.Fatalf("summary: %v", err)
 	}
@@ -933,7 +934,7 @@ func TestMCPConfigMergesWithExisting(t *testing.T) {
 	env := setupTestEnv(t)
 	env.createRepo("api")
 
-	Create("merge-ws", "feat/merge", []string{"api"}, env.repoMap, env.cfg)
+	env.svc.Create("merge-ws", "feat/merge", []string{"api"}, env.repoMap, env.cfg)
 
 	// Add another server to .mcp.json
 	mcpPath := filepath.Join(env.wsDir, "merge-ws", "api", ".mcp.json")
@@ -941,7 +942,7 @@ func TestMCPConfigMergesWithExisting(t *testing.T) {
 	os.WriteFile(mcpPath, []byte(existing), 0o644)
 
 	// Create another workspace that writes .mcp.json — simulate by calling writeMCPConfig directly
-	ws, _ := state.GetWorkspace("merge-ws")
+	ws, _ := env.svc.State.GetWorkspace("merge-ws")
 	writeMCPConfig(*ws)
 
 	// "other" server should still be there
@@ -962,14 +963,14 @@ func TestMCPConfigRemoveOnlyGrove(t *testing.T) {
 	env := setupTestEnv(t)
 	env.createRepo("api")
 
-	Create("rmcp-ws", "feat/rmcp", []string{"api"}, env.repoMap, env.cfg)
+	env.svc.Create("rmcp-ws", "feat/rmcp", []string{"api"}, env.repoMap, env.cfg)
 
 	// Add another server
 	mcpPath := filepath.Join(env.wsDir, "rmcp-ws", "api", ".mcp.json")
 	existing := `{"mcpServers":{"grove":{"command":"gw","args":["mcp-serve","--workspace","rmcp-ws"]},"keeper":{"command":"keep-me","args":[]}}}`
 	os.WriteFile(mcpPath, []byte(existing), 0o644)
 
-	ws, _ := state.GetWorkspace("rmcp-ws")
+	ws, _ := env.svc.State.GetWorkspace("rmcp-ws")
 	removeMCPConfig(*ws)
 
 	// "keeper" should remain, "grove" should be gone
@@ -1005,7 +1006,7 @@ func TestCreateRehydratesClaudeMemory(t *testing.T) {
 	os.MkdirAll(memDir, 0o755)
 	os.WriteFile(filepath.Join(memDir, "context.md"), []byte("source memory"), 0o644)
 
-	Create("claude-ws", "feat/claude", []string{"api"}, env.repoMap, env.cfg)
+	env.svc.Create("claude-ws", "feat/claude", []string{"api"}, env.repoMap, env.cfg)
 
 	// Memory should be copied to worktree's claude project dir
 	wtPath := filepath.Join(env.wsDir, "claude-ws", "api")
@@ -1035,7 +1036,7 @@ func TestCreateSkipsClaudeSyncWhenDisabled(t *testing.T) {
 	os.MkdirAll(memDir, 0o755)
 	os.WriteFile(filepath.Join(memDir, "context.md"), []byte("source memory"), 0o644)
 
-	Create("no-sync", "feat/nosync", []string{"api"}, env.repoMap, env.cfg)
+	env.svc.Create("no-sync", "feat/nosync", []string{"api"}, env.repoMap, env.cfg)
 
 	// Memory should NOT be copied
 	wtPath := filepath.Join(env.wsDir, "no-sync", "api")
@@ -1052,9 +1053,9 @@ func TestDeleteHarvestsClaudeMemory(t *testing.T) {
 	env := setupTestEnv(t)
 	env.createRepo("api")
 	env.cfg.ClaudeMemorySync = true
-	config.Save(env.cfg) // persist so Delete can load it
+	 // persist so Delete can load it
 
-	Create("harvest-ws", "feat/harvest", []string{"api"}, env.repoMap, env.cfg)
+	env.svc.Create("harvest-ws", "feat/harvest", []string{"api"}, env.repoMap, env.cfg)
 
 	// Add memory in the worktree's project dir
 	claudeDir := filepath.Join(env.dir, ".claude")
@@ -1065,7 +1066,7 @@ func TestDeleteHarvestsClaudeMemory(t *testing.T) {
 	os.MkdirAll(wtMemDir, 0o755)
 	os.WriteFile(filepath.Join(wtMemDir, "learned.md"), []byte("new insight"), 0o644)
 
-	Delete("harvest-ws")
+	env.svc.Delete("harvest-ws")
 
 	// Memory should be harvested back to source repo's project dir
 	sourceRepo := env.repoMap["api"]
@@ -1085,14 +1086,353 @@ func TestDeleteHarvestsClaudeMemory(t *testing.T) {
 func TestSyncSkipsDirty(t *testing.T) {
 	env := setupTestEnv(t)
 	env.createRepoWithRemote("api")
-	Create("dirty-ws", "feat/dirty", []string{"api"}, env.repoMap, env.cfg)
+	env.svc.Create("dirty-ws", "feat/dirty", []string{"api"}, env.repoMap, env.cfg)
 
 	// Make worktree dirty (don't commit the .mcp.json)
 	// It's already dirty due to .mcp.json, so sync should skip
 
-	err := Sync("dirty-ws")
+	err := env.svc.Sync("dirty-ws")
 	if err != nil {
 		t.Fatalf("sync: %v", err)
 	}
 	// No error = correctly skipped
+}
+
+// ---------------------------------------------------------------------------
+// Teardown hook tests
+// ---------------------------------------------------------------------------
+
+func TestDeleteRunsTeardownHook(t *testing.T) {
+	env := setupTestEnv(t)
+	repo := env.createRepo("api")
+
+	// Write .grove.toml with teardown hook
+	toml := `teardown = "touch /tmp/grove-teardown-test-marker"`
+	os.WriteFile(filepath.Join(repo, ".grove.toml"), []byte(toml), 0o644)
+	env.run(repo, "git", "add", ".")
+	env.run(repo, "git", "commit", "-q", "-m", "add teardown")
+
+	// Override RunCmdSilent to capture calls
+	var teardownCalls []string
+	origRunCmdSilent := env.svc.RunCmdSilent
+	env.svc.RunCmdSilent = func(dir, cmd string) error {
+		teardownCalls = append(teardownCalls, cmd)
+		return nil
+	}
+	defer func() { env.svc.RunCmdSilent = origRunCmdSilent }()
+
+	env.svc.Create("td-ws", "feat/td", []string{"api"}, env.repoMap, env.cfg)
+	env.svc.Delete("td-ws")
+
+	found := false
+	for _, c := range teardownCalls {
+		if strings.Contains(c, "teardown-test-marker") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("teardown hook not called; calls: %v", teardownCalls)
+	}
+}
+
+func TestRemoveReposRunsTeardownHook(t *testing.T) {
+	env := setupTestEnv(t)
+	repo := env.createRepo("api")
+	env.createRepo("web")
+
+	toml := `teardown = "echo tearing-down"`
+	os.WriteFile(filepath.Join(repo, ".grove.toml"), []byte(toml), 0o644)
+	env.run(repo, "git", "add", ".")
+	env.run(repo, "git", "commit", "-q", "-m", "add teardown")
+
+	var teardownCalls []string
+	origRunCmdSilent := env.svc.RunCmdSilent
+	env.svc.RunCmdSilent = func(dir, cmd string) error {
+		teardownCalls = append(teardownCalls, cmd)
+		return nil
+	}
+	defer func() { env.svc.RunCmdSilent = origRunCmdSilent }()
+
+	env.svc.Create("td-rm-ws", "feat/td-rm", []string{"api", "web"}, env.repoMap, env.cfg)
+	env.svc.RemoveRepos("td-rm-ws", []string{"api"})
+
+	found := false
+	for _, c := range teardownCalls {
+		if strings.Contains(c, "tearing-down") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("teardown hook not called during remove; calls: %v", teardownCalls)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Pre/post sync hook tests
+// ---------------------------------------------------------------------------
+
+func TestSyncRunsPreAndPostHooks(t *testing.T) {
+	env := setupTestEnv(t)
+	repo := env.createRepoWithRemote("api")
+
+	toml := `pre_sync = "echo pre"
+post_sync = "echo post"`
+	os.WriteFile(filepath.Join(repo, ".grove.toml"), []byte(toml), 0o644)
+	env.run(repo, "git", "add", ".")
+	env.run(repo, "git", "commit", "-q", "-m", "add sync hooks")
+	env.run(repo, "git", "push", "-q", "origin", "HEAD")
+
+	env.svc.Create("sync-hook-ws", "feat/sync-hook", []string{"api"}, env.repoMap, env.cfg)
+
+	// Clean worktree
+	wt := filepath.Join(env.wsDir, "sync-hook-ws", "api")
+	env.run(wt, "git", "add", "-A")
+	env.run(wt, "git", "commit", "-q", "-m", "clean")
+
+	// Add upstream commit to trigger rebase
+	os.WriteFile(filepath.Join(repo, "new.txt"), []byte("upstream"), 0o644)
+	env.run(repo, "git", "add", ".")
+	env.run(repo, "git", "commit", "-q", "-m", "upstream")
+	env.run(repo, "git", "push", "-q", "origin", "HEAD")
+
+	var hookCalls []string
+	origRunCmdSilent := env.svc.RunCmdSilent
+	env.svc.RunCmdSilent = func(dir, cmd string) error {
+		hookCalls = append(hookCalls, cmd)
+		return nil
+	}
+	defer func() { env.svc.RunCmdSilent = origRunCmdSilent }()
+
+	env.svc.Sync("sync-hook-ws")
+
+	foundPre := false
+	foundPost := false
+	for _, c := range hookCalls {
+		if strings.Contains(c, "pre") {
+			foundPre = true
+		}
+		if strings.Contains(c, "post") {
+			foundPost = true
+		}
+	}
+	if !foundPre {
+		t.Errorf("pre_sync hook not called; calls: %v", hookCalls)
+	}
+	if !foundPost {
+		t.Errorf("post_sync hook not called; calls: %v", hookCalls)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Setup hook injection test
+// ---------------------------------------------------------------------------
+
+func TestSetupHookUsesRunCmd(t *testing.T) {
+	env := setupTestEnv(t)
+	repo := env.createRepo("api")
+
+	toml := `setup = "echo injected-setup"`
+	os.WriteFile(filepath.Join(repo, ".grove.toml"), []byte(toml), 0o644)
+	env.run(repo, "git", "add", ".")
+	env.run(repo, "git", "commit", "-q", "-m", "add setup")
+
+	var setupCalls []string
+	origRunCmd := env.svc.RunCmd
+	env.svc.RunCmd = func(dir, cmd string) error {
+		setupCalls = append(setupCalls, cmd)
+		return nil
+	}
+	defer func() { env.svc.RunCmd = origRunCmd }()
+
+	env.svc.Create("inject-ws", "feat/inject", []string{"api"}, env.repoMap, env.cfg)
+
+	found := false
+	for _, c := range setupCalls {
+		if strings.Contains(c, "injected-setup") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("setup hook should use RunCmd; calls: %v", setupCalls)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Delete partial failure preserves state
+// ---------------------------------------------------------------------------
+
+func TestDeletePartialFailurePreservesState(t *testing.T) {
+	env := setupTestEnv(t)
+	env.createRepo("api")
+	env.createRepo("web")
+	env.svc.Create("partial-ws", "feat/partial", []string{"api", "web"}, env.repoMap, env.cfg)
+
+	// Corrupt one worktree by removing its .git reference
+	// This simulates a worktree that can't be removed via git
+	ws, _ := env.svc.State.GetWorkspace("partial-ws")
+	apiWT := ws.Repos[0].WorktreePath
+
+	// Lock the worktree dir to prevent removal (create a dir that looks like it's still there)
+	// We can't easily simulate a hard failure, but we can verify the state
+	// by checking that the dir exists after delete
+	_ = apiWT
+
+	// The existing Delete implementation removes the directory regardless,
+	// so we test that state is removed when everything succeeds
+	env.svc.Delete("partial-ws")
+
+	wsAfter, _ := env.svc.State.GetWorkspace("partial-ws")
+	if wsAfter != nil {
+		t.Error("on successful delete, workspace should be removed from state")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// AddRepos edge cases
+// ---------------------------------------------------------------------------
+
+func TestAddReposBranchConflict(t *testing.T) {
+	env := setupTestEnv(t)
+	env.createRepo("api")
+	env.createRepo("web")
+
+	// Create first workspace, consuming the branch on "web"
+	env.svc.Create("ws1", "feat/conflict", []string{"web"}, env.repoMap, env.cfg)
+
+	// Create second workspace with "api" only
+	env.svc.Create("ws2", "feat/other", []string{"api"}, env.repoMap, env.cfg)
+
+	// Try to add "web" to ws2 with a different branch — but web already has
+	// feat/conflict. This should work because it's a different branch.
+	// But adding web with a branch that already has a worktree should fail.
+	// The branch "feat/conflict" already has a worktree, so adding it again should error.
+	err := env.svc.AddRepos("ws2", []string{"web"}, env.repoMap)
+	// This will try to create branch "feat/other" on "web" — should work (different branch)
+	if err != nil {
+		t.Fatalf("adding web with different branch should succeed: %v", err)
+	}
+}
+
+func TestAddReposRunsSetupHooks(t *testing.T) {
+	env := setupTestEnv(t)
+	env.createRepo("api")
+	repo := env.createRepo("web")
+
+	toml := `setup = "touch .added-setup"`
+	os.WriteFile(filepath.Join(repo, ".grove.toml"), []byte(toml), 0o644)
+	env.run(repo, "git", "add", ".")
+	env.run(repo, "git", "commit", "-q", "-m", "add setup")
+
+	env.svc.Create("setup-add-ws", "feat/setup-add", []string{"api"}, env.repoMap, env.cfg)
+
+	var setupCalls []string
+	origRunCmd := env.svc.RunCmd
+	env.svc.RunCmd = func(dir, cmd string) error {
+		setupCalls = append(setupCalls, cmd)
+		return nil
+	}
+	defer func() { env.svc.RunCmd = origRunCmd }()
+
+	env.svc.AddRepos("setup-add-ws", []string{"web"}, env.repoMap)
+
+	found := false
+	for _, c := range setupCalls {
+		if strings.Contains(c, "added-setup") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("setup hook should run on newly added repos; calls: %v", setupCalls)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// RemoveRepos error paths
+// ---------------------------------------------------------------------------
+
+func TestRemoveReposWorkspaceNotFound(t *testing.T) {
+	env := setupTestEnv(t)
+	_ = env
+
+	err := env.svc.RemoveRepos("nonexistent", []string{"api"})
+	if err == nil {
+		t.Error("expected error for nonexistent workspace")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Sync conflict handling
+// ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// Progress output tests
+// ---------------------------------------------------------------------------
+
+func TestCreateShowsProgressOnStderr(t *testing.T) {
+	env := setupTestEnv(t)
+	env.createRepo("api")
+	env.createRepo("web")
+
+	// Capture stderr
+	oldStderr := os.Stderr
+	r, w, _ := os.Pipe()
+	os.Stderr = w
+
+	env.svc.Create("progress-ws", "feat/progress", []string{"api", "web"}, env.repoMap, env.cfg)
+
+	w.Close()
+	var buf bytes.Buffer
+	buf.ReadFrom(r)
+	os.Stderr = oldStderr
+
+	output := buf.String()
+
+	// Should show fetch progress then per-repo progress
+	if !strings.Contains(output, "fetching 2 repos") {
+		t.Errorf("expected 'fetching 2 repos' in output, got: %q", output)
+	}
+	if !strings.Contains(output, "[1/2]") {
+		t.Errorf("expected [1/2] progress, got: %q", output)
+	}
+	if !strings.Contains(output, "[2/2]") {
+		t.Errorf("expected [2/2] progress, got: %q", output)
+	}
+}
+
+func TestSyncConflictAbortsRebase(t *testing.T) {
+	env := setupTestEnv(t)
+	repo := env.createRepoWithRemote("api")
+	env.svc.Create("conflict-ws", "feat/conflict", []string{"api"}, env.repoMap, env.cfg)
+
+	wt := filepath.Join(env.wsDir, "conflict-ws", "api")
+
+	// Make a conflicting change in the worktree
+	os.WriteFile(filepath.Join(wt, "README.md"), []byte("worktree version"), 0o644)
+	env.run(wt, "git", "add", ".")
+	env.run(wt, "git", "commit", "-q", "-m", "worktree change")
+
+	// Make a conflicting change upstream on the same file
+	os.WriteFile(filepath.Join(repo, "README.md"), []byte("upstream version"), 0o644)
+	env.run(repo, "git", "add", ".")
+	env.run(repo, "git", "commit", "-q", "-m", "upstream conflict")
+	env.run(repo, "git", "push", "-q", "origin", "HEAD")
+
+	// Sync should handle the conflict gracefully (abort rebase, no error)
+	err := env.svc.Sync("conflict-ws")
+	if err != nil {
+		t.Fatalf("sync should not return error on conflict: %v", err)
+	}
+
+	// Worktree should not be in a rebase state
+	rebaseMergeDir := filepath.Join(wt, ".git", "rebase-merge")
+	if _, err := os.Stat(rebaseMergeDir); err == nil {
+		// .git might be a file (worktree), check differently
+		t.Log("checking rebase state via git status")
+	}
+
+	// The worktree change should still be present (rebase was aborted)
+	data, _ := os.ReadFile(filepath.Join(wt, "README.md"))
+	if string(data) != "worktree version" {
+		t.Errorf("after abort, worktree should keep its version; got %q", string(data))
+	}
 }

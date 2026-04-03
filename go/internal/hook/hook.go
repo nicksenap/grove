@@ -9,45 +9,62 @@ import (
 	"regexp"
 	"strings"
 	"time"
-
-	"github.com/nicksenap/grove/internal/config"
 )
 
 var validSessionID = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
 
 // StatusData is the state written to ~/.grove/status/{session_id}.json.
 type StatusData struct {
-	SessionID      string   `json:"session_id"`
-	Status         string   `json:"status"`
-	CWD            string   `json:"cwd,omitempty"`
-	StartedAt      string   `json:"started_at,omitempty"`
-	Model          string   `json:"model,omitempty"`
-	LastEvent      string   `json:"last_event"`
-	LastEventTime  string   `json:"last_event_time"`
-	LastTool       string   `json:"last_tool,omitempty"`
-	LastMessage    string   `json:"last_message,omitempty"`
-	LastError      string   `json:"last_error,omitempty"`
-	ToolCount      int      `json:"tool_count"`
-	ErrorCount     int      `json:"error_count"`
-	SubagentCount  int      `json:"subagent_count"`
-	ActivityHistory []int   `json:"activity_history"`
-	GitBranch      string   `json:"git_branch,omitempty"`
-	GitDirtyCount  int      `json:"git_dirty_count"`
-	PID            int      `json:"pid"`
-	ZellijSession  string   `json:"zellij_session,omitempty"`
-	PermissionMode string   `json:"permission_mode,omitempty"`
+	SessionID       string `json:"session_id"`
+	Status          string `json:"status"`
+	CWD             string `json:"cwd,omitempty"`
+	StartedAt       string `json:"started_at,omitempty"`
+	Model           string `json:"model,omitempty"`
+	LastEvent       string `json:"last_event"`
+	LastEventTime   string `json:"last_event_time"`
+	LastTool        string `json:"last_tool,omitempty"`
+	LastMessage     string `json:"last_message,omitempty"`
+	LastError       string `json:"last_error,omitempty"`
+	ToolCount       int    `json:"tool_count"`
+	ErrorCount      int    `json:"error_count"`
+	SubagentCount   int    `json:"subagent_count"`
+	ActivityHistory []int  `json:"activity_history"`
+	GitBranch       string `json:"git_branch,omitempty"`
+	GitDirtyCount   int    `json:"git_dirty_count"`
+	PID             int    `json:"pid"`
+	ZellijSession   string `json:"zellij_session,omitempty"`
+	PermissionMode  string `json:"permission_mode,omitempty"`
 }
 
-func statusDir() string {
-	return filepath.Join(config.GroveDir, "status")
+// Handler processes Claude Code hook events.
+// All dependencies are injectable for testing.
+type Handler struct {
+	StatusDir   string
+	NowFn       func() time.Time
+	PidFn       func() int
+	EnvFn       func(string) string
+	GitBranchFn func(dir string) string
+	GitDirtyFn  func(dir string) int
 }
 
-func statusPath(sessionID string) string {
-	return filepath.Join(statusDir(), sessionID+".json")
+// NewHandler creates a Handler with real dependencies.
+func NewHandler(groveDir string) *Handler {
+	return &Handler{
+		StatusDir:   filepath.Join(groveDir, "status"),
+		NowFn:       time.Now,
+		PidFn:       os.Getppid,
+		EnvFn:       os.Getenv,
+		GitBranchFn: defaultGitBranch,
+		GitDirtyFn:  defaultGitDirtyCount,
+	}
+}
+
+func (h *Handler) statusPath(sessionID string) string {
+	return filepath.Join(h.StatusDir, sessionID+".json")
 }
 
 // HandleEvent processes a Claude Code hook event.
-func HandleEvent(event string, payload map[string]any) {
+func (h *Handler) HandleEvent(event string, payload map[string]any) {
 	sessionID, _ := payload["session_id"].(string)
 	if sessionID == "" {
 		return
@@ -57,18 +74,18 @@ func HandleEvent(event string, payload map[string]any) {
 	}
 
 	if event == "SessionEnd" {
-		os.Remove(statusPath(sessionID))
+		os.Remove(h.statusPath(sessionID))
 		return
 	}
 
 	// Load or create status
-	data := loadStatus(sessionID)
-	now := time.Now().Format("2006-01-02T15:04:05")
+	data := h.loadStatus(sessionID)
+	now := h.NowFn().Format("2006-01-02T15:04:05")
 
 	data.SessionID = sessionID
 	data.LastEvent = event
 	data.LastEventTime = now
-	data.PID = os.Getppid()
+	data.PID = h.PidFn()
 
 	switch event {
 	case "SessionStart":
@@ -76,8 +93,8 @@ func HandleEvent(event string, payload map[string]any) {
 		data.StartedAt = now
 		if cwd, ok := payload["cwd"].(string); ok {
 			data.CWD = cwd
-			data.GitBranch = getGitBranch(cwd)
-			data.GitDirtyCount = getGitDirtyCount(cwd)
+			data.GitBranch = h.GitBranchFn(cwd)
+			data.GitDirtyCount = h.GitDirtyFn(cwd)
 		}
 		if model, ok := payload["model"].(string); ok {
 			data.Model = model
@@ -86,7 +103,7 @@ func HandleEvent(event string, payload map[string]any) {
 			data.PermissionMode = pm
 		}
 		data.ActivityHistory = make([]int, 10)
-		data.ZellijSession = os.Getenv("ZELLIJ_SESSION_NAME")
+		data.ZellijSession = h.EnvFn("ZELLIJ_SESSION_NAME")
 
 	case "PreToolUse":
 		data.Status = "WORKING"
@@ -146,11 +163,11 @@ func HandleEvent(event string, payload map[string]any) {
 		// no-op
 	}
 
-	saveStatus(data)
+	h.saveStatus(data)
 }
 
-func loadStatus(sessionID string) *StatusData {
-	path := statusPath(sessionID)
+func (h *Handler) loadStatus(sessionID string) *StatusData {
+	path := h.statusPath(sessionID)
 	rawData, err := os.ReadFile(path)
 	if err != nil {
 		return &StatusData{SessionID: sessionID}
@@ -162,20 +179,19 @@ func loadStatus(sessionID string) *StatusData {
 	return &data
 }
 
-func saveStatus(data *StatusData) {
-	dir := statusDir()
-	os.MkdirAll(dir, 0o755)
+func (h *Handler) saveStatus(data *StatusData) {
+	os.MkdirAll(h.StatusDir, 0o755)
 
 	raw, err := json.MarshalIndent(data, "", "  ")
 	if err != nil {
 		return
 	}
 
-	tmp := statusPath(data.SessionID) + ".tmp"
+	tmp := h.statusPath(data.SessionID) + ".tmp"
 	if err := os.WriteFile(tmp, raw, 0o644); err != nil {
 		return
 	}
-	os.Rename(tmp, statusPath(data.SessionID))
+	os.Rename(tmp, h.statusPath(data.SessionID))
 }
 
 func bumpActivity(data *StatusData) {
@@ -186,7 +202,7 @@ func bumpActivity(data *StatusData) {
 	data.ActivityHistory = append(data.ActivityHistory[1:], data.ActivityHistory[len(data.ActivityHistory)-1]+1)
 }
 
-func getGitBranch(dir string) string {
+func defaultGitBranch(dir string) string {
 	cmd := exec.Command("git", "branch", "--show-current")
 	cmd.Dir = dir
 	out, err := cmd.Output()
@@ -196,7 +212,7 @@ func getGitBranch(dir string) string {
 	return strings.TrimSpace(string(out))
 }
 
-func getGitDirtyCount(dir string) int {
+func defaultGitDirtyCount(dir string) int {
 	cmd := exec.Command("git", "status", "--short")
 	cmd.Dir = dir
 	out, err := cmd.Output()
@@ -211,8 +227,8 @@ func getGitDirtyCount(dir string) int {
 }
 
 // WriteStatusLine writes the status to stderr in a format suitable for shell prompts.
-func WriteStatusLine(sessionID string) string {
-	data := loadStatus(sessionID)
+func (h *Handler) WriteStatusLine(sessionID string) string {
+	data := h.loadStatus(sessionID)
 	if data.Status == "" {
 		return ""
 	}

@@ -106,7 +106,7 @@ var createCmd = &cobra.Command{
 			name = deriveName(branch)
 		}
 
-		if err := workspace.Create(name, branch, repoNames, repoMap, cfg); err != nil {
+		if err := workspace.NewService().Create(name, branch, repoNames, repoMap, cfg); err != nil {
 			exitError(err.Error())
 		}
 

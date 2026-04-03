@@ -12,18 +12,18 @@ import (
 // PickOne shows a single-select picker with type-to-search.
 // Returns the selected item or error if cancelled.
 func PickOne(prompt string, choices []string) (string, error) {
-	if !console.IsTerminal(os.Stdin) || !console.IsTerminal(os.Stdout) {
-		return "", fmt.Errorf("interactive selection requires a terminal. Provide explicit flags instead")
-	}
 	if len(choices) == 0 {
 		return "", fmt.Errorf("no choices available")
 	}
 	if len(choices) == 1 {
 		return choices[0], nil
 	}
+	if !console.IsTerminal(os.Stdin) || !console.IsTerminal(os.Stderr) {
+		return "", fmt.Errorf("interactive selection requires a terminal. Provide explicit flags instead")
+	}
 
 	m := newSelectModel(prompt, choices, false)
-	p := tea.NewProgram(m, tea.WithInput(os.Stdin), tea.WithOutput(os.Stdout), tea.WithAltScreen())
+	p := tea.NewProgram(m, tea.WithInput(os.Stdin), tea.WithOutput(os.Stderr), tea.WithAltScreen())
 	result, err := p.Run()
 	if err != nil {
 		return "", err
@@ -39,7 +39,7 @@ func PickOne(prompt string, choices []string) (string, error) {
 // PickMany shows a multi-select picker with type-to-search.
 // Returns the selected items or error if cancelled.
 func PickMany(prompt string, choices []string) ([]string, error) {
-	if !console.IsTerminal(os.Stdin) || !console.IsTerminal(os.Stdout) {
+	if !console.IsTerminal(os.Stdin) || !console.IsTerminal(os.Stderr) {
 		return nil, fmt.Errorf("interactive selection requires a terminal. Provide explicit flags instead")
 	}
 	if len(choices) == 0 {
@@ -47,7 +47,7 @@ func PickMany(prompt string, choices []string) ([]string, error) {
 	}
 
 	m := newSelectModel(prompt, choices, true)
-	p := tea.NewProgram(m, tea.WithInput(os.Stdin), tea.WithOutput(os.Stdout), tea.WithAltScreen())
+	p := tea.NewProgram(m, tea.WithInput(os.Stdin), tea.WithOutput(os.Stderr), tea.WithAltScreen())
 	result, err := p.Run()
 	if err != nil {
 		return nil, err

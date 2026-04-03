@@ -75,7 +75,7 @@ var removeRepoCmd = &cobra.Command{
 			}
 		}
 
-		if err := workspace.RemoveRepos(wsName, repoNames); err != nil {
+		if err := workspace.NewService().RemoveRepos(wsName, repoNames); err != nil {
 			exitError(err.Error())
 		}
 	},

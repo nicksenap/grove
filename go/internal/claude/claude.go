@@ -144,8 +144,8 @@ func MigrateMemoryDir(claudeDir, oldPath, newPath string) bool {
 
 // FindOrphanedMemoryDirs finds Claude project dirs for worktree paths that
 // no longer exist. Uses the workspace dir prefix to scope the search (avoids
-// flagging non-grove Claude projects), and cross-references against active
-// worktree paths rather than attempting lossy path reconstruction.
+// flagging non-grove Claude projects). Checks only workspace and worktree-level
+// paths (not a full recursive walk).
 func FindOrphanedMemoryDirs(claudeDir string, workspaceDir string) []string {
 	projectsDir := filepath.Join(claudeDir, "projects")
 	entries, err := os.ReadDir(projectsDir)
@@ -156,17 +156,26 @@ func FindOrphanedMemoryDirs(claudeDir string, workspaceDir string) []string {
 	// Encoded workspace dir prefix for scoping
 	wsDirEncoded := EncodePath(workspaceDir)
 
-	// Walk the workspace dir to find all paths that actually exist
+	// Build set of active paths: workspace dir + each immediate child (worktree dirs).
+	// This avoids walking into git repos, node_modules, etc.
 	activePaths := make(map[string]bool)
-	filepath.Walk(workspaceDir, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return nil
+	activePaths[EncodePath(workspaceDir)] = true
+	wsEntries, _ := os.ReadDir(workspaceDir)
+	for _, ws := range wsEntries {
+		if !ws.IsDir() {
+			continue
 		}
-		if info.IsDir() {
-			activePaths[EncodePath(path)] = true
+		wsPath := filepath.Join(workspaceDir, ws.Name())
+		activePaths[EncodePath(wsPath)] = true
+		// Worktree dirs are one level deeper
+		wtEntries, _ := os.ReadDir(wsPath)
+		for _, wt := range wtEntries {
+			if !wt.IsDir() {
+				continue
+			}
+			activePaths[EncodePath(filepath.Join(wsPath, wt.Name()))] = true
 		}
-		return nil
-	})
+	}
 
 	var orphaned []string
 	for _, entry := range entries {

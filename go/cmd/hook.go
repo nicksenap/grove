@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 
+	"github.com/nicksenap/grove/internal/config"
 	"github.com/nicksenap/grove/internal/hook"
 	"github.com/spf13/cobra"
 )
@@ -31,7 +32,7 @@ var hookCmd = &cobra.Command{
 			return // silently ignore malformed JSON
 		}
 
-		hook.HandleEvent(hookEvent, payload)
+		hook.NewHandler(config.GroveDir).HandleEvent(hookEvent, payload)
 	},
 }
 

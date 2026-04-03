@@ -49,7 +49,7 @@ var deleteCmd = &cobra.Command{
 		}
 
 		for _, name := range names {
-			if err := workspace.Delete(name); err != nil {
+			if err := workspace.NewService().Delete(name); err != nil {
 				exitError(err.Error())
 			}
 		}

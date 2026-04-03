@@ -57,20 +57,25 @@ func listAll() {
 		return
 	}
 
+	home, _ := os.UserHomeDir()
 	table := console.NewTable(os.Stdout, []string{"Name", "Branch", "Repos", "Path", "Created"})
 	for _, ws := range workspaces {
-		repos := strings.Join(ws.RepoNames(), ", ")
+		repoCount := fmt.Sprintf("%d", len(ws.Repos))
 		created := ws.CreatedAt
 		if len(created) > 10 {
 			created = created[:10]
 		}
-		table.AddRow([]string{ws.Name, ws.Branch, repos, ws.Path, created})
+		path := ws.Path
+		if home != "" {
+			path = strings.Replace(path, home, "~", 1)
+		}
+		table.AddRow([]string{ws.Name, ws.Branch, repoCount, path, created})
 	}
 	table.Render()
 }
 
 func listWithStatus() {
-	summaries, err := workspace.AllWorkspacesSummary()
+	summaries, err := workspace.NewService().AllWorkspacesSummary()
 	if err != nil {
 		exitError(err.Error())
 	}
@@ -86,9 +91,14 @@ func listWithStatus() {
 		return
 	}
 
+	home, _ := os.UserHomeDir()
 	table := console.NewTable(os.Stdout, []string{"Name", "Branch", "Repos", "Status", "Path"})
 	for _, s := range summaries {
-		table.AddRow([]string{s.Name, s.Branch, fmt.Sprintf("%d", s.Repos), s.Status, s.Path})
+		path := s.Path
+		if home != "" {
+			path = strings.Replace(path, home, "~", 1)
+		}
+		table.AddRow([]string{s.Name, s.Branch, fmt.Sprintf("%d", s.Repos), s.Status, path})
 	}
 	table.Render()
 }
