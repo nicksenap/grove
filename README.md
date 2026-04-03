@@ -19,19 +19,30 @@ Grove gives you the multi-repo worktree workflow that monorepos get for free. On
 ### Homebrew
 
 ```bash
-brew install nicksenap/grove/grove
+brew tap nicksenap/grove
+brew install grove
+```
+
+### Go install
+
+```bash
+go install github.com/nicksenap/grove@latest
+# Binary installs as "grove" — rename if you prefer "gw":
+mv "$(go env GOPATH)/bin/grove" "$(go env GOPATH)/bin/gw"
 ```
 
 ### From source
 
 ```bash
-go build -o gw . && mv gw /usr/local/bin/
+git clone https://github.com/nicksenap/grove.git
+cd grove && go build -o gw .
+mv gw /usr/local/bin/
 ```
 
 ### Upgrading
 
 ```bash
-brew upgrade nicksenap/grove/grove
+brew upgrade grove
 ```
 
 Then add shell integration to your `.zshrc` (or `.bashrc`):
@@ -47,8 +58,9 @@ This enables `gw go` to change your working directory and auto-cds into new work
 If you previously had the Python version installed:
 
 ```bash
-brew uninstall grove        # remove old Python formula
-brew install nicksenap/grove/grove  # install Go version
+brew uninstall grove      # remove old Python formula
+brew tap nicksenap/grove
+brew install grove        # install Go version
 ```
 
 The Go version reads the same `~/.grove/` config and state files — your existing workspaces will work as before.
