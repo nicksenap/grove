@@ -22,14 +22,6 @@ Grove gives you the multi-repo worktree workflow that monorepos get for free. On
 brew install nicksenap/grove/grove
 ```
 
-### Go install
-
-```bash
-go install github.com/nicksenap/grove@latest
-# Binary installs as "grove" — rename if you prefer "gw":
-mv "$(go env GOPATH)/bin/grove" "$(go env GOPATH)/bin/gw"
-```
-
 ### From source
 
 ```bash
