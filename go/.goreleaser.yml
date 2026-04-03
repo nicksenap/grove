@@ -46,4 +46,4 @@ homebrew_casks:
     binaries:
       - gw
     conflicts:
-      - grove
+      - cask: grove
