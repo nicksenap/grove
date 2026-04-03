@@ -1,5 +1,9 @@
 // Package logging provides rotating file logging for Grove.
 // Log file: ~/.grove/grove.log, 1MB max, 3 backups.
+//
+// The log file is always written (Info, Warn, Error) to act as a flight
+// recorder for debugging.  Debug messages are only written when verbose
+// mode is enabled via --verbose.
 package logging
 
 import (
@@ -31,15 +35,12 @@ func init() {
 }
 
 // Setup initializes logging. Call once at startup.
+// The log file is always opened; verbose controls whether Debug messages are written.
 func Setup(v bool) {
 	mu.Lock()
 	defer mu.Unlock()
 	verbose = v
 	initDone = true
-
-	if !verbose {
-		return
-	}
 
 	os.MkdirAll(LogDir, 0o755)
 	path := filepath.Join(LogDir, "grove.log")
@@ -58,20 +59,28 @@ func Debug(format string, args ...interface{}) {
 	write("DEBUG", format, args...)
 }
 
-// Info logs an info message (only when verbose).
+// Info logs an info message.
 func Info(format string, args ...interface{}) {
-	if !verbose || logFile == nil {
+	if logFile == nil {
 		return
 	}
 	write("INFO", format, args...)
 }
 
-// Warn logs a warning message (only when verbose).
+// Warn logs a warning message.
 func Warn(format string, args ...interface{}) {
-	if !verbose || logFile == nil {
+	if logFile == nil {
 		return
 	}
 	write("WARN", format, args...)
+}
+
+// Error logs an error message.
+func Error(format string, args ...interface{}) {
+	if logFile == nil {
+		return
+	}
+	write("ERROR", format, args...)
 }
 
 func write(level, format string, args ...interface{}) {

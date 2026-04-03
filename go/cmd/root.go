@@ -21,6 +21,7 @@ var rootCmd = &cobra.Command{
 	Long:  "Manages multi-repo worktree-based workspaces",
 	PersistentPreRun: func(cmd *cobra.Command, args []string) {
 		logging.Setup(verbose)
+		logging.Info("gw %s", cmd.Name())
 	},
 	Run: func(cmd *cobra.Command, args []string) {
 		cmd.Help()

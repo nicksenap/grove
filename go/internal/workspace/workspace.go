@@ -11,6 +11,7 @@ import (
 	"github.com/nicksenap/grove/internal/claude"
 	"github.com/nicksenap/grove/internal/console"
 	"github.com/nicksenap/grove/internal/gitops"
+	"github.com/nicksenap/grove/internal/logging"
 	"github.com/nicksenap/grove/internal/models"
 )
 
@@ -25,6 +26,8 @@ func (s *Service) Create(name, branch string, repoNames []string, repoMap map[st
 	if existing != nil {
 		return fmt.Errorf("Workspace %s already exists", name)
 	}
+
+	logging.Info("creating workspace %q (branch=%s, repos=%v)", name, branch, repoNames)
 
 	wsPath := filepath.Join(cfg.WorkspaceDir, name)
 	if err := os.MkdirAll(wsPath, 0o755); err != nil {
@@ -64,6 +67,7 @@ func (s *Service) Create(name, branch string, repoNames []string, repoMap map[st
 		console.Infof("[%d/%d] %s", i+1, len(repoNames), repoName)
 		rw, err := provisionWorktreeNoFetch(sourcePaths[i], repoName, wsPath, branch)
 		if err != nil {
+			logging.Error("workspace creation failed for %q — rolled back", name)
 			rollback(created)
 			os.RemoveAll(wsPath)
 			return fmt.Errorf("provisioning %s: %w", repoName, err)
@@ -92,13 +96,16 @@ func (s *Service) Create(name, branch string, repoNames []string, repoMap map[st
 	// Rehydrate Claude memory
 	if cfg.ClaudeMemorySync {
 		for _, r := range ws.Repos {
-			claude.RehydrateMemory(s.ClaudeDir, r.SourceRepo, r.WorktreePath)
+			if n := claude.RehydrateMemory(s.ClaudeDir, r.SourceRepo, r.WorktreePath); n > 0 {
+				logging.Info("rehydrated %d Claude memory file(s) for %s", n, r.RepoName)
+			}
 		}
 	}
 
 	// Write .mcp.json
 	writeMCPConfig(ws)
 
+	logging.Info("workspace %q created at %s", name, wsPath)
 	console.Successf("Workspace %s created at %s", name, wsPath)
 
 	// Write GROVE_CD_FILE if set
@@ -129,6 +136,7 @@ func provisionWorktreeNoFetch(sourcePath, repoName, wsPath, branch string) (*mod
 		if err != nil {
 			base = "HEAD"
 		}
+		logging.Info("creating branch %q in %s from %s", branch, repoName, base)
 		if err := gitops.CreateBranch(sourcePath, branch, base); err != nil {
 			plainBase := strings.TrimPrefix(base, "origin/")
 			if err2 := gitops.CreateBranch(sourcePath, branch, plainBase); err2 != nil {
@@ -274,12 +282,15 @@ func (s *Service) Delete(name string) error {
 		return fmt.Errorf("Workspace %s not found", name)
 	}
 
+	logging.Info("deleting workspace %q", name)
 	removeMCPConfig(*ws)
 
 	// Harvest Claude memory before destruction
 	if s.ClaudeDir != "" {
 		for _, r := range ws.Repos {
-			claude.HarvestMemory(s.ClaudeDir, r.WorktreePath, r.SourceRepo)
+			if n := claude.HarvestMemory(s.ClaudeDir, r.WorktreePath, r.SourceRepo); n > 0 {
+				logging.Info("harvested %d Claude memory file(s) for %s", n, r.RepoName)
+			}
 		}
 	}
 
@@ -297,13 +308,17 @@ func (s *Service) Delete(name string) error {
 
 			if err := gitops.WorktreeRemove(repo.SourceRepo, repo.WorktreePath); err != nil {
 				if err := os.RemoveAll(repo.WorktreePath); err != nil {
+					logging.Warn("failed to remove worktree for %s: %s", repo.RepoName, err)
 					console.Warningf("%s: failed to remove worktree: %s", repo.RepoName, err)
 					return
 				}
 			}
 
 			if err := gitops.DeleteBranch(repo.SourceRepo, repo.Branch, false); err != nil {
+				logging.Warn("branch %q has unmerged commits in %s — kept", repo.Branch, repo.RepoName)
 				console.Warningf("%s: branch %s has unmerged commits, kept", repo.RepoName, repo.Branch)
+			} else {
+				logging.Info("deleted branch %q in %s", repo.Branch, repo.RepoName)
 			}
 
 			succeeded[idx] = true
@@ -317,6 +332,9 @@ func (s *Service) Delete(name string) error {
 			failCount++
 		}
 	}
+	if failCount > 0 {
+		logging.Warn("workspace %q: %d worktree(s) failed to remove", name, failCount)
+	}
 
 	os.RemoveAll(ws.Path)
 
@@ -329,6 +347,7 @@ func (s *Service) Delete(name string) error {
 		}
 	}
 
+	logging.Info("workspace %q deleted", name)
 	console.Successf("Workspace %s deleted", name)
 	return nil
 }
@@ -395,6 +414,7 @@ func (s *Service) Rename(oldName, newName string) error {
 		}
 	}
 
+	logging.Info("workspace %q renamed to %q", oldName, newName)
 	console.Successf("Workspace %s renamed to %s", oldName, newName)
 	return nil
 }
@@ -449,6 +469,7 @@ func (s *Service) AddRepos(wsName string, repoNames []string, repoMap map[string
 		return err
 	}
 
+	logging.Info("added %d repo(s) to workspace %q", len(toAdd), wsName)
 	console.Successf("Added %d repo(s) to %s", len(toAdd), wsName)
 	return nil
 }
@@ -506,6 +527,7 @@ func (s *Service) RemoveRepos(wsName string, repoNames []string) error {
 		return err
 	}
 
+	logging.Info("removed %d repo(s) from workspace %q", len(repoNames), wsName)
 	console.Successf("Removed %d repo(s) from %s", len(repoNames), wsName)
 	return nil
 }
@@ -571,6 +593,8 @@ func (s *Service) Sync(wsName string) error {
 	if ws == nil {
 		return fmt.Errorf("Workspace %s not found", wsName)
 	}
+
+	logging.Info("syncing workspace %q", wsName)
 
 	var wg sync.WaitGroup
 	for _, r := range ws.Repos {

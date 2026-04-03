@@ -1,8 +1,11 @@
 package picker
 
 import (
+	"fmt"
 	"strings"
 	"testing"
+
+	tea "github.com/charmbracelet/bubbletea"
 )
 
 func TestPickOneSingleChoiceAutoSelects(t *testing.T) {
@@ -68,4 +71,176 @@ func TestPickOneUsesStderrNotStdout(t *testing.T) {
 	}
 	// The fact that this test exists documents the stderr contract.
 	// A regression to os.Stdout would cause `gw go` to fail in shell functions.
+}
+
+// ---------------------------------------------------------------------------
+// Model unit tests — exercise the bubbletea model directly without a terminal
+// ---------------------------------------------------------------------------
+
+// update is a helper that sends a message and returns the typed model.
+func update(m selectModel, msg tea.Msg) selectModel {
+	result, _ := m.Update(msg)
+	return result.(selectModel)
+}
+
+func key(k tea.KeyType) tea.KeyMsg      { return tea.KeyMsg{Type: k} }
+func rune_(r rune) tea.KeyMsg           { return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}} }
+func resize(w, h int) tea.WindowSizeMsg { return tea.WindowSizeMsg{Width: w, Height: h} }
+
+func TestModelFilterReducesList(t *testing.T) {
+	m := update(newSelectModel("Pick:", []string{"apple", "banana", "avocado"}, false), rune_('v'))
+
+	if len(m.filtered) != 1 {
+		t.Errorf("expected 1 match for 'v', got %d", len(m.filtered))
+	}
+	if m.choices[m.filtered[0]] != "avocado" {
+		t.Errorf("expected avocado, got %s", m.choices[m.filtered[0]])
+	}
+}
+
+func TestModelFilterNoMatches(t *testing.T) {
+	m := update(newSelectModel("Pick:", []string{"apple", "banana"}, false), rune_('z'))
+
+	if len(m.filtered) != 0 {
+		t.Errorf("expected 0 matches for 'z', got %d", len(m.filtered))
+	}
+	if !strings.Contains(m.View(), "(no matches)") {
+		t.Errorf("view should show no matches indicator, got:\n%s", m.View())
+	}
+}
+
+func TestModelBackspaceRemovesFilter(t *testing.T) {
+	m := update(newSelectModel("Pick:", []string{"apple", "banana"}, false), rune_('z'))
+	if len(m.filtered) != 0 {
+		t.Fatal("precondition: 'z' should match nothing")
+	}
+
+	m = update(m, key(tea.KeyBackspace))
+	if len(m.filtered) != 2 {
+		t.Errorf("backspace should restore all choices, got %d", len(m.filtered))
+	}
+}
+
+func TestModelMultiSelectToggle(t *testing.T) {
+	m := update(newSelectModel("Pick:", []string{"a", "b", "c"}, true), key(tea.KeyTab))
+	if !m.checked[0] {
+		t.Error("first item should be checked after tab")
+	}
+
+	m = update(m, key(tea.KeyTab))
+	if m.checked[0] {
+		t.Error("first item should be unchecked after second tab")
+	}
+}
+
+func TestModelScrollIndicators(t *testing.T) {
+	choices := make([]string, 50)
+	for i := range choices {
+		choices[i] = fmt.Sprintf("item-%02d", i)
+	}
+	m := update(newSelectModel("Pick:", choices, false), resize(80, 15))
+	view := m.View()
+
+	// Should NOT show "↑ N more" at the top (we're at the start)
+	if strings.Contains(view, "↑ ") && strings.Contains(view, " more") {
+		t.Errorf("should not show up-scroll indicator at start, got:\n%s", view)
+	}
+	// Should show "↓ more" at the bottom
+	if !strings.Contains(view, "↓") {
+		t.Errorf("should show down-arrow indicator, got:\n%s", view)
+	}
+	// Should NOT render all 50 items
+	if strings.Count(view, "item-") >= 50 {
+		t.Errorf("should not render all 50 items")
+	}
+}
+
+func TestModelScrollFollowsCursor(t *testing.T) {
+	choices := make([]string, 50)
+	for i := range choices {
+		choices[i] = fmt.Sprintf("item-%02d", i)
+	}
+	m := update(newSelectModel("Pick:", choices, false), resize(80, 15))
+
+	for i := 0; i < 20; i++ {
+		m = update(m, key(tea.KeyDown))
+	}
+
+	if m.cursor != 20 {
+		t.Fatalf("cursor should be at 20, got %d", m.cursor)
+	}
+
+	view := m.View()
+	if !strings.Contains(view, "↑") {
+		t.Errorf("should show up-arrow after scrolling down, got:\n%s", view)
+	}
+	if !strings.Contains(view, "item-20") {
+		t.Errorf("cursor item should be visible, got:\n%s", view)
+	}
+}
+
+func TestModelPageUpDown(t *testing.T) {
+	choices := make([]string, 50)
+	for i := range choices {
+		choices[i] = fmt.Sprintf("item-%02d", i)
+	}
+	m := update(newSelectModel("Pick:", choices, false), resize(80, 15))
+
+	m = update(m, key(tea.KeyPgDown))
+	if m.cursor == 0 {
+		t.Error("page down should move cursor")
+	}
+
+	m = update(m, key(tea.KeyPgUp))
+	if m.cursor != 0 {
+		t.Errorf("page up from near top should go to 0, got %d", m.cursor)
+	}
+}
+
+func TestModelSelectedCountDisplay(t *testing.T) {
+	m := newSelectModel("Pick:", []string{"a", "b", "c"}, true)
+	m = update(m, key(tea.KeyTab))       // select a
+	m = update(m, key(tea.KeyDown))       // move to b
+	m = update(m, key(tea.KeyTab))        // select b
+
+	if !strings.Contains(m.View(), "2 selected") {
+		t.Errorf("should show selection count, got:\n%s", m.View())
+	}
+}
+
+func TestModelEscCancels(t *testing.T) {
+	m := newSelectModel("Pick:", []string{"a", "b"}, false)
+	result, cmd := m.Update(key(tea.KeyEsc))
+	model := result.(selectModel)
+
+	if !model.cancelled {
+		t.Error("esc should set cancelled")
+	}
+	if cmd == nil {
+		t.Error("esc should return quit command")
+	}
+}
+
+func TestModelHomeEnd(t *testing.T) {
+	choices := make([]string, 50)
+	for i := range choices {
+		choices[i] = fmt.Sprintf("item-%02d", i)
+	}
+	m := update(newSelectModel("Pick:", choices, false), resize(80, 15))
+
+	m = update(m, key(tea.KeyEnd))
+	if m.cursor != 49 {
+		t.Errorf("end should go to last item, got %d", m.cursor)
+	}
+	if !strings.Contains(m.View(), "item-49") {
+		t.Error("last item should be visible after end")
+	}
+
+	m = update(m, key(tea.KeyHome))
+	if m.cursor != 0 {
+		t.Errorf("home should go to first item, got %d", m.cursor)
+	}
+	if !strings.Contains(m.View(), "item-00") {
+		t.Error("first item should be visible after home")
+	}
 }

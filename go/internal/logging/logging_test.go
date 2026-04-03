@@ -19,6 +19,18 @@ func TestSetupCreatesLogFile(t *testing.T) {
 	}
 }
 
+func TestSetupCreatesLogFileWhenNotVerbose(t *testing.T) {
+	dir := t.TempDir()
+	LogDir = dir
+
+	Setup(false)
+
+	logPath := filepath.Join(dir, "grove.log")
+	if _, err := os.Stat(logPath); os.IsNotExist(err) {
+		t.Error("log file should be created even without verbose")
+	}
+}
+
 func TestDebugWritesToFile(t *testing.T) {
 	dir := t.TempDir()
 	LogDir = dir
@@ -39,20 +51,52 @@ func TestDebugWritesToFile(t *testing.T) {
 	}
 }
 
-func TestNoWriteWhenNotVerbose(t *testing.T) {
+func TestDebugSuppressedWhenNotVerbose(t *testing.T) {
 	dir := t.TempDir()
 	LogDir = dir
 
 	Setup(false)
 	Debug("should not appear")
 
-	logFile := filepath.Join(dir, "grove.log")
-	if _, err := os.Stat(logFile); !os.IsNotExist(err) {
-		// File may exist but should be empty or not exist
-		data, _ := os.ReadFile(logFile)
-		if strings.Contains(string(data), "should not appear") {
-			t.Error("debug messages should not be written when verbose is false")
-		}
+	data, _ := os.ReadFile(filepath.Join(dir, "grove.log"))
+	if strings.Contains(string(data), "should not appear") {
+		t.Error("debug messages should not be written when verbose is false")
+	}
+}
+
+func TestInfoWritesWhenNotVerbose(t *testing.T) {
+	dir := t.TempDir()
+	LogDir = dir
+
+	Setup(false)
+	Info("always visible %d", 1)
+
+	data, err := os.ReadFile(filepath.Join(dir, "grove.log"))
+	if err != nil {
+		t.Fatalf("reading log: %v", err)
+	}
+	if !strings.Contains(string(data), "always visible 1") {
+		t.Error("info messages should be written even without verbose")
+	}
+}
+
+func TestErrorLevel(t *testing.T) {
+	dir := t.TempDir()
+	LogDir = dir
+
+	Setup(false)
+	Error("something broke: %s", "disk full")
+
+	data, err := os.ReadFile(filepath.Join(dir, "grove.log"))
+	if err != nil {
+		t.Fatalf("reading log: %v", err)
+	}
+	content := string(data)
+	if !strings.Contains(content, "ERROR") {
+		t.Errorf("log should contain ERROR level, got: %q", content)
+	}
+	if !strings.Contains(content, "something broke: disk full") {
+		t.Errorf("log should contain message, got: %q", content)
 	}
 }
 

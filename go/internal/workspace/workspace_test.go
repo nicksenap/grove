@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/nicksenap/grove/internal/logging"
 	"github.com/nicksenap/grove/internal/models"
 	"github.com/nicksenap/grove/internal/state"
 	"github.com/nicksenap/grove/internal/stats"
@@ -1434,5 +1435,168 @@ func TestSyncConflictAbortsRebase(t *testing.T) {
 	data, _ := os.ReadFile(filepath.Join(wt, "README.md"))
 	if string(data) != "worktree version" {
 		t.Errorf("after abort, worktree should keep its version; got %q", string(data))
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Logging e2e tests — verify the flight recorder captures key operations
+// ---------------------------------------------------------------------------
+
+// setupLogging points the logging package at a temp dir and returns a function
+// to read the log contents. Always call in tests that check log output.
+func setupLogging(t *testing.T) func() string {
+	t.Helper()
+	dir := t.TempDir()
+	logging.LogDir = dir
+	logging.Setup(false) // non-verbose: Info/Warn/Error still written
+
+	return func() string {
+		data, err := os.ReadFile(filepath.Join(dir, "grove.log"))
+		if err != nil {
+			t.Fatalf("reading log file: %v", err)
+		}
+		return string(data)
+	}
+}
+
+func TestLoggingCreateAndDelete(t *testing.T) {
+	readLog := setupLogging(t)
+	env := setupTestEnv(t)
+	env.createRepo("api")
+	env.createRepo("web")
+
+	// Create workspace
+	err := env.svc.Create("log-ws", "feat/log", []string{"api", "web"}, env.repoMap, env.cfg)
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	log := readLog()
+
+	// Should log creation start with workspace name, branch, and repos
+	if !strings.Contains(log, `creating workspace "log-ws"`) {
+		t.Errorf("log should contain creation start, got:\n%s", log)
+	}
+	if !strings.Contains(log, "feat/log") {
+		t.Errorf("log should contain branch name, got:\n%s", log)
+	}
+	if !strings.Contains(log, `workspace "log-ws" created`) {
+		t.Errorf("log should contain creation success, got:\n%s", log)
+	}
+
+	// Should log branch creation for each repo
+	if !strings.Contains(log, `creating branch "feat/log" in api`) {
+		t.Errorf("log should contain branch creation for api, got:\n%s", log)
+	}
+	if !strings.Contains(log, `creating branch "feat/log" in web`) {
+		t.Errorf("log should contain branch creation for web, got:\n%s", log)
+	}
+
+	// Delete workspace
+	err = env.svc.Delete("log-ws")
+	if err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+
+	log = readLog()
+
+	if !strings.Contains(log, `deleting workspace "log-ws"`) {
+		t.Errorf("log should contain deletion start, got:\n%s", log)
+	}
+	if !strings.Contains(log, `workspace "log-ws" deleted`) {
+		t.Errorf("log should contain deletion success, got:\n%s", log)
+	}
+	// Branch deletion should be logged
+	if !strings.Contains(log, `deleted branch "feat/log"`) {
+		t.Errorf("log should contain branch deletion, got:\n%s", log)
+	}
+}
+
+func TestLoggingSync(t *testing.T) {
+	readLog := setupLogging(t)
+	env := setupTestEnv(t)
+	env.createRepoWithRemote("api")
+
+	err := env.svc.Create("sync-log-ws", "feat/synclog", []string{"api"}, env.repoMap, env.cfg)
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	err = env.svc.Sync("sync-log-ws")
+	if err != nil {
+		t.Fatalf("sync: %v", err)
+	}
+
+	log := readLog()
+	if !strings.Contains(log, `syncing workspace "sync-log-ws"`) {
+		t.Errorf("log should contain sync start, got:\n%s", log)
+	}
+}
+
+func TestLoggingAddAndRemoveRepos(t *testing.T) {
+	readLog := setupLogging(t)
+	env := setupTestEnv(t)
+	env.createRepo("api")
+	env.createRepo("web")
+
+	env.svc.Create("addrem-ws", "feat/addrem", []string{"api"}, env.repoMap, env.cfg)
+
+	err := env.svc.AddRepos("addrem-ws", []string{"web"}, env.repoMap)
+	if err != nil {
+		t.Fatalf("add-repo: %v", err)
+	}
+
+	log := readLog()
+	if !strings.Contains(log, `added 1 repo(s) to workspace "addrem-ws"`) {
+		t.Errorf("log should contain add-repo, got:\n%s", log)
+	}
+
+	err = env.svc.RemoveRepos("addrem-ws", []string{"web"})
+	if err != nil {
+		t.Fatalf("remove-repo: %v", err)
+	}
+
+	log = readLog()
+	if !strings.Contains(log, `removed 1 repo(s) from workspace "addrem-ws"`) {
+		t.Errorf("log should contain remove-repo, got:\n%s", log)
+	}
+}
+
+func TestLoggingRename(t *testing.T) {
+	readLog := setupLogging(t)
+	env := setupTestEnv(t)
+	env.createRepo("api")
+
+	env.svc.Create("old-name", "feat/rename", []string{"api"}, env.repoMap, env.cfg)
+
+	err := env.svc.Rename("old-name", "new-name")
+	if err != nil {
+		t.Fatalf("rename: %v", err)
+	}
+
+	log := readLog()
+	if !strings.Contains(log, `workspace "old-name" renamed to "new-name"`) {
+		t.Errorf("log should contain rename, got:\n%s", log)
+	}
+}
+
+func TestLoggingDeleteBranchUnmergedWarning(t *testing.T) {
+	readLog := setupLogging(t)
+	env := setupTestEnv(t)
+	env.createRepo("api")
+
+	env.svc.Create("unmerged-ws", "feat/unmerged", []string{"api"}, env.repoMap, env.cfg)
+
+	// Add an unmerged commit to the worktree branch so -d (safe delete) fails
+	wt := filepath.Join(env.wsDir, "unmerged-ws", "api")
+	os.WriteFile(filepath.Join(wt, "new.txt"), []byte("unmerged work"), 0o644)
+	env.run(wt, "git", "add", ".")
+	env.run(wt, "git", "commit", "-q", "-m", "unmerged commit")
+
+	env.svc.Delete("unmerged-ws")
+
+	log := readLog()
+	if !strings.Contains(log, "unmerged commits") {
+		t.Errorf("log should warn about unmerged branch, got:\n%s", log)
 	}
 }
