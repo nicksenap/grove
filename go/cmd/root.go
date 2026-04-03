@@ -11,7 +11,7 @@ import (
 )
 
 // Version is set by goreleaser via -ldflags at build time.
-var Version = "0.13.0-go"
+var Version = "0.13.3-go"
 
 var verbose bool
 
