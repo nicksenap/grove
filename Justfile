@@ -21,7 +21,7 @@ vet:
 
 # Build the gw binary
 build:
-    go build -o gw .
+    go build -o gw ./cmd/gw
 
 # Run e2e tests
 e2e: build

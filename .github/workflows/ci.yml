@@ -33,7 +33,7 @@ jobs:
           cache-dependency-path: go.sum
 
       - name: Build
-        run: go build -o gw .
+        run: go build -o gw ./cmd/gw
 
       - name: Run e2e tests
         run: bash e2e/run.sh

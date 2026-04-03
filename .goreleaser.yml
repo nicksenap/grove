@@ -5,7 +5,7 @@ project_name: grove
 builds:
   - id: gw
     dir: .
-    main: ./main.go
+    main: ./cmd/gw
     binary: gw
     env:
       - CGO_ENABLED=0
