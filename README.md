@@ -19,7 +19,7 @@ Grove gives you the multi-repo worktree workflow that monorepos get for free. On
 ### Homebrew (Go — recommended)
 
 ```bash
-brew install --cask nicksenap/grove/grove-go
+brew install nicksenap/grove/grove-go
 ```
 
 ### Homebrew (Python)
@@ -46,13 +46,13 @@ If you have the Python version installed via Homebrew, uninstall it first — bo
 
 ```bash
 brew uninstall grove
-brew install --cask nicksenap/grove/grove-go
+brew install nicksenap/grove/grove-go
 ```
 
 ### Upgrading
 
 ```bash
-brew upgrade --cask nicksenap/grove/grove-go
+brew upgrade nicksenap/grove/grove-go
 ```
 
 Then add shell integration to your `.zshrc` (or `.bashrc`):
