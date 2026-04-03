@@ -74,8 +74,9 @@ gw explore                                             # deep-scan for repos (2�
 
 # Workspaces
 gw create my-feature -r svc-a,svc-b -b feat/login     # create workspace
-gw list                                                # list workspaces
+gw list                                                # list workspaces (compact)
 gw list -s                                             # list with git status summary
+gw ws show my-feature                                  # show workspace details
 gw status my-feature                                   # git status across repos
 gw sync my-feature                                     # rebase all repos onto base branch
 gw go my-feature                                       # cd into workspace
@@ -88,7 +89,8 @@ gw delete my-feature                                   # clean up (worktrees + b
 
 # Presets — save repo groups for quick workspace creation
 gw preset add backend -r svc-auth,svc-api,svc-worker
-gw preset list
+gw preset list                                         # list presets (compact)
+gw preset show backend                                 # show preset details
 gw preset remove backend
 gw create my-feature -p backend                        # use a preset instead of -r
 ```
@@ -115,7 +117,7 @@ The Go version covers the core workflow. What's missing are the TUI features.
 | `explore` | Done | Deep scan with remote URL caching |
 | `create` | Done | Parallel fetch, rollback, hooks |
 | `delete` | Done | Parallel teardown, hooks |
-| `list`, `status` | Done | Including `-s` summary and PR status |
+| `list`, `ws show`, `status` | Done | Including `-s` summary and PR status |
 | `sync` | Done | Parallel rebase, conflict handling |
 | `go` | Done | Including `--close-tab` for Zellij |
 | `add-repo`, `remove-repo` | Done | |
@@ -128,6 +130,24 @@ The Go version covers the core workflow. What's missing are the TUI features.
 | `dash` | Not yet | Planned as separate plugin/binary |
 
 285 tests passing (226 unit + 59 e2e).
+
+### Performance
+
+The Go binary is significantly faster for everyday commands. Python spends ~100ms on import overhead (Typer, Rich, etc.) before any code runs; Go starts in under 15ms. For heavier commands that shell out to `git`, the gap narrows since git is the bottleneck.
+
+Benchmarked on Apple M1 Pro, 10 iterations each (`bench/run.sh`):
+
+| Command | Python | Go | Speedup |
+|---|---|---|---|
+| `--version` | 119 ms | 12 ms | **10x** |
+| `list` | 116 ms | 12 ms | **10x** |
+| `ws show --json` | 123 ms | 12 ms | **10x** |
+| `doctor --json` | 162 ms | 11 ms | **15x** |
+| `preset list` | 113 ms | 11 ms | **10x** |
+| `status` | 207 ms | 71 ms | **3x** |
+| `create + delete` | 427 ms | 153 ms | **3x** |
+
+Fast commands (list, show, doctor) are ~10x faster. Commands that call git subprocesses (status, create) are ~3x faster — git dominates the wall time.
 
 ## Requirements
 
