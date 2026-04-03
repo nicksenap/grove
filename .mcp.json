@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "grove": {
+      "command": "gw",
+      "args": [
+        "mcp-serve",
+        "--workspace",
+        "feat-make-go-as-default"
+      ]
+    }
+  }
+}

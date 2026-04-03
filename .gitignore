@@ -1,0 +1,6 @@
+# Go binary
+gw
+gw_test
+
+# Build output
+dist/
