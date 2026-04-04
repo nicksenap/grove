@@ -67,12 +67,16 @@ var wizardCmd = &cobra.Command{
 
 				// Offer to register Claude Code event hooks
 				if console.Confirm("Register Claude Code session tracking hooks?", true) {
-					pluginPath, _ := plugin.Find("claude")
-					cmd := exec.Command(pluginPath, "hook", "install")
-					cmd.Stdout = os.Stdout
-					cmd.Stderr = os.Stderr
-					if err := cmd.Run(); err != nil {
-						console.Warningf("hook install failed: %s", err)
+					pluginPath, findErr := plugin.Find("claude")
+					if findErr != nil {
+						console.Warningf("cannot find gw-claude: %s", findErr)
+					} else {
+						hookCmd := exec.Command(pluginPath, "hook", "install")
+						hookCmd.Stdout = os.Stdout
+						hookCmd.Stderr = os.Stderr
+						if err := hookCmd.Run(); err != nil {
+							console.Warningf("hook install failed: %s", err)
+						}
 					}
 				}
 			}
