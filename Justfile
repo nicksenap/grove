@@ -19,9 +19,9 @@ test-v *args:
 vet:
     go vet ./...
 
-# Build the gw binary
+# Build the gw binary (version from git tag)
 build:
-    go build -o gw ./cmd/gw
+    go build -ldflags "-X github.com/nicksenap/grove/cmd.Version=$(git describe --tags --always)" -o gw ./cmd/gw
 
 # Run e2e tests
 e2e: build
