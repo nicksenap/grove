@@ -53,6 +53,66 @@ If found, Grove replaces its own process with the plugin (`exec`), passing these
 
 The plugin gets full control of the terminal — this means TUI plugins (like `gw-dash`) work seamlessly.
 
+## First-party plugins
+
+### gw-claude
+
+Claude Code integration. Memory sync, session tracking, hook management.
+
+- **Repo:** https://github.com/nicksenap/gw-claude
+- **Install:** `gw plugin install nicksenap/gw-claude`
+
+| Command | Description |
+|---|---|
+| `gw claude sync rehydrate <path>` | Copy memory from source repos to worktrees |
+| `gw claude sync harvest <path>` | Copy newer memory from worktrees back to source |
+| `gw claude sync migrate <old> <new>` | Rename/merge memory dir |
+| `gw claude copy-md <path>` | Copy CLAUDE.md from source repo parent into workspace |
+| `gw claude doctor` | Find orphaned memory directories |
+| `gw claude hook install` | Register session tracking hooks in ~/.claude/settings.json |
+| `gw claude hook uninstall` | Remove hooks |
+| `gw claude hook status` | Check if hooks are installed |
+
+Recommended hooks:
+
+```toml
+[hooks]
+post_create = "gw claude sync rehydrate {path} && gw claude copy-md {path}"
+pre_delete = "gw claude sync harvest {path}"
+```
+
+### gw-zellij
+
+Zellij terminal multiplexer integration.
+
+- **Repo:** https://github.com/nicksenap/gw-zellij
+- **Install:** `gw plugin install nicksenap/gw-zellij`
+
+| Command | Description |
+|---|---|
+| `gw zellij close-pane` | Close current Zellij pane |
+
+Recommended hooks:
+
+```toml
+[hooks]
+on_close = "gw zellij close-pane"
+```
+
+### gw-dash
+
+Kanban-style TUI dashboard for monitoring Claude Code agents across workspaces.
+
+- **Repo:** https://github.com/nicksenap/gw-dash
+- **Install:** `gw plugin install nicksenap/gw-dash`
+- **Usage:** `gw dash`
+
+## Quick setup
+
+```bash
+gw wizard    # detects your tools, installs plugins, configures hooks
+```
+
 ## Writing a plugin
 
 A plugin can be any executable in any language. The simplest plugin is a shell script:

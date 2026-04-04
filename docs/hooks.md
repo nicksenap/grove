@@ -8,23 +8,28 @@ Global hooks live in `~/.grove/config.toml` under `[hooks]`. Grove fires these o
 
 ```toml
 [hooks]
-on_close = "zellij action close-pane"
+post_create = "gw claude sync rehydrate {path} && gw claude copy-md {path}"
+pre_delete = "gw claude sync harvest {path}"
+on_close = "gw zellij close-pane"
 ```
 
-Run `gw doctor` to check if you're missing any recommended hooks.
+Run `gw wizard` to configure these interactively.
 
 ### Available hooks
 
-| Hook | Fired by | Example |
-|------|----------|---------|
-| `on_close` | `gw go -c` | `zellij action close-pane`, `tmux kill-pane` |
+| Hook | Fired by | When | Example |
+|------|----------|------|---------|
+| `post_create` | `gw create` | After workspace creation | `gw claude sync rehydrate {path}` |
+| `pre_delete` | `gw delete` | Before worktree removal | `gw claude sync harvest {path}` |
+| `on_close` | `gw go -c` | Close terminal pane | `gw zellij close-pane`, `tmux kill-pane` |
 
 ### Placeholders
 
-Hook commands can use `{name}`, `{path}`, and `{branch}` — Grove expands them before execution.
+Hook commands can use `{name}`, `{path}`, and `{branch}` — Grove expands them with shell quoting before execution.
 
 ```toml
 [hooks]
+post_create = "echo 'Created {name} at {path} on {branch}'"
 on_close = "tmux kill-pane"
 ```
 
