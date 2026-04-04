@@ -8,6 +8,33 @@ claude "fix the auth token expiry bug across svc-auth and api-gateway"
 gw delete fix-auth-bug   # removes worktrees, branches, and workspace
 ```
 
+## Golden path: full Claude Code + Zellij setup
+
+```bash
+# Install plugins
+gw plugin install nicksenap/gw-claude
+gw plugin install nicksenap/gw-zellij
+gw plugin install nicksenap/gw-dash
+
+# Register Claude Code session tracking hooks
+gw claude hook install
+```
+
+Add to `~/.grove/config.toml`:
+
+```toml
+[hooks]
+post_create = "gw claude sync rehydrate {path} && gw claude copy-md {path}"
+pre_delete = "gw claude sync harvest {path}"
+on_close = "gw zellij close-pane"
+```
+
+Or just run `gw wizard` to do this interactively.
+
+That gives you: memory sync on create/delete, CLAUDE.md in every workspace, session tracking dashboard, and Zellij pane close on navigate-away.
+
+---
+
 ## Claude Code plugin
 
 Install the [gw-claude](https://github.com/nicksenap/gw-claude) plugin to get:
