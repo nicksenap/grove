@@ -6,6 +6,13 @@
 
 <p align="center"><b>grove</b> /ɡrōv/ <i>noun</i> — a small group of trees growing together.</p>
 
+<p align="center">
+  <a href="https://github.com/nicksenap/grove/actions/workflows/ci.yml"><img src="https://github.com/nicksenap/grove/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://github.com/nicksenap/grove/releases/latest"><img src="https://img.shields.io/github/v/release/nicksenap/grove" alt="Release"></a>
+  <a href="https://github.com/nicksenap/grove/blob/master/LICENSE"><img src="https://img.shields.io/github/license/nicksenap/grove" alt="License"></a>
+  <a href="https://goreportcard.com/report/github.com/nicksenap/grove"><img src="https://goreportcard.com/badge/github.com/nicksenap/grove" alt="Go Report Card"></a>
+</p>
+
 ## Why?
 
 Monorepos solve cross-project work, but not everyone has one. You've got separate repos, separate CI, separate deploys — and that's fine until you need to work across them.
