@@ -110,7 +110,7 @@ All interactive menus support **type-to-search** filtering, arrow-key navigation
 
 ## Documentation
 
-- [Per-repo config & hooks](docs/hooks.md) — `.grove.toml`, lifecycle hooks, `gw run`
+- [Hooks](docs/hooks.md) — global hooks (terminal integration) & per-repo hooks (`.grove.toml`, `gw run`)
 - [Plugins](docs/plugins.md) — extend gw with external commands
 - [AI coding tools](docs/ai-tools.md) — Claude Code workflows, MCP server
 

@@ -11,6 +11,7 @@ import (
 
 	"github.com/nicksenap/grove/internal/config"
 	"github.com/nicksenap/grove/internal/console"
+	"github.com/nicksenap/grove/internal/lifecycle"
 	"github.com/nicksenap/grove/internal/picker"
 	"github.com/nicksenap/grove/internal/state"
 	"github.com/spf13/cobra"
@@ -30,7 +31,7 @@ var goCmd = &cobra.Command{
 	Long:  "Prints workspace path to stdout. Auto-detects from cwd for --back.",
 	Args:  cobra.MaximumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
-		// --close-tab: close current Zellij tab/pane
+		// --close-tab: fire on_close lifecycle hook
 		if goCloseTab {
 			if goDelete {
 				// Delete current workspace first
@@ -40,8 +41,15 @@ var goCmd = &cobra.Command{
 					deleteAsync(ws.Name)
 				}
 			}
-			// Close Zellij pane
-			zellijClose()
+			if lifecycle.Has("on_close") {
+				if err := lifecycle.Run("on_close", lifecycle.Vars{}); err != nil {
+					exitError(fmt.Sprintf("on_close hook failed: %s", err))
+				}
+			} else {
+				// TODO: remove when matured — legacy Zellij fallback for users who
+				// upgraded before the [hooks] system existed.
+				zellijCloseFallback()
+			}
 			return
 		}
 
@@ -198,18 +206,17 @@ func deleteAsync(name string) {
 	cmd.Start() // fire and forget
 }
 
-func zellijClose() {
-	sessionName := os.Getenv("ZELLIJ_SESSION_NAME")
-	if sessionName == "" {
-		exitError("Not inside a Zellij session")
+// TODO: remove when matured — legacy Zellij fallback for users without [hooks] config.
+func zellijCloseFallback() {
+	if os.Getenv("ZELLIJ_SESSION_NAME") == "" {
+		exitError("No on_close hook configured. Set one in ~/.grove/config.toml:\n\n  [hooks]\n  on_close = \"zellij action close-pane\"")
 	}
-	cmd := exec.Command("zellij", "action", "close-pane")
-	cmd.Run()
+	exec.Command("zellij", "action", "close-pane").Run()
 }
 
 func init() {
 	goCmd.Flags().BoolVarP(&goBack, "back", "b", false, "Go back to source repo")
 	goCmd.Flags().BoolVarP(&goDelete, "delete", "d", false, "Delete workspace after navigating away")
-	goCmd.Flags().BoolVarP(&goCloseTab, "close-tab", "c", false, "Close current Zellij pane/tab")
+	goCmd.Flags().BoolVarP(&goCloseTab, "close-tab", "c", false, "Fire on_close hook (e.g. close terminal pane)")
 	goCmd.ValidArgsFunction = completeWorkspaceNames
 }

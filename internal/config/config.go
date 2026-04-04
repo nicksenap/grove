@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 
@@ -117,6 +118,7 @@ func Init(dirs []string) (*models.Config, error) {
 			RepoDirs:     []string{},
 			WorkspaceDir: DefaultWorkspaceDir,
 			Presets:      make(map[string]models.Preset),
+			Hooks:        detectDefaultHooks(),
 		}
 	}
 
@@ -156,4 +158,22 @@ func Init(dirs []string) (*models.Config, error) {
 	}
 
 	return cfg, nil
+}
+
+// detectDefaultHooks returns lifecycle hooks bootstrapped from the current terminal environment.
+func detectDefaultHooks() map[string]string {
+	hooks := make(map[string]string)
+
+	if os.Getenv("ZELLIJ_SESSION_NAME") != "" || isOnPath("zellij") {
+		hooks["on_close"] = "zellij action close-pane"
+	} else if os.Getenv("TMUX") != "" || isOnPath("tmux") {
+		hooks["on_close"] = "tmux kill-pane"
+	}
+
+	return hooks
+}
+
+func isOnPath(name string) bool {
+	_, err := exec.LookPath(name)
+	return err == nil
 }
