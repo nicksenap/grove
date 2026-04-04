@@ -3,7 +3,7 @@ module github.com/nicksenap/grove
 go 1.25.0
 
 require (
-	github.com/BurntSushi/toml v1.4.0
+	github.com/BurntSushi/toml v1.6.0
 	github.com/spf13/cobra v1.8.1
 	golang.org/x/term v0.41.0
 	modernc.org/sqlite v1.48.0
