@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"path"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -89,7 +88,7 @@ func (h *Handler) HandleEvent(event string, payload map[string]any) {
 
 	// Load or create status
 	data := h.loadStatus(sessionID)
-	now := h.NowFn().Format("2006-01-02T15:04:05")
+	now := h.NowFn().UTC().Format("2006-01-02T15:04:05Z")
 
 	data.SessionID = sessionID
 	data.LastEvent = event
@@ -101,7 +100,7 @@ func (h *Handler) HandleEvent(event string, payload map[string]any) {
 		data.CWD = cwd
 	}
 	if data.ProjectName == "" && data.CWD != "" {
-		data.ProjectName = path.Base(data.CWD)
+		data.ProjectName = filepath.Base(data.CWD)
 	}
 
 	// Track permission mode (available on every event)
@@ -115,8 +114,8 @@ func (h *Handler) HandleEvent(event string, payload map[string]any) {
 		data.Status = "IDLE"
 		data.StartedAt = now
 		data.CWD = cwd
-		data.ProjectName = path.Base(cwd)
 		if cwd != "" {
+			data.ProjectName = filepath.Base(cwd)
 			data.GitBranch = h.GitBranchFn(cwd)
 			data.GitDirtyCount = h.GitDirtyFn(cwd)
 		}
@@ -205,7 +204,6 @@ func (h *Handler) HandleEvent(event string, payload map[string]any) {
 			}
 			data.InitialPrompt = prompt
 		}
-		bumpActivity(data)
 
 	case "SubagentStart":
 		data.SubagentCount++
@@ -310,10 +308,12 @@ func toolSummary(payload map[string]any) *string {
 		newStr, _ := toolInput["new_string"].(string)
 		var parts []string
 		parts = append(parts, fp)
-		for _, line := range strings.SplitN(oldStr, "\n", 4)[:min(3, len(strings.SplitN(oldStr, "\n", 4)))] {
+		oldLines := strings.SplitN(oldStr, "\n", 4)
+		for _, line := range oldLines[:min(3, len(oldLines))] {
 			parts = append(parts, "- "+line)
 		}
-		for _, line := range strings.SplitN(newStr, "\n", 4)[:min(3, len(strings.SplitN(newStr, "\n", 4)))] {
+		newLines := strings.SplitN(newStr, "\n", 4)
+		for _, line := range newLines[:min(3, len(newLines))] {
 			parts = append(parts, "+ "+line)
 		}
 		summary = strings.Join(parts, "\n")
@@ -322,6 +322,11 @@ func toolSummary(payload map[string]any) *string {
 		fp, _ := toolInput["file_path"].(string)
 		content, _ := toolInput["content"].(string)
 		lines := len(strings.Split(content, "\n"))
+		if content == "" {
+			lines = 0
+		} else if strings.HasSuffix(content, "\n") {
+			lines--
+		}
 		summary = fmt.Sprintf("%s (%d lines)", fp, lines)
 
 	case "Read":

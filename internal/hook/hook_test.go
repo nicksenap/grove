@@ -115,7 +115,7 @@ func TestSessionStartRecordsTimestamp(t *testing.T) {
 	h.HandleEvent("SessionStart", map[string]any{"session_id": "time-test"})
 
 	data := readStatus(t, h, "time-test")
-	if data.StartedAt != "2025-06-15T12:00:00" {
+	if data.StartedAt != "2025-06-15T12:00:00Z" {
 		t.Errorf("started_at: got %q", data.StartedAt)
 	}
 }
@@ -646,5 +646,103 @@ func TestPostToolUseClearsNotification(t *testing.T) {
 	data := readStatus(t, h, "post-clear")
 	if data.NotificationMessage != nil {
 		t.Errorf("notification_message should be cleared on PostToolUse, got %v", data.NotificationMessage)
+	}
+}
+
+func TestNotificationNeutralLeavesStatus(t *testing.T) {
+	h := testHandler(t)
+
+	h.HandleEvent("SessionStart", map[string]any{"session_id": "notif-neutral"})
+	h.HandleEvent("PreToolUse", map[string]any{"session_id": "notif-neutral", "tool_name": "Read"})
+
+	// Neutral message — no keyword match — should NOT change WORKING status
+	h.HandleEvent("Notification", map[string]any{
+		"session_id": "notif-neutral",
+		"message":    "Task completed successfully",
+	})
+
+	data := readStatus(t, h, "notif-neutral")
+	if data.Status != "WORKING" {
+		t.Errorf("neutral notification should not change status, got %q", data.Status)
+	}
+}
+
+func TestStopResetsWaitingPermission(t *testing.T) {
+	h := testHandler(t)
+
+	h.HandleEvent("SessionStart", map[string]any{"session_id": "stop-perm"})
+	h.HandleEvent("PermissionRequest", map[string]any{
+		"session_id": "stop-perm",
+		"tool_name":  "Bash",
+	})
+
+	data := readStatus(t, h, "stop-perm")
+	if data.Status != "WAITING_PERMISSION" {
+		t.Fatalf("precondition: status should be WAITING_PERMISSION, got %q", data.Status)
+	}
+
+	// Stop should reset WAITING_PERMISSION to IDLE (unlike WAITING_ANSWER which is preserved)
+	h.HandleEvent("Stop", map[string]any{"session_id": "stop-perm"})
+
+	data = readStatus(t, h, "stop-perm")
+	if data.Status != "IDLE" {
+		t.Errorf("Stop should reset WAITING_PERMISSION to IDLE, got %q", data.Status)
+	}
+}
+
+func TestSessionStartNoCwdNoProjectName(t *testing.T) {
+	h := testHandler(t)
+
+	h.HandleEvent("SessionStart", map[string]any{"session_id": "no-cwd"})
+
+	data := readStatus(t, h, "no-cwd")
+	if data.ProjectName != "" {
+		t.Errorf("project_name should be empty when cwd is empty, got %q", data.ProjectName)
+	}
+}
+
+func TestWriteSummaryLineCount(t *testing.T) {
+	h := testHandler(t)
+
+	h.HandleEvent("SessionStart", map[string]any{"session_id": "write-count"})
+
+	// Trailing newline — should count as 2 lines (matching Python splitlines)
+	h.HandleEvent("PermissionRequest", map[string]any{
+		"session_id": "write-count",
+		"tool_name":  "Write",
+		"tool_input": map[string]any{
+			"file_path": "/tmp/test.py",
+			"content":   "line1\nline2\n",
+		},
+	})
+
+	data := readStatus(t, h, "write-count")
+	if data.ToolRequestSummary == nil {
+		t.Fatal("tool_request_summary should not be nil")
+	}
+	if *data.ToolRequestSummary != "/tmp/test.py (2 lines)" {
+		t.Errorf("summary: got %q, want '/tmp/test.py (2 lines)'", *data.ToolRequestSummary)
+	}
+}
+
+func TestWriteSummaryEmptyContent(t *testing.T) {
+	h := testHandler(t)
+
+	h.HandleEvent("SessionStart", map[string]any{"session_id": "write-empty"})
+	h.HandleEvent("PermissionRequest", map[string]any{
+		"session_id": "write-empty",
+		"tool_name":  "Write",
+		"tool_input": map[string]any{
+			"file_path": "/tmp/empty.py",
+			"content":   "",
+		},
+	})
+
+	data := readStatus(t, h, "write-empty")
+	if data.ToolRequestSummary == nil {
+		t.Fatal("tool_request_summary should not be nil")
+	}
+	if *data.ToolRequestSummary != "/tmp/empty.py (0 lines)" {
+		t.Errorf("summary: got %q, want '/tmp/empty.py (0 lines)'", *data.ToolRequestSummary)
 	}
 }

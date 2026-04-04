@@ -604,35 +604,39 @@ else
     fail "_hook notification should be cleared, got ${prompt_notif}"
 fi
 
-# Test SubagentStart/Stop counting
-echo '{"session_id": "test-session-123", "agent_type": "Explore"}' | gw _hook --event SubagentStart 2>/dev/null
-echo '{"session_id": "test-session-123", "agent_type": "Plan"}' | gw _hook --event SubagentStart 2>/dev/null
-sub_count=$(jq -r '.subagent_count' "${GROVE_HOME}/.grove/status/test-session-123.json")
-active_subs=$(jq -r '.active_subagents | length' "${GROVE_HOME}/.grove/status/test-session-123.json")
+# Test SubagentStart/Stop counting (fresh session to isolate)
+echo '{"session_id": "sub-session", "cwd": "/tmp"}' | gw _hook --event SessionStart 2>/dev/null
+echo '{"session_id": "sub-session", "agent_type": "Explore"}' | gw _hook --event SubagentStart 2>/dev/null
+echo '{"session_id": "sub-session", "agent_type": "Plan"}' | gw _hook --event SubagentStart 2>/dev/null
+sub_count=$(jq -r '.subagent_count' "${GROVE_HOME}/.grove/status/sub-session.json")
+active_subs=$(jq -r '.active_subagents | length' "${GROVE_HOME}/.grove/status/sub-session.json")
 if [ "${sub_count}" = "2" ] && [ "${active_subs}" = "2" ]; then
     pass "_hook SubagentStart tracks count + active list"
 else
     fail "_hook SubagentStart: count=${sub_count}, active=${active_subs}"
 fi
 
-echo '{"session_id": "test-session-123", "agent_type": "Explore"}' | gw _hook --event SubagentStop 2>/dev/null
-sub_count_after=$(jq -r '.subagent_count' "${GROVE_HOME}/.grove/status/test-session-123.json")
-remaining=$(jq -r '.active_subagents[0]' "${GROVE_HOME}/.grove/status/test-session-123.json")
+echo '{"session_id": "sub-session", "agent_type": "Explore"}' | gw _hook --event SubagentStop 2>/dev/null
+sub_count_after=$(jq -r '.subagent_count' "${GROVE_HOME}/.grove/status/sub-session.json")
+remaining=$(jq -r '.active_subagents[0]' "${GROVE_HOME}/.grove/status/sub-session.json")
 if [ "${sub_count_after}" = "1" ] && [ "${remaining}" = "Plan" ]; then
     pass "_hook SubagentStop decrements and removes from active list"
 else
     fail "_hook SubagentStop: count=${sub_count_after}, remaining=${remaining}"
 fi
+echo '{"session_id": "sub-session"}' | gw _hook --event SessionEnd 2>/dev/null
 
-# Test PreCompact tracking
-echo '{"session_id": "test-session-123", "trigger": "auto"}' | gw _hook --event PreCompact 2>/dev/null
-compact_count=$(jq -r '.compact_count' "${GROVE_HOME}/.grove/status/test-session-123.json")
-compact_trigger=$(jq -r '.compact_trigger' "${GROVE_HOME}/.grove/status/test-session-123.json")
+# Test PreCompact tracking (fresh session)
+echo '{"session_id": "compact-session", "cwd": "/tmp"}' | gw _hook --event SessionStart 2>/dev/null
+echo '{"session_id": "compact-session", "trigger": "auto"}' | gw _hook --event PreCompact 2>/dev/null
+compact_count=$(jq -r '.compact_count' "${GROVE_HOME}/.grove/status/compact-session.json")
+compact_trigger=$(jq -r '.compact_trigger' "${GROVE_HOME}/.grove/status/compact-session.json")
 if [ "${compact_count}" = "1" ] && [ "${compact_trigger}" = "auto" ]; then
     pass "_hook PreCompact tracks count + trigger"
 else
     fail "_hook PreCompact: count=${compact_count}, trigger=${compact_trigger}"
 fi
+echo '{"session_id": "compact-session"}' | gw _hook --event SessionEnd 2>/dev/null
 
 echo '{"session_id": "test-session-123"}' | gw _hook --event SessionEnd 2>/dev/null
 if [ ! -f "${GROVE_HOME}/.grove/status/test-session-123.json" ]; then
