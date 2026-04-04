@@ -82,15 +82,13 @@ gw preset remove backend
 gw create my-feature -p backend                        # use a preset instead of -r
 
 # Plugins — extend gw with external commands
-gw plugin install nicksenap/gw-dash                    # install from GitHub
+gw plugin install nicksenap/gw-claude                  # Claude Code integration
+gw plugin install nicksenap/gw-zellij                  # Zellij terminal integration
+gw plugin install nicksenap/gw-dash                    # agent monitoring dashboard
 gw plugin list                                         # list installed plugins
 gw plugin upgrade                                      # upgrade all plugins
 gw plugin remove dash                                  # uninstall a plugin
-
-# Claude Code integration
-gw hook install                                        # register hooks in ~/.claude/settings.json
-gw hook status                                         # check if hooks are installed
-gw hook uninstall                                      # remove hooks
+gw wizard                                              # interactive plugin + hook setup
 ```
 
 All interactive menus support **type-to-search** filtering, arrow-key navigation (single-select), or arrow + tab (multi-select) with an `(all)` shortcut.
