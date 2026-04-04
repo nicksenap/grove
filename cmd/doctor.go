@@ -24,7 +24,6 @@ var doctorCmd = &cobra.Command{
 			exitError(err.Error())
 		}
 
-
 		if doctorJSON {
 			data, _ := json.MarshalIndent(issues, "", "  ")
 			fmt.Println(string(data))
@@ -51,7 +50,6 @@ var doctorCmd = &cobra.Command{
 		}
 	},
 }
-
 
 func init() {
 	doctorCmd.Flags().BoolVar(&doctorFix, "fix", false, "Auto-fix issues")

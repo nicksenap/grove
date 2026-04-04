@@ -91,7 +91,7 @@ func TestStaleCacheTriggersRefresh(t *testing.T) {
 	// Write cache with old timestamp (25h ago)
 	cache := CacheData{
 		LastCheck: time.Now().Add(-25 * time.Hour).Unix(),
-		Latest:   "0.2.0",
+		Latest:    "0.2.0",
 	}
 	data, _ := json.Marshal(cache)
 	os.WriteFile(c.CachePath, data, 0o644)
@@ -118,7 +118,7 @@ func TestStaleCacheTriggersBackgroundFetch(t *testing.T) {
 	// Write stale cache
 	cache := CacheData{
 		LastCheck: time.Now().Add(-25 * time.Hour).Unix(),
-		Latest:   "0.2.0",
+		Latest:    "0.2.0",
 	}
 	data, _ := json.Marshal(cache)
 	os.WriteFile(c.CachePath, data, 0o644)
@@ -149,7 +149,7 @@ func TestFreshCacheDoesNotFetch(t *testing.T) {
 	// Write fresh cache
 	cache := CacheData{
 		LastCheck: time.Now().Unix(),
-		Latest:   "0.2.0",
+		Latest:    "0.2.0",
 	}
 	data, _ := json.Marshal(cache)
 	os.WriteFile(c.CachePath, data, 0o644)

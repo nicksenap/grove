@@ -192,13 +192,13 @@ func defaultStore() *Store {
 }
 
 // StatePath returns the path to state.json.
-func StatePath() string           { return defaultStore().Path }
-func Load() ([]models.Workspace, error) { return defaultStore().Load() }
-func Save(workspaces []models.Workspace) error { return defaultStore().Save(workspaces) }
+func StatePath() string                                   { return defaultStore().Path }
+func Load() ([]models.Workspace, error)                   { return defaultStore().Load() }
+func Save(workspaces []models.Workspace) error            { return defaultStore().Save(workspaces) }
 func GetWorkspace(name string) (*models.Workspace, error) { return defaultStore().GetWorkspace(name) }
-func AddWorkspace(ws models.Workspace) error { return defaultStore().AddWorkspace(ws) }
-func UpdateWorkspace(ws models.Workspace) error { return defaultStore().UpdateWorkspace(ws) }
-func RemoveWorkspace(name string) error { return defaultStore().RemoveWorkspace(name) }
+func AddWorkspace(ws models.Workspace) error              { return defaultStore().AddWorkspace(ws) }
+func UpdateWorkspace(ws models.Workspace) error           { return defaultStore().UpdateWorkspace(ws) }
+func RemoveWorkspace(name string) error                   { return defaultStore().RemoveWorkspace(name) }
 func UpdateWorkspaceByName(ws models.Workspace, matchName string) error {
 	return defaultStore().UpdateWorkspaceByName(ws, matchName)
 }

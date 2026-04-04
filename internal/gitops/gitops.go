@@ -91,7 +91,6 @@ func runGit(dir string, args ...string) (string, error) {
 	return output, nil
 }
 
-
 // IsGitRepo checks if a directory is a git repository.
 func IsGitRepo(path string) bool {
 	_, err := runGit(path, "rev-parse", "--git-dir")
@@ -330,9 +329,9 @@ func ResolveBaseBranch(repo string) (string, error) {
 // PRInfo holds merge/pull request status.
 type PRInfo struct {
 	Number         int    `json:"number"`
-	State          string `json:"state"`           // OPEN, MERGED, CLOSED
-	ReviewDecision string `json:"reviewDecision"`  // APPROVED, CHANGES_REQUESTED, REVIEW_REQUIRED, ""
-	Provider       string `json:"-"`               // "github" or "gitlab"
+	State          string `json:"state"`          // OPEN, MERGED, CLOSED
+	ReviewDecision string `json:"reviewDecision"` // APPROVED, CHANGES_REQUESTED, REVIEW_REQUIRED, ""
+	Provider       string `json:"-"`              // "github" or "gitlab"
 }
 
 // PRStatus returns PR/MR info for the current branch, or nil if unavailable.

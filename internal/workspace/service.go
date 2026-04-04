@@ -9,7 +9,6 @@ import (
 	"github.com/nicksenap/grove/internal/stats"
 )
 
-
 // Service orchestrates workspace operations with injectable dependencies.
 type Service struct {
 	State        *state.Store

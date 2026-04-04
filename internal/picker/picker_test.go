@@ -81,8 +81,8 @@ func update(m selectModel, msg Msg) selectModel {
 	return result
 }
 
-func key(k KeyType) KeyMsg      { return KeyMsg{Type: k} }
-func rune_(r rune) KeyMsg       { return KeyMsg{Type: KeyRunes, Runes: []rune{r}} }
+func key(k KeyType) KeyMsg          { return KeyMsg{Type: k} }
+func rune_(r rune) KeyMsg           { return KeyMsg{Type: KeyRunes, Runes: []rune{r}} }
 func resize(w, h int) WindowSizeMsg { return WindowSizeMsg{Width: w, Height: h} }
 
 func TestModelFilterReducesList(t *testing.T) {
@@ -197,9 +197,9 @@ func TestModelPageUpDown(t *testing.T) {
 
 func TestModelSelectedCountDisplay(t *testing.T) {
 	m := newSelectModel("Pick:", []string{"a", "b", "c"}, true)
-	m = update(m, key(KeyTab))       // select a
-	m = update(m, key(KeyDown))      // move to b
-	m = update(m, key(KeyTab))       // select b
+	m = update(m, key(KeyTab))  // select a
+	m = update(m, key(KeyDown)) // move to b
+	m = update(m, key(KeyTab))  // select b
 
 	if !strings.Contains(m.View(), "2 selected") {
 		t.Errorf("should show selection count, got:\n%s", m.View())

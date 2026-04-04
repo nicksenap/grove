@@ -19,12 +19,12 @@ import (
 
 // RunnableRepo holds a repo's run commands.
 type RunnableRepo struct {
-	RepoName    string
+	RepoName     string
 	WorktreePath string
-	SourceRepo  string
-	RunCmds     []string
-	PreRun      string
-	PostRun     string
+	SourceRepo   string
+	RunCmds      []string
+	PreRun       string
+	PostRun      string
 }
 
 // GetRunnable returns repos that have run hooks defined.
@@ -183,7 +183,6 @@ func runHooks(runnable []RunnableRepo, hookName string, getCmd func(RunnableRepo
 	}
 	wg.Wait()
 }
-
 
 // prefixWriter prefixes each line written with a string.
 type prefixWriter struct {

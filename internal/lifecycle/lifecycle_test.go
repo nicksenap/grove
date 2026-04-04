@@ -32,10 +32,10 @@ func TestShellQuote(t *testing.T) {
 
 func TestExpand(t *testing.T) {
 	tests := []struct {
-		name   string
-		cmd    string
-		vars   Vars
-		want   string
+		name string
+		cmd  string
+		vars Vars
+		want string
 	}{
 		{
 			name: "no placeholders",

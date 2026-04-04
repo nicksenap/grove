@@ -131,7 +131,6 @@ func DiscoverReposWithRemoteCache(dirs []string, cache map[string]CacheEntry, fe
 	return infos
 }
 
-
 // displayNameFromURL derives "owner/repo" from a remote URL, falling back to the given name.
 func displayNameFromURL(url, fallback string) string {
 	if url != "" {

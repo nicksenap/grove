@@ -71,24 +71,24 @@ type Preset struct {
 
 // Config is the global Grove configuration (~/.grove/config.toml).
 type Config struct {
-	RepoDirs         []string          `toml:"repo_dirs"`
-	WorkspaceDir     string            `toml:"workspace_dir"`
-	Presets          map[string]Preset `toml:"presets"`
-	Hooks            map[string]string `toml:"hooks"`
+	RepoDirs     []string          `toml:"repo_dirs"`
+	WorkspaceDir string            `toml:"workspace_dir"`
+	Presets      map[string]Preset `toml:"presets"`
+	Hooks        map[string]string `toml:"hooks"`
 	// Legacy field — auto-migrated to RepoDirs
 	ReposDir string `toml:"repos_dir"`
 }
 
 // GroveConfig is per-repo .grove.toml configuration.
 type GroveConfig struct {
-	BaseBranch string      `toml:"base_branch"`
+	BaseBranch string       `toml:"base_branch"`
 	Setup      StringOrList `toml:"setup"`
 	Run        StringOrList `toml:"run"`
-	PreRun     string      `toml:"pre_run"`
-	PostRun    string      `toml:"post_run"`
-	PreSync    string      `toml:"pre_sync"`
-	PostSync   string      `toml:"post_sync"`
-	Teardown   string      `toml:"teardown"`
+	PreRun     string       `toml:"pre_run"`
+	PostRun    string       `toml:"post_run"`
+	PreSync    string       `toml:"pre_sync"`
+	PostSync   string       `toml:"post_sync"`
+	Teardown   string       `toml:"teardown"`
 }
 
 // StringOrList handles TOML values that can be a string or list of strings.

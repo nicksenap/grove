@@ -10,9 +10,9 @@ import (
 
 // ExploredRepo is a repo found during deep scan.
 type ExploredRepo struct {
-	Name     string
-	Path     string
-	Nested   bool
+	Name      string
+	Path      string
+	Nested    bool
 	ParentDir string // the configured source dir it was found under
 }
 

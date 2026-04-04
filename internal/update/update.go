@@ -21,16 +21,16 @@ type CacheData struct {
 
 // Checker performs version checks with injectable dependencies.
 type Checker struct {
-	CachePath    string
-	NowFn        func() time.Time
+	CachePath     string
+	NowFn         func() time.Time
 	FetchLatestFn func() (string, error) // returns latest version string
 }
 
 // NewChecker creates a Checker with real dependencies.
 func NewChecker(groveDir string) *Checker {
 	return &Checker{
-		CachePath:    filepath.Join(groveDir, "update-check.json"),
-		NowFn:        time.Now,
+		CachePath:     filepath.Join(groveDir, "update-check.json"),
+		NowFn:         time.Now,
 		FetchLatestFn: fetchLatestFromGitHub,
 	}
 }

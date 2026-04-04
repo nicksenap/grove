@@ -2,12 +2,12 @@ package plugin
 
 import (
 	"archive/tar"
+	"bytes"
 	"compress/gzip"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"bytes"
 	"io"
 	"net/http"
 	"os"
@@ -280,10 +280,24 @@ func fetchChecksums(release *ghRelease) map[string]string {
 
 // downloadAndExtract downloads a .tar.gz, verifies its checksum, and extracts the binary.
 func downloadAndExtract(url, binName, destPath, assetName string, checksums map[string]string) error {
+	archiveData, err := downloadArchive(url)
+	if err != nil {
+		return err
+	}
+
+	if err := verifyChecksum(archiveData, assetName, checksums); err != nil {
+		return err
+	}
+
+	return extractBinary(archiveData, binName, destPath)
+}
+
+// downloadArchive fetches a URL and returns the response body.
+func downloadArchive(url string) ([]byte, error) {
 	client := &http.Client{Timeout: 120 * time.Second}
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	req.Header.Set("User-Agent", "grove-plugin-installer")
 
@@ -293,31 +307,34 @@ func downloadAndExtract(url, binName, destPath, assetName string, checksums map[
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != 200 {
-		return fmt.Errorf("download returned HTTP %d", resp.StatusCode)
+		return nil, fmt.Errorf("download returned HTTP %d", resp.StatusCode)
 	}
 
-	// Read the full archive into memory so we can checksum it before extracting.
-	// Archives are small (< 10 MiB for a Go binary).
-	archiveData, err := io.ReadAll(io.LimitReader(resp.Body, maxBinarySize))
-	if err != nil {
-		return fmt.Errorf("reading download: %w", err)
-	}
+	return io.ReadAll(io.LimitReader(resp.Body, maxBinarySize))
+}
 
-	// Verify checksum if available
-	if expectedHash, ok := checksums[assetName]; ok {
-		h := sha256.Sum256(archiveData)
-		actualHash := hex.EncodeToString(h[:])
-		if actualHash != expectedHash {
-			return fmt.Errorf("checksum mismatch for %s:\n  expected: %s\n  got:      %s", assetName, expectedHash, actualHash)
-		}
+// verifyChecksum checks the SHA256 of data against the expected hash from checksums.
+// Returns nil if no checksum is available for the asset.
+func verifyChecksum(data []byte, assetName string, checksums map[string]string) error {
+	expectedHash, ok := checksums[assetName]
+	if !ok {
+		return nil
 	}
+	h := sha256.Sum256(data)
+	actualHash := hex.EncodeToString(h[:])
+	if actualHash != expectedHash {
+		return fmt.Errorf("checksum mismatch for %s:\n  expected: %s\n  got:      %s", assetName, expectedHash, actualHash)
+	}
+	return nil
+}
 
-	// Extract from the verified archive
+// extractBinary extracts a named binary from a .tar.gz archive and writes it to destPath.
+func extractBinary(archiveData []byte, binName, destPath string) error {
 	gz, err := gzip.NewReader(bytes.NewReader(archiveData))
 	if err != nil {
 		return fmt.Errorf("decompressing: %w", err)
@@ -334,30 +351,33 @@ func downloadAndExtract(url, binName, destPath, assetName string, checksums map[
 			return fmt.Errorf("reading tar: %w", err)
 		}
 
-		// Look for the binary — it may be at the root or in a subdirectory
 		base := filepath.Base(hdr.Name)
 		if base == binName && hdr.Typeflag == tar.TypeReg {
-			// Write to temp file then rename (atomic install)
-			tmp := destPath + ".tmp"
-			f, err := os.OpenFile(tmp, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o755)
-			if err != nil {
-				return err
-			}
-			n, err := io.Copy(f, io.LimitReader(tr, maxBinarySize+1))
-			if err != nil {
-				f.Close()
-				os.Remove(tmp)
-				return err
-			}
-			if n > maxBinarySize {
-				f.Close()
-				os.Remove(tmp)
-				return fmt.Errorf("binary exceeds maximum size (%d MiB)", maxBinarySize>>20)
-			}
-			f.Close()
-			return os.Rename(tmp, destPath)
+			return atomicWriteBinary(tr, destPath)
 		}
 	}
 
 	return fmt.Errorf("binary %q not found in archive", binName)
+}
+
+// atomicWriteBinary writes from r to destPath via a temp file + rename.
+func atomicWriteBinary(r io.Reader, destPath string) error {
+	tmp := destPath + ".tmp"
+	f, err := os.OpenFile(tmp, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o755)
+	if err != nil {
+		return err
+	}
+	n, err := io.Copy(f, io.LimitReader(r, maxBinarySize+1))
+	if err != nil {
+		f.Close()
+		os.Remove(tmp)
+		return err
+	}
+	if n > maxBinarySize {
+		f.Close()
+		os.Remove(tmp)
+		return fmt.Errorf("binary exceeds maximum size (%d MiB)", maxBinarySize>>20)
+	}
+	f.Close()
+	return os.Rename(tmp, destPath)
 }

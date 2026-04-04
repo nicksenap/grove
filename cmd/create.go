@@ -17,10 +17,10 @@ import (
 )
 
 var (
-	createBranch  string
-	createRepos   string
-	createPreset  string
-	createAll     bool
+	createBranch string
+	createRepos  string
+	createPreset string
+	createAll    bool
 )
 
 var createCmd = &cobra.Command{
@@ -177,4 +177,3 @@ func repoNamesList(repos []discover.Repo) []string {
 	}
 	return names
 }
-
