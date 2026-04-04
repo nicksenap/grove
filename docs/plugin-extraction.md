@@ -167,6 +167,20 @@ on_close = "gw zellij close-pane"
 7. Remove `ZellijSession` from hook status data
 8. Update doctor to suggest `gw plugin install` if plugins are missing
 
+## Golden path recipes
+
+> **TODO:** Write these once the plugins exist and exact commands are finalized.
+
+Recipes for common setups — copy-paste into `~/.grove/config.toml` after installing
+the relevant plugins. Should cover at least:
+
+- Claude Code + Zellij (the "full" setup)
+- Claude Code + tmux
+- Minimal (no plugins, shell one-liners only)
+- Cursor / other editors (community contributed)
+
+These should live in the main README or a dedicated `docs/recipes.md` once stable.
+
 ## Open questions
 
 - Should the hook status tracking (`internal/hook/`) be part of `gw-claude` or stay in core?
