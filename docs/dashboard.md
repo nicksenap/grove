@@ -1,11 +1,15 @@
 # Dashboard (`gw dash`)
 
-A Textual TUI for monitoring Claude Code agents across all your workspaces. Agents are sorted into a kanban board with four columns — **Active**, **Attention**, **Idle**, **Done** — based on live status. Inspired by [Clorch](https://github.com/androsovm/clorch).
+A kanban-style TUI for monitoring Claude Code agents across all your workspaces. Agents are sorted into four columns — **Active**, **Attention**, **Idle**, **Done** — based on live status. Inspired by [Clorch](https://github.com/androsovm/clorch).
+
+Built with [Bubble Tea](https://github.com/charmbracelet/bubbletea) + [Lipgloss](https://github.com/charmbracelet/lipgloss).
+
+## Install
 
 ```bash
-gw dash install   # install Claude Code hooks
-gw dash           # launch the dashboard
-gw dash uninstall # remove hooks
+gw plugin install nicksenap/gw-dash     # install the dashboard plugin
+gw claude hook install                   # register session tracking hooks (requires gw-claude)
+gw dash                                  # launch
 ```
 
 | Key | Action |
@@ -21,7 +25,7 @@ gw dash uninstall # remove hooks
 
 ## How it works
 
-Claude Code hooks write agent state to `~/.grove/status/<session_id>.json` on every event. The dashboard polls these files every 500ms and renders a real-time kanban view of all active agents.
+The [gw-claude](https://github.com/nicksenap/gw-claude) plugin's hook handler writes agent state to `~/.grove/status/<session_id>.json` on every Claude Code event. The dashboard polls these files every 500ms and renders a real-time kanban view.
 
 **Tracked per agent:** status, working directory, git branch, dirty file count, last tool used, tool/error/subagent counts, activity sparkline, permission request details, and initial prompt.
 
@@ -39,9 +43,18 @@ When you press `Enter` to jump to an agent, the dashboard finds the right Zellij
 
 ## Terminal multiplexer integration
 
-Grove integrates with [Zellij](https://zellij.dev/) for tab management. When running inside Zellij:
+The dashboard integrates with [Zellij](https://zellij.dev/) for tab management. When running inside Zellij:
 
-- **`gw go --close-tab`** closes the current Zellij tab (useful when you're done with a workspace)
-- **`gw dash`** lets you press `Enter` to jump directly to an agent's Zellij tab, and `y`/`n` to approve or deny permission requests
+- **`Enter`** jumps directly to an agent's Zellij tab
+- **`y` / `n`** approves or denies permission requests remotely
 
-Support for tmux and other terminal multiplexers is planned.
+For closing panes when navigating away from workspaces, use the [gw-zellij](https://github.com/nicksenap/gw-zellij) plugin:
+
+```bash
+gw plugin install nicksenap/gw-zellij
+```
+
+```toml
+[hooks]
+on_close = "gw zellij close-pane"
+```
