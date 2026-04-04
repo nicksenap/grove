@@ -59,7 +59,7 @@ func init() {
 	wsListCmd.Flags().BoolVarP(&listJSON, "json", "j", false, "Output as JSON")
 	wsListCmd.Flags().BoolVarP(&listStatus, "status", "s", false, "Include git status")
 	wsShowCmd.Flags().BoolVarP(&wsShowJSON, "json", "j", false, "Output as JSON")
-	wsCmd.AddCommand(wsListCmd, wsShowCmd)
+	wsCmd.AddCommand(wsListCmd, wsShowCmd, wsDeleteCmd)
 
 	listCmd.Flags().BoolVarP(&listJSON, "json", "j", false, "Output as JSON")
 	listCmd.Flags().BoolVarP(&listStatus, "status", "s", false, "Include git status")

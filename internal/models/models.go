@@ -75,6 +75,7 @@ type Config struct {
 	WorkspaceDir     string            `toml:"workspace_dir"`
 	ClaudeMemorySync bool              `toml:"claude_memory_sync"`
 	Presets          map[string]Preset `toml:"presets"`
+	Hooks            map[string]string `toml:"hooks"`
 	// Legacy field — auto-migrated to RepoDirs
 	ReposDir string `toml:"repos_dir"`
 }

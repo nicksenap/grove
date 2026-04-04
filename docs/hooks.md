@@ -1,4 +1,36 @@
-# Per-repo config & hooks
+# Hooks
+
+Grove has two levels of hooks: **global hooks** for workspace-level actions, and **per-repo hooks** for repo-specific lifecycle events.
+
+## Global hooks
+
+Global hooks live in `~/.grove/config.toml` under `[hooks]`. Grove fires these on workspace-level actions — they're how you integrate with your terminal multiplexer or trigger notifications.
+
+```toml
+[hooks]
+on_close = "zellij action close-pane"
+```
+
+Run `gw doctor` to check if you're missing any recommended hooks.
+
+### Available hooks
+
+| Hook | Fired by | Example |
+|------|----------|---------|
+| `on_close` | `gw go -c` | `zellij action close-pane`, `tmux kill-pane` |
+
+### Placeholders
+
+Hook commands can use `{name}`, `{path}`, and `{branch}` — Grove expands them before execution.
+
+```toml
+[hooks]
+on_close = "tmux kill-pane"
+```
+
+---
+
+## Per-repo hooks
 
 Drop a `.grove.toml` in any repo to override defaults:
 

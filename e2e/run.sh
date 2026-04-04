@@ -413,6 +413,30 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# Test: gw ws delete (subcommand parity with gw delete)
+# ---------------------------------------------------------------------------
+section "ws delete subcommand"
+
+gw create ws-del-sub --branch feat/ws-del --repos svc-auth 2>&1
+pass "workspace for ws delete test created"
+
+gw ws delete ws-del-sub --force 2>&1
+pass "gw ws delete succeeded"
+
+count=$(gw list --json 2>/dev/null | jq 'length')
+if [ "${count}" = "1" ]; then
+    pass "workspace removed by gw ws delete"
+else
+    fail "expected 1 workspace after gw ws delete, got ${count}"
+fi
+
+if [ ! -d "${GROVE_HOME}/.grove/workspaces/ws-del-sub" ]; then
+    pass "workspace directory cleaned up by ws delete"
+else
+    fail "ws-del-sub directory still exists after ws delete"
+fi
+
+# ---------------------------------------------------------------------------
 # Test: presets
 # ---------------------------------------------------------------------------
 section "Presets"
