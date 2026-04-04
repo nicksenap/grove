@@ -16,11 +16,12 @@ Git Worktree Workspace Orchestrator — CLI tool invoked as `gw`. Manages multi-
 
 ## Release Process
 
-1. Commit everything
-2. Tag + push: `just release X.Y.Z`
+1. Add a new `## vX.Y.Z` section at the top of `CHANGELOG.md`
+2. Commit everything
+3. Tag + push: `just release X.Y.Z`
    - Creates annotated tag `vX.Y.Z`
    - Pushes tag to origin (triggers release workflow)
-   - GoReleaser builds binaries and updates Homebrew tap automatically
+   - GoReleaser builds binaries, prepends changelog notes, and updates Homebrew tap
 
 ## Per-repo config
 

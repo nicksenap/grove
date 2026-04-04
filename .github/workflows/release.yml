@@ -24,6 +24,16 @@ jobs:
       - name: Run tests
         run: go test ./...
 
+      - name: Extract release notes
+        id: notes
+        run: |
+          notes=$(bash scripts/release-notes.sh)
+          {
+            echo "RELEASE_HEADER<<EOF"
+            echo "$notes"
+            echo "EOF"
+          } >> "$GITHUB_ENV"
+
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@v6
         with:

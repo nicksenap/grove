@@ -50,19 +50,6 @@ eval "$(gw shell-init)"
 
 This enables `gw go` to change your working directory and auto-cds into new workspaces after `gw create`.
 
-### Migrating from Python
-
-If you previously had the Python version installed:
-
-```bash
-brew uninstall grove                  # remove old Python formula
-brew install nicksenap/grove/grove    # install Go version
-```
-
-The Go version reads the same `~/.grove/` config and state files — your existing workspaces will work as before.
-
-> **Note:** The Python implementation has been archived at [grove-python](https://github.com/nicksenap/grove-python) and is no longer maintained.
-
 ## Usage
 
 ```bash
