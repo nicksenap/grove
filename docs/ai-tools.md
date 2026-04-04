@@ -41,7 +41,7 @@ gw claude hook install   # register session tracking hooks
 gw dash                  # launch the dashboard
 ```
 
-See [dashboard.md](dashboard.md) for details.
+See the [gw-dash README](https://github.com/nicksenap/gw-dash) for keybindings, Zellij integration, and architecture.
 
 ## MCP server
 
