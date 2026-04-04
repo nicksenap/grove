@@ -1,5 +1,55 @@
 # Changelog
 
+## v1.1.0
+
+### Plugin architecture — Grove is now tool-agnostic
+
+Claude Code and Zellij integrations have been extracted from core into standalone plugins. Grove's core is now a pure git worktree orchestrator; tool-specific behavior is composable via lifecycle hooks.
+
+**Install plugins:**
+
+```bash
+gw plugin install nicksenap/gw-claude   # Claude Code memory sync + session tracking
+gw plugin install nicksenap/gw-zellij   # Zellij close-pane
+```
+
+**Or run the new wizard:**
+
+```bash
+gw wizard   # detects your tools, installs plugins, configures hooks
+```
+
+### New: `pre_delete` lifecycle hook
+
+Fires before workspace teardown. Used by `gw-claude` to harvest memory back to source repos before worktrees are destroyed.
+
+```toml
+[hooks]
+post_create = "gw claude sync rehydrate {path} && gw claude copy-md {path}"
+pre_delete = "gw claude sync harvest {path}"
+on_close = "gw zellij close-pane"
+```
+
+### New: `gw wizard`
+
+Interactive setup that detects your environment (Claude Code, Zellij) and offers to install the right plugins and configure hooks. Run it after `gw init` or after upgrading.
+
+### Breaking changes
+
+- `gw hook install/uninstall/status` removed — use `gw claude hook install` (from the plugin) instead
+- `gw _hook` hidden command removed — the plugin handles this now
+- `claude_memory_sync` config field removed — memory sync is now opt-in via hooks
+- Legacy Zellij fallback removed — configure `[hooks] on_close` instead
+- Legacy `CLAUDE.md` copy fallback removed — use `post_create` hook instead
+
+### Migration from v1.0.x
+
+```bash
+gw hook uninstall                        # remove old core hooks (if installed)
+gw plugin install nicksenap/gw-claude    # install the plugin
+gw wizard                                # configure everything interactively
+```
+
 ## v1.0.4
 
 ### `gw ws delete` — interactive delete under the `ws` subcommand
