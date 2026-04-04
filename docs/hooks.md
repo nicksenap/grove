@@ -11,7 +11,7 @@ Global hooks live in `~/.grove/config.toml` under `[hooks]`. Grove fires these o
 on_close = "zellij action close-pane"
 ```
 
-`gw init` auto-detects your terminal multiplexer (Zellij, tmux) and bootstraps sensible defaults.
+Run `gw doctor` to check if you're missing any recommended hooks.
 
 ### Available hooks
 

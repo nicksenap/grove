@@ -3,7 +3,6 @@ package config
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 
@@ -118,7 +117,6 @@ func Init(dirs []string) (*models.Config, error) {
 			RepoDirs:     []string{},
 			WorkspaceDir: DefaultWorkspaceDir,
 			Presets:      make(map[string]models.Preset),
-			Hooks:        detectDefaultHooks(),
 		}
 	}
 
@@ -158,29 +156,4 @@ func Init(dirs []string) (*models.Config, error) {
 	}
 
 	return cfg, nil
-}
-
-// detectDefaultHooks returns lifecycle hooks bootstrapped from the current terminal environment.
-func detectDefaultHooks() map[string]string {
-	hooks := make(map[string]string)
-
-	// Prefer active session over binary-on-PATH to avoid bootstrapping
-	// the wrong multiplexer when both are installed.
-	switch {
-	case os.Getenv("ZELLIJ_SESSION_NAME") != "":
-		hooks["on_close"] = "zellij action close-pane"
-	case os.Getenv("TMUX") != "":
-		hooks["on_close"] = "tmux kill-pane"
-	case isOnPath("zellij"):
-		hooks["on_close"] = "zellij action close-pane"
-	case isOnPath("tmux"):
-		hooks["on_close"] = "tmux kill-pane"
-	}
-
-	return hooks
-}
-
-func isOnPath(name string) bool {
-	_, err := exec.LookPath(name)
-	return err == nil
 }
