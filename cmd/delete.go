@@ -11,7 +11,10 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var deleteForce bool
+var (
+	deleteCmdForce   bool
+	wsDeleteCmdForce bool
+)
 
 // deleteCmd is the top-level "gw delete" command.
 var deleteCmd = &cobra.Command{
@@ -19,7 +22,7 @@ var deleteCmd = &cobra.Command{
 	Short: "Delete a workspace (shortcut for gw ws delete)",
 	Args:  cobra.MaximumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
-		doDelete(args)
+		doDelete(args, deleteCmdForce)
 	},
 }
 
@@ -29,11 +32,11 @@ var wsDeleteCmd = &cobra.Command{
 	Short: "Delete a workspace",
 	Args:  cobra.MaximumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
-		doDelete(args)
+		doDelete(args, wsDeleteCmdForce)
 	},
 }
 
-func doDelete(args []string) {
+func doDelete(args []string, force bool) {
 	var names []string
 
 	if len(args) > 0 {
@@ -58,7 +61,7 @@ func doDelete(args []string) {
 		names = selected
 	}
 
-	if !deleteForce {
+	if !force {
 		if !console.Confirm(fmt.Sprintf("Delete %s?", strings.Join(names, ", ")), false) {
 			return
 		}
@@ -72,9 +75,9 @@ func doDelete(args []string) {
 }
 
 func init() {
-	deleteCmd.Flags().BoolVarP(&deleteForce, "force", "f", false, "Skip confirmation")
+	deleteCmd.Flags().BoolVarP(&deleteCmdForce, "force", "f", false, "Skip confirmation")
 	deleteCmd.ValidArgsFunction = completeWorkspaceNames
 
-	wsDeleteCmd.Flags().BoolVarP(&deleteForce, "force", "f", false, "Skip confirmation")
+	wsDeleteCmd.Flags().BoolVarP(&wsDeleteCmdForce, "force", "f", false, "Skip confirmation")
 	wsDeleteCmd.ValidArgsFunction = completeWorkspaceNames
 }

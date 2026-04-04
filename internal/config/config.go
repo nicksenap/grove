@@ -164,9 +164,16 @@ func Init(dirs []string) (*models.Config, error) {
 func detectDefaultHooks() map[string]string {
 	hooks := make(map[string]string)
 
-	if os.Getenv("ZELLIJ_SESSION_NAME") != "" || isOnPath("zellij") {
+	// Prefer active session over binary-on-PATH to avoid bootstrapping
+	// the wrong multiplexer when both are installed.
+	switch {
+	case os.Getenv("ZELLIJ_SESSION_NAME") != "":
 		hooks["on_close"] = "zellij action close-pane"
-	} else if os.Getenv("TMUX") != "" || isOnPath("tmux") {
+	case os.Getenv("TMUX") != "":
+		hooks["on_close"] = "tmux kill-pane"
+	case isOnPath("zellij"):
+		hooks["on_close"] = "zellij action close-pane"
+	case isOnPath("tmux"):
 		hooks["on_close"] = "tmux kill-pane"
 	}
 

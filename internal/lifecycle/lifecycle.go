@@ -2,13 +2,16 @@
 package lifecycle
 
 import (
-	"fmt"
+	"errors"
 	"os/exec"
 	"strings"
 
 	"github.com/nicksenap/grove/internal/config"
 	"github.com/nicksenap/grove/internal/logging"
 )
+
+// ErrNoHook is returned when the requested hook is not configured.
+var ErrNoHook = errors.New("hook not configured")
 
 // Vars is a set of placeholder values expanded in hook commands.
 // Use {name}, {path}, {branch} in hook commands.
@@ -18,32 +21,22 @@ type Vars struct {
 	Branch string
 }
 
-// Run fires a named hook if configured. Returns error if not set or execution fails.
+// Run fires a named hook if configured. Returns ErrNoHook if not set.
 func Run(hookName string, vars Vars) error {
 	cfg, err := config.Load()
 	if err != nil || cfg == nil {
-		return nil
+		return ErrNoHook
 	}
 
 	cmd, ok := cfg.Hooks[hookName]
 	if !ok || cmd == "" {
-		return fmt.Errorf("no hook configured for %q", hookName)
+		return ErrNoHook
 	}
 
 	expanded := expand(cmd, vars)
 	logging.Info("hook %s: %s", hookName, expanded)
 
 	return exec.Command("sh", "-c", expanded).Run()
-}
-
-// Has returns true if a hook is configured for the given name.
-func Has(hookName string) bool {
-	cfg, err := config.Load()
-	if err != nil || cfg == nil {
-		return false
-	}
-	cmd, ok := cfg.Hooks[hookName]
-	return ok && cmd != ""
 }
 
 func expand(cmd string, vars Vars) string {

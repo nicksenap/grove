@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"errors"
 	"os/exec"
 	"syscall"
 
@@ -41,14 +42,12 @@ var goCmd = &cobra.Command{
 					deleteAsync(ws.Name)
 				}
 			}
-			if lifecycle.Has("on_close") {
-				if err := lifecycle.Run("on_close", lifecycle.Vars{}); err != nil {
-					exitError(fmt.Sprintf("on_close hook failed: %s", err))
-				}
-			} else {
+			if err := lifecycle.Run("on_close", lifecycle.Vars{}); errors.Is(err, lifecycle.ErrNoHook) {
 				// TODO: remove when matured — legacy Zellij fallback for users who
 				// upgraded before the [hooks] system existed.
 				zellijCloseFallback()
+			} else if err != nil {
+				exitError(fmt.Sprintf("on_close hook failed: %s", err))
 			}
 			return
 		}
