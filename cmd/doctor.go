@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/nicksenap/grove/internal/config"
 	"github.com/nicksenap/grove/internal/console"
@@ -77,11 +78,15 @@ func checkMissingHooks() []models.DoctorIssue {
 	}
 
 	if _, ok := cfg.Hooks["post_create"]; !ok {
-		issues = append(issues, models.DoctorIssue{
-			Workspace:       "—",
-			Issue:           "no post_create hook configured (using legacy CLAUDE.md copy)",
-			SuggestedAction: `add [hooks] post_create = "cp {path}/../CLAUDE.md {path}/CLAUDE.md 2>/dev/null || true"`,
-		})
+		// Only flag if ~/.claude exists — user is a Claude Code user.
+		home, _ := os.UserHomeDir()
+		if _, err := os.Stat(filepath.Join(home, ".claude")); err == nil {
+			issues = append(issues, models.DoctorIssue{
+				Workspace:       "—",
+				Issue:           "no post_create hook configured (using legacy CLAUDE.md copy)",
+				SuggestedAction: `add [hooks] post_create = "cp {path}/../CLAUDE.md {path}/CLAUDE.md 2>/dev/null || true"`,
+			})
+		}
 	}
 
 	return issues

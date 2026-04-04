@@ -166,7 +166,6 @@ func init() {
 	createCmd.RegisterFlagCompletionFunc("preset", completePresetNames)
 }
 
-
 // TODO: remove when matured — legacy fallback for users without [hooks] config.
 func copyParentCLAUDEmd(wsPath string) {
 	src := filepath.Join(wsPath, "..", "CLAUDE.md")
@@ -174,7 +173,9 @@ func copyParentCLAUDEmd(wsPath string) {
 	if err != nil {
 		return
 	}
-	os.WriteFile(filepath.Join(wsPath, "CLAUDE.md"), data, 0o644)
+	if err := os.WriteFile(filepath.Join(wsPath, "CLAUDE.md"), data, 0o644); err != nil {
+		console.Warningf("legacy CLAUDE.md copy failed: %s", err)
+	}
 }
 
 func deriveName(branch string) string {
