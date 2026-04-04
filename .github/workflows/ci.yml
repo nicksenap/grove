@@ -18,6 +18,8 @@ jobs:
 
       - name: Test
         run: go test ./...
+        env:
+          GIT_CEILING_DIRECTORIES: /
 
   e2e:
     needs: check
