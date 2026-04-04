@@ -8,13 +8,40 @@ claude "fix the auth token expiry bug across svc-auth and api-gateway"
 gw delete fix-auth-bug   # removes worktrees, branches, and workspace
 ```
 
-## CLAUDE.md syncing
+## Claude Code plugin
 
-Grove copies your `CLAUDE.md` into new workspaces, so your agent gets project context from the start.
+Install the [gw-claude](https://github.com/nicksenap/gw-claude) plugin to get:
+
+- **Memory sync** — Claude Code memory carries over from source repos to worktrees and back
+- **CLAUDE.md copy** — your project `CLAUDE.md` is copied into new workspaces automatically
+- **Session tracking** — hook events are recorded for the dashboard
+
+```bash
+gw plugin install nicksenap/gw-claude
+gw wizard   # configures hooks interactively
+```
+
+Or configure manually in `~/.grove/config.toml`:
+
+```toml
+[hooks]
+post_create = "gw claude sync rehydrate {path} && gw claude copy-md {path}"
+pre_delete = "gw claude sync harvest {path}"
+```
+
+See [plugins.md](plugins.md) for the full command reference.
 
 ## Agent dashboard
 
-Grove includes a [dashboard](dashboard.md) for monitoring multiple Claude Code agents across workspaces. Install hooks with `gw dash install`, then launch with `gw dash`.
+The [gw-dash](https://github.com/nicksenap/gw-dash) plugin provides a kanban-style TUI for monitoring Claude Code agents across workspaces.
+
+```bash
+gw plugin install nicksenap/gw-dash
+gw claude hook install   # register session tracking hooks
+gw dash                  # launch the dashboard
+```
+
+See [dashboard.md](dashboard.md) for details.
 
 ## MCP server
 
