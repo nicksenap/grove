@@ -1,24 +1,22 @@
 ## What's New
 
-### Graceful Ctrl+C during workspace creation
+### `gw ws delete` — interactive delete under the `ws` subcommand
 
-`gw create` now cleans up properly when interrupted with Ctrl+C:
+`gw ws delete` now works the same as `gw delete` — with interactive multi-select when no name is given, `--force` flag, and tab completion. Consistent UX across both entry points.
 
-- Partial worktrees are rolled back automatically
-- Orphan branches (created but never attached to a worktree) are deleted
-- The workspace directory is removed so it doesn't leave a mess behind
-- Setup hooks phase is also covered — interrupt at any point during create and rollback kicks in
+### Global lifecycle hooks
 
-### Doctor detects orphaned workspace directories
+New `[hooks]` section in `~/.grove/config.toml` lets you integrate Grove with any terminal multiplexer — not just Zellij.
 
-`gw doctor` now catches workspace directories that exist on disk but aren't tracked in state — exactly the kind of debris left by a hard kill (SIGKILL, power loss) where cleanup can't run:
+```toml
+[hooks]
+on_close = "zellij action close-pane"
+```
 
-- `gw doctor` flags them as "orphaned workspace directory"
-- `gw doctor --fix` removes them
-- Hidden directories (`.`-prefixed) are ignored to avoid false positives
-- Symlinks that resolve outside the workspace directory are safely skipped
+`gw go -c` now fires the `on_close` hook instead of hardcoding Zellij. Placeholders `{name}`, `{path}`, `{branch}` are expanded with shell quoting to prevent injection.
 
-### Safety improvements
+Existing Zellij users: everything keeps working via a fallback. Run `gw doctor` to see the migration hint.
 
-- `shutil.rmtree` failures during rollback now log a warning instead of being silently ignored
-- `doctor --fix` refuses to follow symlinks, preventing accidental deletion of targets outside the workspace directory
+### Doctor checks for missing hooks
+
+`gw doctor` now flags when you're running inside Zellij without an `on_close` hook configured, with a suggested action to add one.
