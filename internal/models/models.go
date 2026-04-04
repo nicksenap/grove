@@ -73,7 +73,6 @@ type Preset struct {
 type Config struct {
 	RepoDirs         []string          `toml:"repo_dirs"`
 	WorkspaceDir     string            `toml:"workspace_dir"`
-	ClaudeMemorySync bool              `toml:"claude_memory_sync"`
 	Presets          map[string]Preset `toml:"presets"`
 	Hooks            map[string]string `toml:"hooks"`
 	// Legacy field — auto-migrated to RepoDirs

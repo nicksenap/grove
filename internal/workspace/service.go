@@ -9,24 +9,20 @@ import (
 	"github.com/nicksenap/grove/internal/stats"
 )
 
+
 // Service orchestrates workspace operations with injectable dependencies.
 type Service struct {
 	State        *state.Store
 	Stats        *stats.Tracker
-	ClaudeDir    string
-	WorkspaceDir string // for orphan detection in Doctor
 	RunCmd       func(dir, cmd string) error
 	RunCmdSilent func(dir, cmd string) error
 }
 
 // NewService creates a Service with production dependencies.
 func NewService() *Service {
-	home, _ := os.UserHomeDir()
 	return &Service{
 		State:        state.NewStore(config.GroveDir),
 		Stats:        stats.NewTracker(config.GroveDir),
-		ClaudeDir:    home + "/.claude",
-		WorkspaceDir: config.DefaultWorkspaceDir,
 		RunCmd:       prodRunCmd,
 		RunCmdSilent: prodRunCmdSilent,
 	}

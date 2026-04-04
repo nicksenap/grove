@@ -62,11 +62,10 @@ func init() {
 		addDirCmd,
 		removeDirCmd,
 		runCmd,
-		hookCmd,
-		claudeHookCmd,
 		exploreCmd,
 		mcpServeCmd,
 		pluginCmd,
+		wizardCmd,
 	)
 }
 

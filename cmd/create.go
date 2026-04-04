@@ -147,10 +147,7 @@ var createCmd = &cobra.Command{
 		// Fire post_create hook if configured
 		wsPath := filepath.Join(cfg.WorkspaceDir, name)
 		vars := lifecycle.Vars{Name: name, Path: wsPath, Branch: branch}
-		if err := lifecycle.Run("post_create", vars); errors.Is(err, lifecycle.ErrNoHook) {
-			// TODO: remove when matured — legacy fallback for users without [hooks] config.
-			copyParentCLAUDEmd(wsPath)
-		} else if err != nil {
+		if err := lifecycle.Run("post_create", vars); err != nil && !errors.Is(err, lifecycle.ErrNoHook) {
 			console.Warningf("post_create hook failed: %s", err)
 		}
 	},
@@ -164,18 +161,6 @@ func init() {
 
 	createCmd.RegisterFlagCompletionFunc("repos", completeRepoNames)
 	createCmd.RegisterFlagCompletionFunc("preset", completePresetNames)
-}
-
-// TODO: remove when matured — legacy fallback for users without [hooks] config.
-func copyParentCLAUDEmd(wsPath string) {
-	src := filepath.Join(wsPath, "..", "CLAUDE.md")
-	data, err := os.ReadFile(src)
-	if err != nil {
-		return
-	}
-	if err := os.WriteFile(filepath.Join(wsPath, "CLAUDE.md"), data, 0o644); err != nil {
-		console.Warningf("legacy CLAUDE.md copy failed: %s", err)
-	}
 }
 
 func deriveName(branch string) string {

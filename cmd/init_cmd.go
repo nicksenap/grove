@@ -23,5 +23,7 @@ var initCmd = &cobra.Command{
 		if len(repos) > 0 {
 			console.Infof("Found %d repo(s) in configured directories", len(repos))
 		}
+
+		console.Infof("Run 'gw wizard' to set up plugins and hooks")
 	},
 }

@@ -1,10 +1,12 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 
 	"github.com/nicksenap/grove/internal/console"
+	"github.com/nicksenap/grove/internal/lifecycle"
 	"github.com/nicksenap/grove/internal/picker"
 	"github.com/nicksenap/grove/internal/state"
 	"github.com/nicksenap/grove/internal/workspace"
@@ -68,6 +70,15 @@ func doDelete(args []string, force bool) {
 	}
 
 	for _, name := range names {
+		// Fire pre_delete hook before teardown (e.g. harvest Claude memory)
+		ws, _ := state.GetWorkspace(name)
+		if ws != nil {
+			vars := lifecycle.Vars{Name: name, Path: ws.Path, Branch: ws.Branch}
+			if err := lifecycle.Run("pre_delete", vars); err != nil && !errors.Is(err, lifecycle.ErrNoHook) {
+				console.Warningf("pre_delete hook failed: %s", err)
+			}
+		}
+
 		if err := workspace.NewService().Delete(name); err != nil {
 			exitError(err.Error())
 		}
