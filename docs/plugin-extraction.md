@@ -135,13 +135,16 @@ on_close = "gw zellij close-pane"
 
 `post_rename` needs a new `{old_path}` var added to `lifecycle.Vars`.
 
+> **Note:** `post_rename` is deferred — rename is rare and the only consumer
+> (Claude memory migration) is an edge case. A TODO in `workspace.Rename()`
+> marks the spot. Add the hook + `{old_path}` var if a real need surfaces.
+
 ## Migration plan
 
 ### Phase 1: Add missing hooks + vars
 
-1. Add `pre_delete` hook call in `workspace.Delete()` before teardown
-2. Add `post_rename` hook call in `workspace.Rename()` after rename
-3. Add `OldPath` to `lifecycle.Vars` and expand as `{old_path}`
+1. ~~Add `pre_delete` hook call before teardown~~ ✅ (`cmd/delete.go`)
+2. ~~`post_rename` + `{old_path}`~~ deferred (TODO in `workspace.Rename()`)
 
 ### Phase 2: Create `gw-claude` plugin repo
 

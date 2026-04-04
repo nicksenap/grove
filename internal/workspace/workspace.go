@@ -8,7 +8,6 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/nicksenap/grove/internal/claude"
 	"github.com/nicksenap/grove/internal/console"
 	"github.com/nicksenap/grove/internal/gitops"
 	"github.com/nicksenap/grove/internal/logging"
@@ -92,15 +91,6 @@ func (s *Service) Create(name, branch string, repoNames []string, repoMap map[st
 
 	// Record stats
 	s.Stats.RecordCreated(ws)
-
-	// Rehydrate Claude memory
-	if cfg.ClaudeMemorySync {
-		for _, r := range ws.Repos {
-			if n := claude.RehydrateMemory(s.ClaudeDir, r.SourceRepo, r.WorktreePath); n > 0 {
-				logging.Info("rehydrated %d Claude memory file(s) for %s", n, r.RepoName)
-			}
-		}
-	}
 
 	// Write .mcp.json
 	writeMCPConfig(ws)
@@ -285,15 +275,6 @@ func (s *Service) Delete(name string) error {
 	logging.Info("deleting workspace %q", name)
 	removeMCPConfig(*ws)
 
-	// Harvest Claude memory before destruction
-	if s.ClaudeDir != "" {
-		for _, r := range ws.Repos {
-			if n := claude.HarvestMemory(s.ClaudeDir, r.WorktreePath, r.SourceRepo); n > 0 {
-				logging.Info("harvested %d Claude memory file(s) for %s", n, r.RepoName)
-			}
-		}
-	}
-
 	// Parallel teardown+remove for all repos
 	succeeded := make([]bool, len(ws.Repos))
 	var wg sync.WaitGroup
@@ -406,12 +387,6 @@ func (s *Service) Rename(oldName, newName string) error {
 
 	for _, r := range ws.Repos {
 		gitops.WorktreeRepair(r.SourceRepo, r.WorktreePath)
-	}
-
-	if s.ClaudeDir != "" {
-		for i := range ws.Repos {
-			claude.MigrateMemoryDir(s.ClaudeDir, origWorktreePaths[i], ws.Repos[i].WorktreePath)
-		}
 	}
 
 	logging.Info("workspace %q renamed to %q", oldName, newName)
@@ -844,22 +819,6 @@ func (s *Service) Doctor(fix bool) ([]models.DoctorIssue, int, error) {
 
 	var issues []models.DoctorIssue
 	fixed := 0
-
-	if s.ClaudeDir != "" && s.WorkspaceDir != "" {
-		orphaned := claude.FindOrphanedMemoryDirs(s.ClaudeDir, s.WorkspaceDir)
-		for _, dir := range orphaned {
-			issues = append(issues, models.DoctorIssue{
-				Workspace:       "",
-				Repo:            nil,
-				Issue:           fmt.Sprintf("orphaned Claude memory: %s", filepath.Base(dir)),
-				SuggestedAction: "remove orphaned Claude memory directory",
-			})
-			if fix {
-				os.RemoveAll(dir)
-				fixed++
-			}
-		}
-	}
 
 	var wsToRemove []string
 

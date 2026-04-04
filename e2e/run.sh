@@ -28,6 +28,7 @@ section "Setup"
 
 export GROVE_HOME=$(mktemp -d /tmp/grove-e2e.XXXXXX)
 export HOME="${GROVE_HOME}"
+unset ZELLIJ_SESSION_NAME  # prevent host env from leaking into doctor checks
 trap 'rm -rf "${GROVE_HOME}"' EXIT
 
 REPOS_DIR="${GROVE_HOME}/repos"
@@ -413,6 +414,45 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# Test: lifecycle hooks (post_create + pre_delete)
+# ---------------------------------------------------------------------------
+section "Lifecycle hooks"
+
+# Configure lifecycle hooks that write marker files
+POST_CREATE_MARKER="${GROVE_HOME}/post_create_fired"
+PRE_DELETE_MARKER="${GROVE_HOME}/pre_delete_fired"
+cat > "${GROVE_HOME}/.grove/config.toml" <<EOF
+repo_dirs = ["${REPOS_DIR}"]
+workspace_dir = "${GROVE_HOME}/.grove/workspaces"
+
+[hooks]
+post_create = "touch ${POST_CREATE_MARKER}"
+pre_delete = "touch ${PRE_DELETE_MARKER}"
+EOF
+
+gw create hook-ws --branch feat/hook-test --repos svc-auth 2>&1
+if [ -f "${POST_CREATE_MARKER}" ]; then
+    pass "post_create hook fired after workspace creation"
+else
+    fail "post_create hook did not fire"
+fi
+
+gw delete hook-ws --force 2>&1
+if [ -f "${PRE_DELETE_MARKER}" ]; then
+    pass "pre_delete hook fired before workspace deletion"
+else
+    fail "pre_delete hook did not fire"
+fi
+
+rm -f "${POST_CREATE_MARKER}" "${PRE_DELETE_MARKER}"
+
+# Restore config without hooks for subsequent tests
+cat > "${GROVE_HOME}/.grove/config.toml" <<EOF
+repo_dirs = ["${REPOS_DIR}"]
+workspace_dir = "${GROVE_HOME}/.grove/workspaces"
+EOF
+
+# ---------------------------------------------------------------------------
 # Test: gw ws delete (subcommand parity with gw delete)
 # ---------------------------------------------------------------------------
 section "ws delete subcommand"
@@ -548,126 +588,6 @@ else
 fi
 
 gw delete run-ws --force 2>&1
-
-# ---------------------------------------------------------------------------
-# Test: _hook (Claude Code event handler)
-# ---------------------------------------------------------------------------
-section "Hook"
-
-echo '{"session_id": "test-session-123", "cwd": "/tmp"}' | gw _hook --event SessionStart 2>/dev/null
-if [ -f "${GROVE_HOME}/.grove/status/test-session-123.json" ]; then
-    status_val=$(jq -r '.status' "${GROVE_HOME}/.grove/status/test-session-123.json")
-    if [ "${status_val}" = "IDLE" ]; then
-        pass "_hook SessionStart creates status file"
-    else
-        fail "_hook status should be IDLE, got ${status_val}"
-    fi
-else
-    fail "_hook did not create status file"
-fi
-
-echo '{"session_id": "test-session-123", "tool_name": "Read"}' | gw _hook --event PreToolUse 2>/dev/null
-tool_val=$(jq -r '.last_tool' "${GROVE_HOME}/.grove/status/test-session-123.json")
-if [ "${tool_val}" = "Read" ]; then
-    pass "_hook PreToolUse updates tool name"
-else
-    fail "_hook tool should be Read, got ${tool_val}"
-fi
-
-# Verify project_name was set from cwd
-proj_val=$(jq -r '.project_name' "${GROVE_HOME}/.grove/status/test-session-123.json")
-if [ "${proj_val}" = "tmp" ]; then
-    pass "_hook SessionStart sets project_name from cwd"
-else
-    fail "_hook project_name should be 'tmp', got ${proj_val}"
-fi
-
-# Test PermissionRequest with tool_request_summary
-echo '{"session_id": "test-session-123", "tool_name": "Bash", "tool_input": {"command": "echo hello"}}' | gw _hook --event PermissionRequest 2>/dev/null
-perm_status=$(jq -r '.status' "${GROVE_HOME}/.grove/status/test-session-123.json")
-summary_val=$(jq -r '.tool_request_summary' "${GROVE_HOME}/.grove/status/test-session-123.json")
-if [ "${perm_status}" = "WAITING_PERMISSION" ] && [ "${summary_val}" = '$ echo hello' ]; then
-    pass "_hook PermissionRequest sets status + tool_request_summary"
-else
-    fail "_hook PermissionRequest: status=${perm_status}, summary=${summary_val}"
-fi
-
-# Test Notification with keyword detection
-echo '{"session_id": "test-session-123", "message": "I have a question for you"}' | gw _hook --event Notification 2>/dev/null
-notif_status=$(jq -r '.status' "${GROVE_HOME}/.grove/status/test-session-123.json")
-notif_msg=$(jq -r '.notification_message' "${GROVE_HOME}/.grove/status/test-session-123.json")
-if [ "${notif_status}" = "WAITING_ANSWER" ]; then
-    pass "_hook Notification 'question' keyword sets WAITING_ANSWER"
-else
-    fail "_hook Notification status should be WAITING_ANSWER, got ${notif_status}"
-fi
-if [ "${notif_msg}" = "I have a question for you" ]; then
-    pass "_hook Notification sets notification_message"
-else
-    fail "_hook notification_message: got ${notif_msg}"
-fi
-
-# Test UserPromptSubmit captures initial_prompt and clears notification
-echo '{"session_id": "test-session-123", "prompt": "Fix the login bug"}' | gw _hook --event UserPromptSubmit 2>/dev/null
-prompt_val=$(jq -r '.initial_prompt' "${GROVE_HOME}/.grove/status/test-session-123.json")
-prompt_status=$(jq -r '.status' "${GROVE_HOME}/.grove/status/test-session-123.json")
-prompt_notif=$(jq -r '.notification_message' "${GROVE_HOME}/.grove/status/test-session-123.json")
-if [ "${prompt_val}" = "Fix the login bug" ]; then
-    pass "_hook UserPromptSubmit captures initial_prompt"
-else
-    fail "_hook initial_prompt: got ${prompt_val}"
-fi
-if [ "${prompt_status}" = "WORKING" ]; then
-    pass "_hook UserPromptSubmit sets WORKING"
-else
-    fail "_hook UserPromptSubmit status: got ${prompt_status}"
-fi
-if [ "${prompt_notif}" = "null" ]; then
-    pass "_hook UserPromptSubmit clears notification_message"
-else
-    fail "_hook notification should be cleared, got ${prompt_notif}"
-fi
-
-# Test SubagentStart/Stop counting (fresh session to isolate)
-echo '{"session_id": "sub-session", "cwd": "/tmp"}' | gw _hook --event SessionStart 2>/dev/null
-echo '{"session_id": "sub-session", "agent_type": "Explore"}' | gw _hook --event SubagentStart 2>/dev/null
-echo '{"session_id": "sub-session", "agent_type": "Plan"}' | gw _hook --event SubagentStart 2>/dev/null
-sub_count=$(jq -r '.subagent_count' "${GROVE_HOME}/.grove/status/sub-session.json")
-active_subs=$(jq -r '.active_subagents | length' "${GROVE_HOME}/.grove/status/sub-session.json")
-if [ "${sub_count}" = "2" ] && [ "${active_subs}" = "2" ]; then
-    pass "_hook SubagentStart tracks count + active list"
-else
-    fail "_hook SubagentStart: count=${sub_count}, active=${active_subs}"
-fi
-
-echo '{"session_id": "sub-session", "agent_type": "Explore"}' | gw _hook --event SubagentStop 2>/dev/null
-sub_count_after=$(jq -r '.subagent_count' "${GROVE_HOME}/.grove/status/sub-session.json")
-remaining=$(jq -r '.active_subagents[0]' "${GROVE_HOME}/.grove/status/sub-session.json")
-if [ "${sub_count_after}" = "1" ] && [ "${remaining}" = "Plan" ]; then
-    pass "_hook SubagentStop decrements and removes from active list"
-else
-    fail "_hook SubagentStop: count=${sub_count_after}, remaining=${remaining}"
-fi
-echo '{"session_id": "sub-session"}' | gw _hook --event SessionEnd 2>/dev/null
-
-# Test PreCompact tracking (fresh session)
-echo '{"session_id": "compact-session", "cwd": "/tmp"}' | gw _hook --event SessionStart 2>/dev/null
-echo '{"session_id": "compact-session", "trigger": "auto"}' | gw _hook --event PreCompact 2>/dev/null
-compact_count=$(jq -r '.compact_count' "${GROVE_HOME}/.grove/status/compact-session.json")
-compact_trigger=$(jq -r '.compact_trigger' "${GROVE_HOME}/.grove/status/compact-session.json")
-if [ "${compact_count}" = "1" ] && [ "${compact_trigger}" = "auto" ]; then
-    pass "_hook PreCompact tracks count + trigger"
-else
-    fail "_hook PreCompact: count=${compact_count}, trigger=${compact_trigger}"
-fi
-echo '{"session_id": "compact-session"}' | gw _hook --event SessionEnd 2>/dev/null
-
-echo '{"session_id": "test-session-123"}' | gw _hook --event SessionEnd 2>/dev/null
-if [ ! -f "${GROVE_HOME}/.grove/status/test-session-123.json" ]; then
-    pass "_hook SessionEnd removes status file"
-else
-    fail "_hook SessionEnd should remove status file"
-fi
 
 # ---------------------------------------------------------------------------
 # Test: MCP server (stdio JSON-RPC)
@@ -817,82 +737,6 @@ if ! gw nonexistent-cmd 2>/dev/null; then
     pass "unknown command without plugin exits non-zero"
 else
     fail "unknown command without plugin should fail"
-fi
-
-# ---------------------------------------------------------------------------
-# Test: hook install / status / uninstall
-# ---------------------------------------------------------------------------
-section "Hook installer"
-
-SETTINGS="${GROVE_HOME}/.claude/settings.json"
-
-# Status before install
-if gw hook status 2>&1 | grep -q "not installed"; then
-    pass "hook status: not installed initially"
-else
-    fail "hook status should show not installed"
-fi
-
-# Install (non-interactive: pipe yes)
-echo "y" | gw hook install 2>&1
-if [ -f "${SETTINGS}" ]; then
-    pass "hook install created settings.json"
-else
-    fail "hook install did not create settings.json"
-fi
-
-# Verify all hook events are present
-hook_count=$(jq '.hooks | keys | length' "${SETTINGS}")
-if [ "${hook_count}" = "13" ]; then
-    pass "hook install registered all 13 events"
-else
-    fail "expected 13 hook events, got ${hook_count}"
-fi
-
-# Verify hook command points to gw
-if jq -r '.hooks.SessionStart[0].hooks[0].command' "${SETTINGS}" | grep -q "gw _hook"; then
-    pass "hook command uses gw _hook"
-else
-    fail "hook command wrong"
-fi
-
-# Status after install
-if gw hook status 2>&1 | grep -q "installed"; then
-    pass "hook status: installed"
-else
-    fail "hook status should show installed"
-fi
-
-# Reinstall (should update, not duplicate)
-echo "y" | gw hook install 2>&1
-hook_count_after=$(jq '.hooks.SessionStart | length' "${SETTINGS}")
-if [ "${hook_count_after}" = "1" ]; then
-    pass "hook reinstall updates without duplicating"
-else
-    fail "hook reinstall duplicated entries: ${hook_count_after}"
-fi
-
-# Backup should exist
-backup_count=$(ls "${SETTINGS}".bak.* 2>/dev/null | wc -l | tr -d ' ')
-if [ "${backup_count}" -ge "1" ]; then
-    pass "hook install created backup(s)"
-else
-    fail "hook install did not create backup"
-fi
-
-# Uninstall
-echo "y" | gw hook uninstall 2>&1
-if jq -e '.hooks' "${SETTINGS}" > /dev/null 2>&1; then
-    fail "hooks key should be removed after uninstall"
-else
-    pass "hook uninstall removed all hooks"
-fi
-
-# Status after uninstall
-if gw hook status 2>&1 | grep -q "not installed"; then
-    pass "hook status: not installed after uninstall"
-else
-    fail "hook status should show not installed after uninstall"
 fi
 
 # ---------------------------------------------------------------------------

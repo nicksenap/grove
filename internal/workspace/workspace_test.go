@@ -51,8 +51,6 @@ func setupTestEnv(t *testing.T) *testEnv {
 	svc := &Service{
 		State:        store,
 		Stats:        &stats.Tracker{StatsPath: filepath.Join(groveDir, "stats.json"), NowFn: time.Now},
-		ClaudeDir:    filepath.Join(dir, ".claude"),
-		WorkspaceDir: wsDir,
 		RunCmd:       prodRunCmd,
 		RunCmdSilent: prodRunCmdSilent,
 	}
@@ -741,42 +739,6 @@ func TestDoctorDetectsMissingWorkspaceDir(t *testing.T) {
 	}
 }
 
-func TestDoctorDetectsOrphanedClaudeMemory(t *testing.T) {
-	env := setupTestEnv(t)
-	env.cfg.ClaudeMemorySync = true
-	
-	env.createRepo("api")
-	env.svc.Create("orphan-ws", "feat/orphan", []string{"api"}, env.repoMap, env.cfg)
-
-	// Delete workspace but leave Claude memory dir behind
-	ws, _ := env.svc.State.GetWorkspace("orphan-ws")
-	wtPath := ws.Repos[0].WorktreePath
-
-	env.svc.Delete("orphan-ws")
-
-	// Manually create an orphaned Claude memory dir for the deleted worktree
-	claudeDir := env.svc.ClaudeDir
-	encoded := strings.ReplaceAll(wtPath, "/", "-")
-	encoded = strings.ReplaceAll(encoded, ".", "-")
-	orphanDir := filepath.Join(claudeDir, "projects", encoded, "memory")
-	os.MkdirAll(orphanDir, 0o755)
-	os.WriteFile(filepath.Join(orphanDir, "stale.md"), []byte("old"), 0o644)
-
-	issues, _, err := env.svc.Doctor(false)
-	if err != nil {
-		t.Fatalf("doctor: %v", err)
-	}
-
-	found := false
-	for _, issue := range issues {
-		if strings.Contains(issue.Issue, "orphaned Claude memory") {
-			found = true
-		}
-	}
-	if !found {
-		t.Error("expected orphaned Claude memory issue")
-	}
-}
 
 // ---------------------------------------------------------------------------
 // Parallel behavior tests
@@ -997,100 +959,6 @@ func TestMCPConfigRemoveOnlyGrove(t *testing.T) {
 	}
 	if _, ok := servers["keeper"]; !ok {
 		t.Error("'keeper' should be preserved")
-	}
-}
-
-// ---------------------------------------------------------------------------
-// Claude memory sync tests
-// ---------------------------------------------------------------------------
-
-func TestCreateRehydratesClaudeMemory(t *testing.T) {
-	env := setupTestEnv(t)
-	repo := env.createRepo("api")
-	env.cfg.ClaudeMemorySync = true
-
-	// Set up a fake ~/.claude with memory for the source repo
-	claudeDir := filepath.Join(env.dir, ".claude")
-	encodedSource := strings.ReplaceAll(repo, "/", "-")
-	encodedSource = strings.ReplaceAll(encodedSource, ".", "-")
-	memDir := filepath.Join(claudeDir, "projects", encodedSource, "memory")
-	os.MkdirAll(memDir, 0o755)
-	os.WriteFile(filepath.Join(memDir, "context.md"), []byte("source memory"), 0o644)
-
-	env.svc.Create("claude-ws", "feat/claude", []string{"api"}, env.repoMap, env.cfg)
-
-	// Memory should be copied to worktree's claude project dir
-	wtPath := filepath.Join(env.wsDir, "claude-ws", "api")
-	encodedWT := strings.ReplaceAll(wtPath, "/", "-")
-	encodedWT = strings.ReplaceAll(encodedWT, ".", "-")
-	wtMemDir := filepath.Join(claudeDir, "projects", encodedWT, "memory")
-
-	data, err := os.ReadFile(filepath.Join(wtMemDir, "context.md"))
-	if err != nil {
-		t.Fatalf("memory not rehydrated: %v", err)
-	}
-	if string(data) != "source memory" {
-		t.Errorf("content mismatch: %q", string(data))
-	}
-}
-
-func TestCreateSkipsClaudeSyncWhenDisabled(t *testing.T) {
-	env := setupTestEnv(t)
-	repo := env.createRepo("api")
-	env.cfg.ClaudeMemorySync = false
-
-	// Set up memory
-	claudeDir := filepath.Join(env.dir, ".claude")
-	encodedSource := strings.ReplaceAll(repo, "/", "-")
-	encodedSource = strings.ReplaceAll(encodedSource, ".", "-")
-	memDir := filepath.Join(claudeDir, "projects", encodedSource, "memory")
-	os.MkdirAll(memDir, 0o755)
-	os.WriteFile(filepath.Join(memDir, "context.md"), []byte("source memory"), 0o644)
-
-	env.svc.Create("no-sync", "feat/nosync", []string{"api"}, env.repoMap, env.cfg)
-
-	// Memory should NOT be copied
-	wtPath := filepath.Join(env.wsDir, "no-sync", "api")
-	encodedWT := strings.ReplaceAll(wtPath, "/", "-")
-	encodedWT = strings.ReplaceAll(encodedWT, ".", "-")
-	wtMemFile := filepath.Join(claudeDir, "projects", encodedWT, "memory", "context.md")
-
-	if _, err := os.Stat(wtMemFile); !os.IsNotExist(err) {
-		t.Error("memory should not be synced when disabled")
-	}
-}
-
-func TestDeleteHarvestsClaudeMemory(t *testing.T) {
-	env := setupTestEnv(t)
-	env.createRepo("api")
-	env.cfg.ClaudeMemorySync = true
-	 // persist so Delete can load it
-
-	env.svc.Create("harvest-ws", "feat/harvest", []string{"api"}, env.repoMap, env.cfg)
-
-	// Add memory in the worktree's project dir
-	claudeDir := filepath.Join(env.dir, ".claude")
-	wtPath := filepath.Join(env.wsDir, "harvest-ws", "api")
-	encodedWT := strings.ReplaceAll(wtPath, "/", "-")
-	encodedWT = strings.ReplaceAll(encodedWT, ".", "-")
-	wtMemDir := filepath.Join(claudeDir, "projects", encodedWT, "memory")
-	os.MkdirAll(wtMemDir, 0o755)
-	os.WriteFile(filepath.Join(wtMemDir, "learned.md"), []byte("new insight"), 0o644)
-
-	env.svc.Delete("harvest-ws")
-
-	// Memory should be harvested back to source repo's project dir
-	sourceRepo := env.repoMap["api"]
-	encodedSource := strings.ReplaceAll(sourceRepo, "/", "-")
-	encodedSource = strings.ReplaceAll(encodedSource, ".", "-")
-	srcMemFile := filepath.Join(claudeDir, "projects", encodedSource, "memory", "learned.md")
-
-	data, err := os.ReadFile(srcMemFile)
-	if err != nil {
-		t.Fatalf("memory not harvested: %v", err)
-	}
-	if string(data) != "new insight" {
-		t.Errorf("content mismatch: %q", string(data))
 	}
 }
 

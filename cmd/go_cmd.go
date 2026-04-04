@@ -1,13 +1,12 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
-
-	"errors"
-	"os/exec"
 	"syscall"
 
 	"github.com/nicksenap/grove/internal/config"
@@ -43,9 +42,7 @@ var goCmd = &cobra.Command{
 				}
 			}
 			if err := lifecycle.Run("on_close", lifecycle.Vars{}); errors.Is(err, lifecycle.ErrNoHook) {
-				// TODO: remove when matured — legacy Zellij fallback for users who
-				// upgraded before the [hooks] system existed.
-				zellijCloseFallback()
+				exitError("No on_close hook configured. Set one in ~/.grove/config.toml:\n\n  [hooks]\n  on_close = \"gw zellij close-pane\"")
 			} else if err != nil {
 				exitError(fmt.Sprintf("on_close hook failed: %s", err))
 			}
@@ -203,14 +200,6 @@ func deleteAsync(name string) {
 	cmd.Stderr = nil
 	cmd.Stdin = nil
 	cmd.Start() // fire and forget
-}
-
-// TODO: remove when matured — legacy Zellij fallback for users without [hooks] config.
-func zellijCloseFallback() {
-	if os.Getenv("ZELLIJ_SESSION_NAME") == "" {
-		exitError("No on_close hook configured. Set one in ~/.grove/config.toml:\n\n  [hooks]\n  on_close = \"zellij action close-pane\"")
-	}
-	exec.Command("zellij", "action", "close-pane").Run()
 }
 
 func init() {
