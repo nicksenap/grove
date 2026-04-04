@@ -3,6 +3,34 @@
 Grove's core should be a pure git worktree orchestrator. Tool-specific integrations
 (Claude Code, Zellij) should live in plugins, composable via the hook system.
 
+## Why
+
+Today Grove has Claude Code and Zellij logic baked into its core. This was the right
+move initially — build it in, validate the feature, iterate fast. But now that the
+integrations are proven, keeping them in core has costs:
+
+- **Most Grove users don't use all the tools.** A tmux user carries dead Zellij code.
+  A Cursor user carries Claude memory sync. The core is harder to understand because
+  of integrations they don't care about.
+- **Every new tool becomes a config toggle.** What about Cursor, Windsurf, tmux, Warp,
+  the next editor or multiplexer? Either each one gets hardcoded into core (turning it
+  into a grab-bag of integrations) or some are plugins and some aren't (inconsistent).
+- **The integrations are take-it-or-leave-it.** Users can't customize the Claude memory
+  flow, skip sync for certain repos, or chain their own steps.
+
+The plugin + hook architecture makes Grove tool-agnostic. Hooks are the contract,
+plugins are the adapters:
+
+- Claude user? `gw plugin install nicksenap/gw-claude`
+- Zellij user? `gw plugin install nicksenap/gw-zellij`
+- tmux user? `on_close = "tmux kill-pane"` — one line, no plugin needed
+- Cursor user? Someone writes `gw-cursor`, or just a `post_create` shell one-liner
+- Something we've never heard of? They write a hook or a plugin. Grove doesn't need to know.
+
+The friction is real but one-time: install a plugin, add a few lines to config, done.
+After that it's invisible. And `gw init` can offer to install common plugins
+interactively to smooth the first-run experience.
+
 ## Current state
 
 ### Claude-specific code in core
