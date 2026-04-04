@@ -25,11 +25,23 @@ Run `gw wizard` to configure these interactively.
 
 ### Placeholders
 
-Hook commands can use `{name}`, `{path}`, and `{branch}` — Grove expands them with shell quoting before execution.
+Grove expands placeholders in hook commands before running them via `sh -c`:
+
+| Placeholder | Value | Example |
+|---|---|---|
+| `{name}` | Workspace name | `my-feature` |
+| `{path}` | Workspace directory path | `/home/nick/.grove/workspaces/my-feature` |
+| `{branch}` | Branch name | `feat/login` |
+
+Values are automatically single-quoted to prevent shell injection — a branch named
+`feat/x; rm -rf ~` expands to `'feat/x; rm -rf ~'`, not a destructive command.
+
+Unused placeholders expand to an empty string.
 
 ```toml
 [hooks]
-post_create = "echo 'Created {name} at {path} on {branch}'"
+post_create = "gw claude sync rehydrate {path} && gw claude copy-md {path}"
+pre_delete = "gw claude sync harvest {path}"
 on_close = "tmux kill-pane"
 ```
 
