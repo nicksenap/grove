@@ -4,3 +4,6 @@ gw_test
 
 # Build output
 dist/
+
+# Generated per-workspace by gw create
+.mcp.json

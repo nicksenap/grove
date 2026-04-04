@@ -846,7 +846,6 @@ func (s *Service) Doctor(fix bool) ([]models.DoctorIssue, int, error) {
 	fixed := 0
 
 	if s.ClaudeDir != "" && s.WorkspaceDir != "" {
-		console.Infof("checking Claude memory dirs...")
 		orphaned := claude.FindOrphanedMemoryDirs(s.ClaudeDir, s.WorkspaceDir)
 		for _, dir := range orphaned {
 			issues = append(issues, models.DoctorIssue{
@@ -864,8 +863,7 @@ func (s *Service) Doctor(fix bool) ([]models.DoctorIssue, int, error) {
 
 	var wsToRemove []string
 
-	for i, ws := range workspaces {
-		console.Infof("checking %s (%d/%d)...", ws.Name, i+1, len(workspaces))
+	for _, ws := range workspaces {
 		if _, err := os.Stat(ws.Path); os.IsNotExist(err) {
 			issues = append(issues, models.DoctorIssue{
 				Workspace:       ws.Name,

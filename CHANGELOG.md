@@ -1,4 +1,6 @@
-## What's New
+# Changelog
+
+## v1.0.4
 
 ### `gw ws delete` — interactive delete under the `ws` subcommand
 

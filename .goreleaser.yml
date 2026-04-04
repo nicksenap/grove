@@ -26,6 +26,10 @@ archives:
 checksum:
   name_template: checksums.txt
 
+release:
+  header: |
+    {{ .Env.RELEASE_HEADER }}
+
 changelog:
   sort: asc
   filters:
