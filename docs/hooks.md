@@ -72,14 +72,11 @@ The hook system follows the npm-style `pre`/`post` convention: one primitive (`r
 
 ## `gw run`
 
-`gw run` launches a [Textual](https://github.com/Textualize/textual) TUI that manages `run` hooks across all repos. Each repo gets its own log pane with a sidebar showing status indicators (green = running, yellow = starting, red = exited with error).
+`gw run` executes `run` hooks across all repos in a workspace, printing output with `[repo]` prefixes. It auto-detects the workspace from your current directory, or takes a name argument.
 
-| Key | Action |
-|-----|--------|
-| `j` / `k` / `↑` / `↓` | Navigate repos |
-| `g` / `G` | Jump to first / last |
-| `1`–`9` | Quick-select repo by number |
-| `r` | Restart selected repo |
-| `q` | Quit (terminates all processes) |
+```bash
+gw run              # auto-detect workspace from cwd
+gw run my-feature   # explicit workspace name
+```
 
-Pre-run hooks fire before the TUI launches, post-run hooks fire after it exits.
+Pre-run hooks fire before the processes start, post-run hooks fire after they exit. Ctrl+C gracefully terminates all processes.
