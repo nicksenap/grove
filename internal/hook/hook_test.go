@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -208,7 +209,10 @@ func TestStopPreservesWaitingAnswer(t *testing.T) {
 	h := testHandler(t)
 
 	h.HandleEvent("SessionStart", map[string]any{"session_id": "stop-test"})
-	h.HandleEvent("Notification", map[string]any{"session_id": "stop-test"})
+	h.HandleEvent("Notification", map[string]any{
+		"session_id": "stop-test",
+		"message":    "I have a question for you",
+	})
 	h.HandleEvent("Stop", map[string]any{"session_id": "stop-test"})
 
 	data := readStatus(t, h, "stop-test")
@@ -295,5 +299,352 @@ func TestErrorMessageTruncation(t *testing.T) {
 	data := readStatus(t, h, "trunc-test")
 	if len(data.LastError) > 500 {
 		t.Errorf("error should be truncated to 500, got %d", len(data.LastError))
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Tests for parity with Python hook handler
+// ---------------------------------------------------------------------------
+
+func TestSessionStartSetsProjectName(t *testing.T) {
+	h := testHandler(t)
+
+	h.HandleEvent("SessionStart", map[string]any{
+		"session_id": "proj-test",
+		"cwd":        "/home/user/projects/my-app",
+	})
+
+	data := readStatus(t, h, "proj-test")
+	if data.ProjectName != "my-app" {
+		t.Errorf("project_name: got %q, want my-app", data.ProjectName)
+	}
+}
+
+func TestSessionStartRecordsSessionSource(t *testing.T) {
+	h := testHandler(t)
+
+	h.HandleEvent("SessionStart", map[string]any{
+		"session_id":      "src-test",
+		"source":          "vscode",
+		"permission_mode": "plan",
+	})
+
+	data := readStatus(t, h, "src-test")
+	if data.SessionSource != "vscode" {
+		t.Errorf("session_source: got %q, want vscode", data.SessionSource)
+	}
+}
+
+func TestNotificationSetsMessage(t *testing.T) {
+	h := testHandler(t)
+
+	h.HandleEvent("SessionStart", map[string]any{"session_id": "notif-test"})
+	h.HandleEvent("Notification", map[string]any{
+		"session_id": "notif-test",
+		"message":    "Task completed successfully",
+	})
+
+	data := readStatus(t, h, "notif-test")
+	if data.NotificationMessage == nil || *data.NotificationMessage != "Task completed successfully" {
+		t.Errorf("notification_message: got %v", data.NotificationMessage)
+	}
+}
+
+func TestNotificationPermissionKeyword(t *testing.T) {
+	h := testHandler(t)
+
+	h.HandleEvent("SessionStart", map[string]any{"session_id": "notif-perm"})
+	h.HandleEvent("PreToolUse", map[string]any{"session_id": "notif-perm", "tool_name": "Bash"})
+	h.HandleEvent("Notification", map[string]any{
+		"session_id": "notif-perm",
+		"message":    "Needs permission to proceed",
+	})
+
+	data := readStatus(t, h, "notif-perm")
+	if data.Status != "WAITING_PERMISSION" {
+		t.Errorf("status: got %q, want WAITING_PERMISSION", data.Status)
+	}
+}
+
+func TestNotificationQuestionKeyword(t *testing.T) {
+	h := testHandler(t)
+
+	h.HandleEvent("SessionStart", map[string]any{"session_id": "notif-q"})
+	h.HandleEvent("Notification", map[string]any{
+		"session_id": "notif-q",
+		"message":    "I have a question for you",
+	})
+
+	data := readStatus(t, h, "notif-q")
+	if data.Status != "WAITING_ANSWER" {
+		t.Errorf("status: got %q, want WAITING_ANSWER", data.Status)
+	}
+}
+
+func TestPermissionRequestSetsToolSummaryBash(t *testing.T) {
+	h := testHandler(t)
+
+	h.HandleEvent("SessionStart", map[string]any{"session_id": "summary-bash"})
+	h.HandleEvent("PermissionRequest", map[string]any{
+		"session_id": "summary-bash",
+		"tool_name":  "Bash",
+		"tool_input": map[string]any{"command": "echo hello"},
+	})
+
+	data := readStatus(t, h, "summary-bash")
+	if data.ToolRequestSummary == nil || *data.ToolRequestSummary != "$ echo hello" {
+		t.Errorf("tool_request_summary: got %v", data.ToolRequestSummary)
+	}
+}
+
+func TestPermissionRequestSetsToolSummaryEdit(t *testing.T) {
+	h := testHandler(t)
+
+	h.HandleEvent("SessionStart", map[string]any{"session_id": "summary-edit"})
+	h.HandleEvent("PermissionRequest", map[string]any{
+		"session_id": "summary-edit",
+		"tool_name":  "Edit",
+		"tool_input": map[string]any{
+			"file_path":  "/foo/bar.py",
+			"old_string": "x = 1",
+			"new_string": "x = 2",
+		},
+	})
+
+	data := readStatus(t, h, "summary-edit")
+	if data.ToolRequestSummary == nil {
+		t.Fatal("tool_request_summary should not be nil")
+	}
+	summary := *data.ToolRequestSummary
+	if !strings.Contains(summary, "/foo/bar.py") {
+		t.Errorf("summary should contain file path, got: %s", summary)
+	}
+	if !strings.Contains(summary, "- x = 1") {
+		t.Errorf("summary should contain old_string, got: %s", summary)
+	}
+	if !strings.Contains(summary, "+ x = 2") {
+		t.Errorf("summary should contain new_string, got: %s", summary)
+	}
+}
+
+func TestPermissionRequestSetsToolSummaryGrep(t *testing.T) {
+	h := testHandler(t)
+
+	h.HandleEvent("SessionStart", map[string]any{"session_id": "summary-grep"})
+	h.HandleEvent("PermissionRequest", map[string]any{
+		"session_id": "summary-grep",
+		"tool_name":  "Grep",
+		"tool_input": map[string]any{"pattern": "TODO", "path": "/src"},
+	})
+
+	data := readStatus(t, h, "summary-grep")
+	if data.ToolRequestSummary == nil || *data.ToolRequestSummary != "TODO in /src" {
+		t.Errorf("tool_request_summary: got %v", data.ToolRequestSummary)
+	}
+}
+
+func TestPermissionRequestNoToolInput(t *testing.T) {
+	h := testHandler(t)
+
+	h.HandleEvent("SessionStart", map[string]any{"session_id": "summary-nil"})
+	h.HandleEvent("PermissionRequest", map[string]any{
+		"session_id": "summary-nil",
+		"tool_name":  "Bash",
+	})
+
+	data := readStatus(t, h, "summary-nil")
+	if data.ToolRequestSummary != nil {
+		t.Errorf("tool_request_summary should be nil when no tool_input, got %v", data.ToolRequestSummary)
+	}
+}
+
+func TestPreToolUseClearsNotification(t *testing.T) {
+	h := testHandler(t)
+
+	h.HandleEvent("SessionStart", map[string]any{"session_id": "clear-test"})
+	h.HandleEvent("Notification", map[string]any{
+		"session_id": "clear-test",
+		"message":    "some notification",
+	})
+	h.HandleEvent("PreToolUse", map[string]any{
+		"session_id": "clear-test",
+		"tool_name":  "Read",
+	})
+
+	data := readStatus(t, h, "clear-test")
+	if data.NotificationMessage != nil {
+		t.Errorf("notification_message should be cleared on PreToolUse, got %v", data.NotificationMessage)
+	}
+	if data.ToolRequestSummary != nil {
+		t.Errorf("tool_request_summary should be cleared on PreToolUse, got %v", data.ToolRequestSummary)
+	}
+}
+
+func TestSubagentStopDecrements(t *testing.T) {
+	h := testHandler(t)
+
+	h.HandleEvent("SessionStart", map[string]any{"session_id": "sub-dec"})
+	h.HandleEvent("SubagentStart", map[string]any{"session_id": "sub-dec", "agent_type": "Explore"})
+	h.HandleEvent("SubagentStart", map[string]any{"session_id": "sub-dec", "agent_type": "Plan"})
+	h.HandleEvent("SubagentStop", map[string]any{"session_id": "sub-dec", "agent_type": "Explore"})
+
+	data := readStatus(t, h, "sub-dec")
+	if data.SubagentCount != 1 {
+		t.Errorf("subagent_count: got %d, want 1 after start(2)+stop(1)", data.SubagentCount)
+	}
+}
+
+func TestSubagentStopFloorsAtZero(t *testing.T) {
+	h := testHandler(t)
+
+	h.HandleEvent("SessionStart", map[string]any{"session_id": "sub-floor"})
+	h.HandleEvent("SubagentStop", map[string]any{"session_id": "sub-floor"})
+
+	data := readStatus(t, h, "sub-floor")
+	if data.SubagentCount != 0 {
+		t.Errorf("subagent_count: got %d, want 0 (floor)", data.SubagentCount)
+	}
+}
+
+func TestActiveSubagentsTracked(t *testing.T) {
+	h := testHandler(t)
+
+	h.HandleEvent("SessionStart", map[string]any{"session_id": "active-sub"})
+	h.HandleEvent("SubagentStart", map[string]any{"session_id": "active-sub", "agent_type": "Explore"})
+	h.HandleEvent("SubagentStart", map[string]any{"session_id": "active-sub", "agent_type": "Plan"})
+
+	data := readStatus(t, h, "active-sub")
+	if len(data.ActiveSubagents) != 2 {
+		t.Errorf("active_subagents length: got %d, want 2", len(data.ActiveSubagents))
+	}
+
+	h.HandleEvent("SubagentStop", map[string]any{"session_id": "active-sub", "agent_type": "Explore"})
+	data = readStatus(t, h, "active-sub")
+	if len(data.ActiveSubagents) != 1 {
+		t.Errorf("active_subagents length after stop: got %d, want 1", len(data.ActiveSubagents))
+	}
+	if len(data.ActiveSubagents) > 0 && data.ActiveSubagents[0] != "Plan" {
+		t.Errorf("remaining subagent: got %q, want Plan", data.ActiveSubagents[0])
+	}
+}
+
+func TestPreCompactTracksCount(t *testing.T) {
+	h := testHandler(t)
+
+	h.HandleEvent("SessionStart", map[string]any{"session_id": "compact-test"})
+	h.HandleEvent("PreCompact", map[string]any{
+		"session_id": "compact-test",
+		"trigger":    "auto",
+	})
+	h.HandleEvent("PreCompact", map[string]any{
+		"session_id": "compact-test",
+		"trigger":    "manual",
+	})
+
+	data := readStatus(t, h, "compact-test")
+	if data.CompactCount != 2 {
+		t.Errorf("compact_count: got %d, want 2", data.CompactCount)
+	}
+	if data.CompactTrigger != "manual" {
+		t.Errorf("compact_trigger: got %q, want manual", data.CompactTrigger)
+	}
+}
+
+func TestUserPromptSubmitCapturesInitialPrompt(t *testing.T) {
+	h := testHandler(t)
+
+	h.HandleEvent("SessionStart", map[string]any{"session_id": "prompt-test"})
+	h.HandleEvent("UserPromptSubmit", map[string]any{
+		"session_id": "prompt-test",
+		"prompt":     "Fix the login bug",
+	})
+
+	data := readStatus(t, h, "prompt-test")
+	if data.InitialPrompt != "Fix the login bug" {
+		t.Errorf("initial_prompt: got %q, want 'Fix the login bug'", data.InitialPrompt)
+	}
+	if data.Status != "WORKING" {
+		t.Errorf("status: got %q, want WORKING", data.Status)
+	}
+
+	// Second prompt should NOT overwrite
+	h.HandleEvent("UserPromptSubmit", map[string]any{
+		"session_id": "prompt-test",
+		"prompt":     "Also fix the signup bug",
+	})
+	data = readStatus(t, h, "prompt-test")
+	if data.InitialPrompt != "Fix the login bug" {
+		t.Errorf("initial_prompt should not change, got %q", data.InitialPrompt)
+	}
+}
+
+func TestUserPromptSubmitClearsNotification(t *testing.T) {
+	h := testHandler(t)
+
+	h.HandleEvent("SessionStart", map[string]any{"session_id": "prompt-clear"})
+	h.HandleEvent("Notification", map[string]any{
+		"session_id": "prompt-clear",
+		"message":    "waiting for input",
+	})
+	h.HandleEvent("UserPromptSubmit", map[string]any{
+		"session_id": "prompt-clear",
+		"prompt":     "go ahead",
+	})
+
+	data := readStatus(t, h, "prompt-clear")
+	if data.NotificationMessage != nil {
+		t.Errorf("notification_message should be cleared, got %v", data.NotificationMessage)
+	}
+	if data.ToolRequestSummary != nil {
+		t.Errorf("tool_request_summary should be cleared, got %v", data.ToolRequestSummary)
+	}
+}
+
+func TestBootstrapSetsProjectName(t *testing.T) {
+	h := testHandler(t)
+
+	// First event is PreToolUse (mid-session hook install)
+	h.HandleEvent("PreToolUse", map[string]any{
+		"session_id": "boot-proj",
+		"cwd":        "/home/user/my-project",
+		"tool_name":  "Read",
+	})
+
+	data := readStatus(t, h, "boot-proj")
+	if data.ProjectName != "my-project" {
+		t.Errorf("project_name: got %q, want my-project", data.ProjectName)
+	}
+}
+
+func TestStopRecordsLastMessage(t *testing.T) {
+	h := testHandler(t)
+
+	h.HandleEvent("SessionStart", map[string]any{"session_id": "msg-test"})
+	h.HandleEvent("Stop", map[string]any{
+		"session_id":             "msg-test",
+		"last_assistant_message": "I've completed the task",
+	})
+
+	data := readStatus(t, h, "msg-test")
+	if data.LastMessage != "I've completed the task" {
+		t.Errorf("last_message: got %q", data.LastMessage)
+	}
+}
+
+func TestPostToolUseClearsNotification(t *testing.T) {
+	h := testHandler(t)
+
+	h.HandleEvent("SessionStart", map[string]any{"session_id": "post-clear"})
+	h.HandleEvent("Notification", map[string]any{
+		"session_id": "post-clear",
+		"message":    "some notification",
+	})
+	h.HandleEvent("PostToolUse", map[string]any{
+		"session_id": "post-clear",
+	})
+
+	data := readStatus(t, h, "post-clear")
+	if data.NotificationMessage != nil {
+		t.Errorf("notification_message should be cleared on PostToolUse, got %v", data.NotificationMessage)
 	}
 }

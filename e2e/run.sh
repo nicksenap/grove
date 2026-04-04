@@ -550,6 +550,90 @@ else
     fail "_hook tool should be Read, got ${tool_val}"
 fi
 
+# Verify project_name was set from cwd
+proj_val=$(jq -r '.project_name' "${GROVE_HOME}/.grove/status/test-session-123.json")
+if [ "${proj_val}" = "tmp" ]; then
+    pass "_hook SessionStart sets project_name from cwd"
+else
+    fail "_hook project_name should be 'tmp', got ${proj_val}"
+fi
+
+# Test PermissionRequest with tool_request_summary
+echo '{"session_id": "test-session-123", "tool_name": "Bash", "tool_input": {"command": "echo hello"}}' | gw _hook --event PermissionRequest 2>/dev/null
+perm_status=$(jq -r '.status' "${GROVE_HOME}/.grove/status/test-session-123.json")
+summary_val=$(jq -r '.tool_request_summary' "${GROVE_HOME}/.grove/status/test-session-123.json")
+if [ "${perm_status}" = "WAITING_PERMISSION" ] && [ "${summary_val}" = '$ echo hello' ]; then
+    pass "_hook PermissionRequest sets status + tool_request_summary"
+else
+    fail "_hook PermissionRequest: status=${perm_status}, summary=${summary_val}"
+fi
+
+# Test Notification with keyword detection
+echo '{"session_id": "test-session-123", "message": "I have a question for you"}' | gw _hook --event Notification 2>/dev/null
+notif_status=$(jq -r '.status' "${GROVE_HOME}/.grove/status/test-session-123.json")
+notif_msg=$(jq -r '.notification_message' "${GROVE_HOME}/.grove/status/test-session-123.json")
+if [ "${notif_status}" = "WAITING_ANSWER" ]; then
+    pass "_hook Notification 'question' keyword sets WAITING_ANSWER"
+else
+    fail "_hook Notification status should be WAITING_ANSWER, got ${notif_status}"
+fi
+if [ "${notif_msg}" = "I have a question for you" ]; then
+    pass "_hook Notification sets notification_message"
+else
+    fail "_hook notification_message: got ${notif_msg}"
+fi
+
+# Test UserPromptSubmit captures initial_prompt and clears notification
+echo '{"session_id": "test-session-123", "prompt": "Fix the login bug"}' | gw _hook --event UserPromptSubmit 2>/dev/null
+prompt_val=$(jq -r '.initial_prompt' "${GROVE_HOME}/.grove/status/test-session-123.json")
+prompt_status=$(jq -r '.status' "${GROVE_HOME}/.grove/status/test-session-123.json")
+prompt_notif=$(jq -r '.notification_message' "${GROVE_HOME}/.grove/status/test-session-123.json")
+if [ "${prompt_val}" = "Fix the login bug" ]; then
+    pass "_hook UserPromptSubmit captures initial_prompt"
+else
+    fail "_hook initial_prompt: got ${prompt_val}"
+fi
+if [ "${prompt_status}" = "WORKING" ]; then
+    pass "_hook UserPromptSubmit sets WORKING"
+else
+    fail "_hook UserPromptSubmit status: got ${prompt_status}"
+fi
+if [ "${prompt_notif}" = "null" ]; then
+    pass "_hook UserPromptSubmit clears notification_message"
+else
+    fail "_hook notification should be cleared, got ${prompt_notif}"
+fi
+
+# Test SubagentStart/Stop counting
+echo '{"session_id": "test-session-123", "agent_type": "Explore"}' | gw _hook --event SubagentStart 2>/dev/null
+echo '{"session_id": "test-session-123", "agent_type": "Plan"}' | gw _hook --event SubagentStart 2>/dev/null
+sub_count=$(jq -r '.subagent_count' "${GROVE_HOME}/.grove/status/test-session-123.json")
+active_subs=$(jq -r '.active_subagents | length' "${GROVE_HOME}/.grove/status/test-session-123.json")
+if [ "${sub_count}" = "2" ] && [ "${active_subs}" = "2" ]; then
+    pass "_hook SubagentStart tracks count + active list"
+else
+    fail "_hook SubagentStart: count=${sub_count}, active=${active_subs}"
+fi
+
+echo '{"session_id": "test-session-123", "agent_type": "Explore"}' | gw _hook --event SubagentStop 2>/dev/null
+sub_count_after=$(jq -r '.subagent_count' "${GROVE_HOME}/.grove/status/test-session-123.json")
+remaining=$(jq -r '.active_subagents[0]' "${GROVE_HOME}/.grove/status/test-session-123.json")
+if [ "${sub_count_after}" = "1" ] && [ "${remaining}" = "Plan" ]; then
+    pass "_hook SubagentStop decrements and removes from active list"
+else
+    fail "_hook SubagentStop: count=${sub_count_after}, remaining=${remaining}"
+fi
+
+# Test PreCompact tracking
+echo '{"session_id": "test-session-123", "trigger": "auto"}' | gw _hook --event PreCompact 2>/dev/null
+compact_count=$(jq -r '.compact_count' "${GROVE_HOME}/.grove/status/test-session-123.json")
+compact_trigger=$(jq -r '.compact_trigger' "${GROVE_HOME}/.grove/status/test-session-123.json")
+if [ "${compact_count}" = "1" ] && [ "${compact_trigger}" = "auto" ]; then
+    pass "_hook PreCompact tracks count + trigger"
+else
+    fail "_hook PreCompact: count=${compact_count}, trigger=${compact_trigger}"
+fi
+
 echo '{"session_id": "test-session-123"}' | gw _hook --event SessionEnd 2>/dev/null
 if [ ! -f "${GROVE_HOME}/.grove/status/test-session-123.json" ]; then
     pass "_hook SessionEnd removes status file"
