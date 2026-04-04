@@ -3,8 +3,11 @@ package plugin
 import (
 	"archive/tar"
 	"compress/gzip"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"bytes"
 	"io"
 	"net/http"
 	"os"
@@ -63,7 +66,10 @@ func Install(repo string) error {
 		return fmt.Errorf("asset URL is not HTTPS: %s", asset.BrowserDownloadURL)
 	}
 
-	if err := downloadAndExtract(asset.BrowserDownloadURL, binName, destPath); err != nil {
+	// Fetch expected checksums from release
+	checksums := fetchChecksums(release)
+
+	if err := downloadAndExtract(asset.BrowserDownloadURL, binName, destPath, asset.Name, checksums); err != nil {
 		return fmt.Errorf("downloading %s: %w", asset.Name, err)
 	}
 
@@ -228,8 +234,52 @@ func findAsset(release *ghRelease, _ string) (*ghAsset, error) {
 
 const maxBinarySize = 256 << 20 // 256 MiB
 
-// downloadAndExtract downloads a .tar.gz and extracts the binary.
-func downloadAndExtract(url, binName, destPath string) error {
+// fetchChecksums downloads and parses checksums.txt from a release.
+// Returns a map of filename → sha256 hex string, or nil if not available.
+func fetchChecksums(release *ghRelease) map[string]string {
+	for _, a := range release.Assets {
+		if a.Name == "checksums.txt" {
+			client := &http.Client{Timeout: 15 * time.Second}
+			req, err := http.NewRequest("GET", a.BrowserDownloadURL, nil)
+			if err != nil {
+				return nil
+			}
+			req.Header.Set("User-Agent", "grove-plugin-installer")
+			if token := os.Getenv("GITHUB_TOKEN"); token != "" {
+				req.Header.Set("Authorization", "Bearer "+token)
+			}
+
+			resp, err := client.Do(req)
+			if err != nil {
+				return nil
+			}
+			defer resp.Body.Close()
+
+			if resp.StatusCode != 200 {
+				return nil
+			}
+
+			// GoReleaser format: "sha256  filename\n"
+			data, err := io.ReadAll(io.LimitReader(resp.Body, 64<<10)) // 64 KiB max
+			if err != nil {
+				return nil
+			}
+
+			result := make(map[string]string)
+			for _, line := range strings.Split(string(data), "\n") {
+				parts := strings.Fields(line)
+				if len(parts) == 2 && len(parts[0]) == 64 {
+					result[parts[1]] = parts[0]
+				}
+			}
+			return result
+		}
+	}
+	return nil
+}
+
+// downloadAndExtract downloads a .tar.gz, verifies its checksum, and extracts the binary.
+func downloadAndExtract(url, binName, destPath, assetName string, checksums map[string]string) error {
 	client := &http.Client{Timeout: 120 * time.Second}
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
@@ -251,7 +301,24 @@ func downloadAndExtract(url, binName, destPath string) error {
 		return fmt.Errorf("download returned HTTP %d", resp.StatusCode)
 	}
 
-	gz, err := gzip.NewReader(resp.Body)
+	// Read the full archive into memory so we can checksum it before extracting.
+	// Archives are small (< 10 MiB for a Go binary).
+	archiveData, err := io.ReadAll(io.LimitReader(resp.Body, maxBinarySize))
+	if err != nil {
+		return fmt.Errorf("reading download: %w", err)
+	}
+
+	// Verify checksum if available
+	if expectedHash, ok := checksums[assetName]; ok {
+		h := sha256.Sum256(archiveData)
+		actualHash := hex.EncodeToString(h[:])
+		if actualHash != expectedHash {
+			return fmt.Errorf("checksum mismatch for %s:\n  expected: %s\n  got:      %s", assetName, expectedHash, actualHash)
+		}
+	}
+
+	// Extract from the verified archive
+	gz, err := gzip.NewReader(bytes.NewReader(archiveData))
 	if err != nil {
 		return fmt.Errorf("decompressing: %w", err)
 	}
