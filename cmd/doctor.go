@@ -63,20 +63,28 @@ func checkMissingHooks() []models.DoctorIssue {
 		return nil
 	}
 
-	if _, ok := cfg.Hooks["on_close"]; ok {
-		return nil
+	var issues []models.DoctorIssue
+
+	if _, ok := cfg.Hooks["on_close"]; !ok {
+		// Only flag if Zellij is present — that's what the old hardcoded behavior supported.
+		if os.Getenv("ZELLIJ_SESSION_NAME") != "" {
+			issues = append(issues, models.DoctorIssue{
+				Workspace:       "—",
+				Issue:           "no on_close hook configured (using legacy Zellij fallback)",
+				SuggestedAction: "add [hooks] on_close to ~/.grove/config.toml",
+			})
+		}
 	}
 
-	// Only flag if Zellij is present — that's what the old hardcoded behavior supported.
-	if os.Getenv("ZELLIJ_SESSION_NAME") == "" {
-		return nil
+	if _, ok := cfg.Hooks["post_create"]; !ok {
+		issues = append(issues, models.DoctorIssue{
+			Workspace:       "—",
+			Issue:           "no post_create hook configured (using legacy CLAUDE.md copy)",
+			SuggestedAction: `add [hooks] post_create = "cp {path}/../CLAUDE.md {path}/CLAUDE.md 2>/dev/null || true"`,
+		})
 	}
 
-	return []models.DoctorIssue{{
-		Workspace:       "—",
-		Issue:           "no on_close hook configured (using legacy Zellij fallback)",
-		SuggestedAction: "add [hooks] on_close to ~/.grove/config.toml",
-	}}
+	return issues
 }
 
 func init() {

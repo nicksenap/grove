@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -8,6 +9,7 @@ import (
 	"github.com/nicksenap/grove/internal/config"
 	"github.com/nicksenap/grove/internal/console"
 	"github.com/nicksenap/grove/internal/discover"
+	"github.com/nicksenap/grove/internal/lifecycle"
 	"github.com/nicksenap/grove/internal/models"
 	"github.com/nicksenap/grove/internal/picker"
 	"github.com/nicksenap/grove/internal/workspace"
@@ -15,11 +17,10 @@ import (
 )
 
 var (
-	createBranch      string
-	createRepos       string
-	createPreset      string
-	createAll         bool
-	createCopyClaudeMD *bool
+	createBranch  string
+	createRepos   string
+	createPreset  string
+	createAll     bool
 )
 
 var createCmd = &cobra.Command{
@@ -143,25 +144,14 @@ var createCmd = &cobra.Command{
 			exitError(err.Error())
 		}
 
-		// Copy CLAUDE.md if requested
+		// Fire post_create hook if configured
 		wsPath := filepath.Join(cfg.WorkspaceDir, name)
-		if createCopyClaudeMD != nil {
-			if *createCopyClaudeMD {
-				copyCLAUDEmd(repoMap, repoNames, wsPath)
-			}
-		} else if console.IsTerminal(os.Stdin) {
-			// Auto-detect: check if any repo has a CLAUDE.md
-			for _, repoName := range repoNames {
-				if src, ok := repoMap[repoName]; ok {
-					claudeMD := filepath.Join(src, "CLAUDE.md")
-					if _, err := os.Stat(claudeMD); err == nil {
-						if console.Confirm("Copy CLAUDE.md into workspace?", true) {
-							copyCLAUDEmd(repoMap, repoNames, wsPath)
-						}
-						break
-					}
-				}
-			}
+		vars := lifecycle.Vars{Name: name, Path: wsPath, Branch: branch}
+		if err := lifecycle.Run("post_create", vars); errors.Is(err, lifecycle.ErrNoHook) {
+			// TODO: remove when matured — legacy fallback for users without [hooks] config.
+			copyParentCLAUDEmd(wsPath)
+		} else if err != nil {
+			console.Warningf("post_create hook failed: %s", err)
 		}
 	},
 }
@@ -171,39 +161,20 @@ func init() {
 	createCmd.Flags().StringVarP(&createRepos, "repos", "r", "", "Comma-separated repo names")
 	createCmd.Flags().StringVarP(&createPreset, "preset", "p", "", "Use named preset")
 	createCmd.Flags().BoolVar(&createAll, "all", false, "Use all discovered repos")
-	createCmd.Flags().Bool("copy-claude-md", false, "Copy CLAUDE.md into workspace dir")
-	createCmd.Flags().Bool("no-copy-claude-md", false, "Don't copy CLAUDE.md")
 
 	createCmd.RegisterFlagCompletionFunc("repos", completeRepoNames)
 	createCmd.RegisterFlagCompletionFunc("preset", completePresetNames)
-
-	// Resolve --copy-claude-md / --no-copy-claude-md
-	createCmd.PreRun = func(cmd *cobra.Command, args []string) {
-		if cmd.Flags().Changed("copy-claude-md") {
-			v := true
-			createCopyClaudeMD = &v
-		} else if cmd.Flags().Changed("no-copy-claude-md") {
-			v := false
-			createCopyClaudeMD = &v
-		}
-	}
 }
 
-func copyCLAUDEmd(repoMap map[string]string, repoNames []string, wsPath string) {
-	for _, repoName := range repoNames {
-		src, ok := repoMap[repoName]
-		if !ok {
-			continue
-		}
-		claudeMD := filepath.Join(src, "CLAUDE.md")
-		data, err := os.ReadFile(claudeMD)
-		if err != nil {
-			continue
-		}
-		dst := filepath.Join(wsPath, "CLAUDE.md")
-		os.WriteFile(dst, data, 0o644)
-		return // only copy from first repo that has it
+
+// TODO: remove when matured — legacy fallback for users without [hooks] config.
+func copyParentCLAUDEmd(wsPath string) {
+	src := filepath.Join(wsPath, "..", "CLAUDE.md")
+	data, err := os.ReadFile(src)
+	if err != nil {
+		return
 	}
+	os.WriteFile(filepath.Join(wsPath, "CLAUDE.md"), data, 0o644)
 }
 
 func deriveName(branch string) string {
