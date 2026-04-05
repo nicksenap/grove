@@ -49,10 +49,18 @@ mv gw /usr/local/bin/
 brew update && brew upgrade grove
 ```
 
-Then add shell integration to your `.zshrc` (or `.bashrc`):
+Then add shell integration:
 
+**Bash / Zsh** — add to `.zshrc` or `.bashrc`:
 ```bash
 eval "$(gw shell-init)"
+```
+
+**Nushell** — generate and source the init file:
+```nu
+gw shell-init --shell nu | save -f ~/.config/nushell/grove.nu
+# then add to config.nu:
+source grove.nu
 ```
 
 This enables `gw go` to change your working directory and auto-cds into new workspaces after `gw create`.
