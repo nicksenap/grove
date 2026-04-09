@@ -1,5 +1,20 @@
 # Changelog
 
+## v1.1.2
+
+### New: `gw create --replace`
+
+Tear down the current workspace and create a new one in a single step. Detects the current workspace from your cwd, prompts for confirmation (pass `-f` to skip), runs the `pre_delete` hook, deletes it, then creates the new workspace. The old branch is freed so the new workspace can reuse it.
+
+```bash
+cd ~/.grove/workspaces/old-feature
+gw create new-feature -b feat/new -r api,web --replace
+```
+
+### `gw add-repo` auto-detects current workspace
+
+Running `gw add-repo` with no workspace NAME now defaults to the workspace containing your cwd instead of always showing a picker — matching the behavior of `gw status`, `gw run`, and `gw go`. Falls back to the picker when you're not inside a workspace.
+
 ## v1.1.0
 
 ### Plugin architecture — Grove is now tool-agnostic
