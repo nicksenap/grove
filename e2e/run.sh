@@ -781,7 +781,7 @@ pass "created workspace to be replaced"
 
 # Run create --replace from inside replace-old. Should delete replace-old and
 # create replace-new.
-(cd "${REPLACE_OLD_DIR}" && gw create replace-new --branch feat/replace-new --repos svc-api --replace) 2>&1
+(cd "${REPLACE_OLD_DIR}" && gw create replace-new --branch feat/replace-new --repos svc-api --replace -f) 2>&1
 pass "create --replace succeeded"
 
 if ! gw list --json 2>/dev/null | jq -e '.[] | select(.name == "replace-old")' > /dev/null 2>&1; then
@@ -809,7 +809,7 @@ else
 fi
 
 # --replace outside any workspace should error
-if ! (cd "${GROVE_HOME}" && gw create should-not-exist --branch feat/nope --repos svc-api --replace) 2>/dev/null; then
+if ! (cd "${GROVE_HOME}" && gw create should-not-exist --branch feat/nope --repos svc-api --replace -f) 2>/dev/null; then
     pass "--replace outside a workspace exits non-zero"
 else
     fail "--replace outside a workspace should have failed"
@@ -817,7 +817,7 @@ else
 fi
 
 # --replace with same name as current ws should error (name collision guard)
-if ! (cd "${GROVE_HOME}/.grove/workspaces/replace-new" && gw create replace-new --branch feat/collide --repos svc-api --replace) 2>/dev/null; then
+if ! (cd "${GROVE_HOME}/.grove/workspaces/replace-new" && gw create replace-new --branch feat/collide --repos svc-api --replace -f) 2>/dev/null; then
     pass "--replace rejects same-name collision"
 else
     fail "--replace should reject same-name collision"

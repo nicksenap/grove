@@ -23,6 +23,7 @@ var (
 	createPreset  string
 	createAll     bool
 	createReplace bool
+	createForce   bool
 )
 
 var createCmd = &cobra.Command{
@@ -143,6 +144,7 @@ var createCmd = &cobra.Command{
 		}
 
 		// --replace: delete the current workspace (detected from cwd) before creating the new one.
+		replacedName := ""
 		if createReplace {
 			cwd, err := os.Getwd()
 			if err != nil {
@@ -155,6 +157,11 @@ var createCmd = &cobra.Command{
 			if currentWs.Name == name {
 				exitError("--replace would collide: new workspace name matches the current one (" + name + "). Pass a different NAME.")
 			}
+			if !createForce {
+				if !console.Confirm("Delete workspace "+currentWs.Name+" and replace with "+name+"?", false) {
+					return
+				}
+			}
 			console.Infof("Replacing workspace: deleting %s", currentWs.Name)
 			vars := lifecycle.Vars{Name: currentWs.Name, Path: currentWs.Path, Branch: currentWs.Branch}
 			if err := lifecycle.Run("pre_delete", vars); err != nil && !errors.Is(err, lifecycle.ErrNoHook) {
@@ -163,9 +170,13 @@ var createCmd = &cobra.Command{
 			if err := workspace.NewService().Delete(currentWs.Name); err != nil {
 				exitError("failed to delete current workspace: " + err.Error())
 			}
+			replacedName = currentWs.Name
 		}
 
 		if err := workspace.NewService().Create(name, branch, repoNames, repoMap, cfg); err != nil {
+			if replacedName != "" {
+				exitError("failed to create new workspace (old workspace " + replacedName + " was already deleted): " + err.Error())
+			}
 			exitError(err.Error())
 		}
 
@@ -184,6 +195,7 @@ func init() {
 	createCmd.Flags().StringVarP(&createPreset, "preset", "p", "", "Use named preset")
 	createCmd.Flags().BoolVar(&createAll, "all", false, "Use all discovered repos")
 	createCmd.Flags().BoolVar(&createReplace, "replace", false, "Delete the current workspace (detected from cwd) before creating the new one")
+	createCmd.Flags().BoolVarP(&createForce, "force", "f", false, "Skip --replace confirmation prompt")
 
 	createCmd.RegisterFlagCompletionFunc("repos", completeRepoNames)
 	createCmd.RegisterFlagCompletionFunc("preset", completePresetNames)
