@@ -1,9 +1,11 @@
 package cmd
 
 import (
+	"os"
 	"strings"
 
 	"github.com/nicksenap/grove/internal/config"
+	"github.com/nicksenap/grove/internal/console"
 	"github.com/nicksenap/grove/internal/discover"
 	"github.com/nicksenap/grove/internal/picker"
 	"github.com/nicksenap/grove/internal/state"
@@ -22,22 +24,32 @@ var addRepoCmd = &cobra.Command{
 		if len(args) > 0 {
 			wsName = args[0]
 		} else {
-			workspaces, err := state.Load()
-			if err != nil {
-				exitError(err.Error())
+			// Auto-detect workspace from cwd and use it as default.
+			if cwd, err := os.Getwd(); err == nil {
+				if currentWs, _ := state.FindWorkspaceByPath(cwd); currentWs != nil {
+					wsName = currentWs.Name
+					console.Infof("Using current workspace: %s", wsName)
+				}
 			}
-			if len(workspaces) == 0 {
-				exitError("No workspaces")
+
+			if wsName == "" {
+				workspaces, err := state.Load()
+				if err != nil {
+					exitError(err.Error())
+				}
+				if len(workspaces) == 0 {
+					exitError("No workspaces")
+				}
+				choices := make([]string, len(workspaces))
+				for i, ws := range workspaces {
+					choices[i] = ws.Name
+				}
+				selected, err := picker.PickOne("Select workspace:", choices)
+				if err != nil {
+					exitOnPickerErr(err)
+				}
+				wsName = selected
 			}
-			choices := make([]string, len(workspaces))
-			for i, ws := range workspaces {
-				choices[i] = ws.Name
-			}
-			selected, err := picker.PickOne("Select workspace:", choices)
-			if err != nil {
-				exitOnPickerErr(err)
-			}
-			wsName = selected
 		}
 
 		cfg := config.RequireConfig()

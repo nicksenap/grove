@@ -248,6 +248,37 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# Test: add-repo auto-detects workspace from cwd
+# ---------------------------------------------------------------------------
+section "Add repo (cwd auto-detect)"
+
+# svc-gateway was removed above. Re-add it by running `gw add-repo` with NO
+# workspace name from inside the workspace directory — the cwd should be
+# auto-detected.
+(cd "${WS_DIR}" && gw add-repo --repos svc-gateway) 2>&1
+pass "add-repo without NAME succeeded from inside workspace"
+
+repo_count=$(gw ws show test-ws --json 2>/dev/null | jq '.repos | length')
+if [ "${repo_count}" = "3" ]; then
+    pass "cwd-detected add-repo added to correct workspace"
+else
+    fail "expected 3 repos after cwd-detected add-repo, got ${repo_count}"
+fi
+
+# Also works from a subdirectory inside a worktree
+gw remove-repo test-ws --repos svc-gateway --force 2>&1
+(cd "${WS_DIR}/svc-auth" && gw add-repo --repos svc-gateway) 2>&1
+repo_count=$(gw ws show test-ws --json 2>/dev/null | jq '.repos | length')
+if [ "${repo_count}" = "3" ]; then
+    pass "cwd auto-detect works from worktree subdirectory"
+else
+    fail "expected 3 repos from subdir detect, got ${repo_count}"
+fi
+
+# Clean up for subsequent tests that expect the original 2-repo state
+gw remove-repo test-ws --repos svc-gateway --force 2>&1
+
+# ---------------------------------------------------------------------------
 # Test: rename workspace
 # ---------------------------------------------------------------------------
 section "Rename"
@@ -738,6 +769,61 @@ if ! gw nonexistent-cmd 2>/dev/null; then
 else
     fail "unknown command without plugin should fail"
 fi
+
+# ---------------------------------------------------------------------------
+# Test: create --replace (delete current ws, create new one)
+# ---------------------------------------------------------------------------
+section "Create --replace"
+
+gw create replace-old --branch feat/replace-old --repos svc-api 2>&1
+REPLACE_OLD_DIR="${GROVE_HOME}/.grove/workspaces/replace-old"
+pass "created workspace to be replaced"
+
+# Run create --replace from inside replace-old. Should delete replace-old and
+# create replace-new.
+(cd "${REPLACE_OLD_DIR}" && gw create replace-new --branch feat/replace-new --repos svc-api --replace) 2>&1
+pass "create --replace succeeded"
+
+if ! gw list --json 2>/dev/null | jq -e '.[] | select(.name == "replace-old")' > /dev/null 2>&1; then
+    pass "old workspace deleted by --replace"
+else
+    fail "old workspace still present after --replace"
+fi
+
+if gw list --json 2>/dev/null | jq -e '.[] | select(.name == "replace-new")' > /dev/null; then
+    pass "new workspace created by --replace"
+else
+    fail "new workspace missing after --replace"
+fi
+
+if [ ! -d "${REPLACE_OLD_DIR}" ]; then
+    pass "old workspace directory removed"
+else
+    fail "old workspace directory still on disk"
+fi
+
+if [ -d "${GROVE_HOME}/.grove/workspaces/replace-new/svc-api" ]; then
+    pass "new workspace worktree on disk"
+else
+    fail "new workspace worktree missing"
+fi
+
+# --replace outside any workspace should error
+if ! (cd "${GROVE_HOME}" && gw create should-not-exist --branch feat/nope --repos svc-api --replace) 2>/dev/null; then
+    pass "--replace outside a workspace exits non-zero"
+else
+    fail "--replace outside a workspace should have failed"
+    gw delete should-not-exist --force 2>/dev/null || true
+fi
+
+# --replace with same name as current ws should error (name collision guard)
+if ! (cd "${GROVE_HOME}/.grove/workspaces/replace-new" && gw create replace-new --branch feat/collide --repos svc-api --replace) 2>/dev/null; then
+    pass "--replace rejects same-name collision"
+else
+    fail "--replace should reject same-name collision"
+fi
+
+gw delete replace-new --force 2>&1
 
 # ---------------------------------------------------------------------------
 # Cleanup: delete remaining workspace

@@ -12,15 +12,17 @@ import (
 	"github.com/nicksenap/grove/internal/lifecycle"
 	"github.com/nicksenap/grove/internal/models"
 	"github.com/nicksenap/grove/internal/picker"
+	"github.com/nicksenap/grove/internal/state"
 	"github.com/nicksenap/grove/internal/workspace"
 	"github.com/spf13/cobra"
 )
 
 var (
-	createBranch string
-	createRepos  string
-	createPreset string
-	createAll    bool
+	createBranch  string
+	createRepos   string
+	createPreset  string
+	createAll     bool
+	createReplace bool
 )
 
 var createCmd = &cobra.Command{
@@ -140,6 +142,29 @@ var createCmd = &cobra.Command{
 			name = deriveName(branch)
 		}
 
+		// --replace: delete the current workspace (detected from cwd) before creating the new one.
+		if createReplace {
+			cwd, err := os.Getwd()
+			if err != nil {
+				exitError("cannot determine working directory: " + err.Error())
+			}
+			currentWs, _ := state.FindWorkspaceByPath(cwd)
+			if currentWs == nil {
+				exitError("--replace requires running from inside an existing workspace")
+			}
+			if currentWs.Name == name {
+				exitError("--replace would collide: new workspace name matches the current one (" + name + "). Pass a different NAME.")
+			}
+			console.Infof("Replacing workspace: deleting %s", currentWs.Name)
+			vars := lifecycle.Vars{Name: currentWs.Name, Path: currentWs.Path, Branch: currentWs.Branch}
+			if err := lifecycle.Run("pre_delete", vars); err != nil && !errors.Is(err, lifecycle.ErrNoHook) {
+				console.Warningf("pre_delete hook failed: %s", err)
+			}
+			if err := workspace.NewService().Delete(currentWs.Name); err != nil {
+				exitError("failed to delete current workspace: " + err.Error())
+			}
+		}
+
 		if err := workspace.NewService().Create(name, branch, repoNames, repoMap, cfg); err != nil {
 			exitError(err.Error())
 		}
@@ -158,6 +183,7 @@ func init() {
 	createCmd.Flags().StringVarP(&createRepos, "repos", "r", "", "Comma-separated repo names")
 	createCmd.Flags().StringVarP(&createPreset, "preset", "p", "", "Use named preset")
 	createCmd.Flags().BoolVar(&createAll, "all", false, "Use all discovered repos")
+	createCmd.Flags().BoolVar(&createReplace, "replace", false, "Delete the current workspace (detected from cwd) before creating the new one")
 
 	createCmd.RegisterFlagCompletionFunc("repos", completeRepoNames)
 	createCmd.RegisterFlagCompletionFunc("preset", completePresetNames)

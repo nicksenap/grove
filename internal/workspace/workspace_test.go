@@ -453,6 +453,56 @@ func TestRenamePreservesCreatedAt(t *testing.T) {
 	}
 }
 
+// TestReplaceSequence covers the Delete→Create flow that `gw create --replace`
+// performs. The key invariants: after delete, the old workspace is gone from
+// state and disk, and the freed branch can be reused immediately by the new
+// workspace without hitting the duplicate-branch guard.
+func TestReplaceSequence(t *testing.T) {
+	env := setupTestEnv(t)
+	env.createRepo("api")
+
+	// Create old workspace on a branch.
+	if err := env.svc.Create("old-ws", "feat/shared", []string{"api"}, env.repoMap, env.cfg); err != nil {
+		t.Fatalf("create old: %v", err)
+	}
+
+	// Sanity: creating another workspace on the same branch is normally rejected.
+	if err := env.svc.Create("other", "feat/shared", []string{"api"}, env.repoMap, env.cfg); err == nil {
+		t.Fatal("expected duplicate-branch rejection before delete")
+	}
+
+	// Delete old (simulates --replace first half).
+	if err := env.svc.Delete("old-ws"); err != nil {
+		t.Fatalf("delete old: %v", err)
+	}
+
+	// Old workspace is gone from state.
+	if ws, _ := env.svc.State.GetWorkspace("old-ws"); ws != nil {
+		t.Error("old-ws still in state after delete")
+	}
+	// Old workspace directory is gone from disk.
+	if _, err := os.Stat(filepath.Join(env.wsDir, "old-ws")); !os.IsNotExist(err) {
+		t.Error("old-ws directory still on disk after delete")
+	}
+
+	// Create new workspace on the SAME branch — should now succeed because
+	// the old worktree releasing the branch is the whole point of --replace.
+	if err := env.svc.Create("new-ws", "feat/shared", []string{"api"}, env.repoMap, env.cfg); err != nil {
+		t.Fatalf("create new (branch reuse after delete): %v", err)
+	}
+
+	ws, _ := env.svc.State.GetWorkspace("new-ws")
+	if ws == nil {
+		t.Fatal("new-ws not in state")
+	}
+	if len(ws.Repos) != 1 || ws.Repos[0].Branch != "feat/shared" {
+		t.Errorf("new-ws not on expected branch: %+v", ws.Repos)
+	}
+	if _, err := os.Stat(filepath.Join(env.wsDir, "new-ws", "api")); err != nil {
+		t.Errorf("new-ws worktree missing: %v", err)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Sync tests
 // ---------------------------------------------------------------------------
