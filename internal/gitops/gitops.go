@@ -304,6 +304,69 @@ func ParseRemoteName(url string) string {
 	return ""
 }
 
+// IsGitURL returns true if s looks like a remote git URL (HTTPS, SSH, or file://).
+func IsGitURL(s string) bool {
+	// HTTPS/HTTP: https://github.com/owner/repo.git
+	if strings.HasPrefix(s, "https://") || strings.HasPrefix(s, "http://") {
+		return true
+	}
+	// file:// protocol (local bare repos, testing)
+	if strings.HasPrefix(s, "file://") {
+		return true
+	}
+	// SSH: git@github.com:owner/repo.git
+	if strings.Contains(s, ":") && !strings.Contains(s, "://") && strings.Contains(s, "@") {
+		return true
+	}
+	return false
+}
+
+// RepoNameFromURL extracts the repository name from a git URL.
+// e.g. "https://github.com/owner/my-repo.git" → "my-repo"
+func RepoNameFromURL(url string) string {
+	url = strings.TrimSpace(url)
+	url = strings.TrimSuffix(url, "/")
+	url = strings.TrimSuffix(url, ".git")
+
+	// Take the last path segment
+	if i := strings.LastIndex(url, "/"); i >= 0 {
+		return url[i+1:]
+	}
+	// SSH: git@host:owner/repo
+	if i := strings.LastIndex(url, ":"); i >= 0 {
+		part := url[i+1:]
+		if j := strings.LastIndex(part, "/"); j >= 0 {
+			return part[j+1:]
+		}
+		return part
+	}
+	return ""
+}
+
+// Clone clones a remote repository into destDir/<repo-name>.
+// Returns the path to the cloned repository.
+func Clone(url, destDir string) (string, error) {
+	name := RepoNameFromURL(url)
+	if name == "" {
+		return "", fmt.Errorf("cannot determine repo name from URL: %s", url)
+	}
+	dest := filepath.Join(destDir, name)
+
+	if _, err := os.Stat(dest); err == nil {
+		// Already exists — verify it's a git repo
+		if IsGitRepo(dest) {
+			return dest, nil
+		}
+		return "", fmt.Errorf("directory %s already exists but is not a git repo", dest)
+	}
+
+	_, err := runGit(destDir, "clone", url, name)
+	if err != nil {
+		return "", fmt.Errorf("cloning %s: %w", url, err)
+	}
+	return dest, nil
+}
+
 // RepoBaseBranch returns "origin/<base>" from .grove.toml, or "".
 func RepoBaseBranch(repo string) string {
 	cfg, err := ReadGroveConfig(repo)

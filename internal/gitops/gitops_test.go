@@ -467,6 +467,105 @@ func TestPRStatusNoGH(t *testing.T) {
 	}
 }
 
+func TestIsGitURL(t *testing.T) {
+	tests := []struct {
+		input string
+		want  bool
+	}{
+		{"https://github.com/owner/repo.git", true},
+		{"http://github.com/owner/repo.git", true},
+		{"https://github.com/owner/repo", true},
+		{"git@github.com:owner/repo.git", true},
+		{"git@gitlab.com:org/project.git", true},
+		{"my-repo", false},
+		{"some-local-name", false},
+		{"", false},
+		{"file:///tmp/repos/my-repo.git", true},
+		{"https://", true}, // degenerate but still a URL
+	}
+	for _, tt := range tests {
+		got := IsGitURL(tt.input)
+		if got != tt.want {
+			t.Errorf("IsGitURL(%q) = %v, want %v", tt.input, got, tt.want)
+		}
+	}
+}
+
+func TestRepoNameFromURL(t *testing.T) {
+	tests := []struct {
+		url  string
+		want string
+	}{
+		{"https://github.com/owner/my-repo.git", "my-repo"},
+		{"https://github.com/owner/my-repo", "my-repo"},
+		{"git@github.com:owner/my-repo.git", "my-repo"},
+		{"git@github.com:owner/my-repo", "my-repo"},
+		{"https://github.com/owner/my-repo/", "my-repo"},
+		{"https://github.com/owner/my-repo.git/", "my-repo"},
+		{"file:///tmp/repos/remote-origin.git", "remote-origin"},
+		{"", ""},
+	}
+	for _, tt := range tests {
+		got := RepoNameFromURL(tt.url)
+		if got != tt.want {
+			t.Errorf("RepoNameFromURL(%q) = %q, want %q", tt.url, got, tt.want)
+		}
+	}
+}
+
+func TestClone(t *testing.T) {
+	// Create a bare repo to serve as the "remote"
+	dir := t.TempDir()
+	bare := filepath.Join(dir, "origin.git")
+	run(t, dir, "git", "init", "--bare", bare)
+
+	// Seed it with a commit via a temp clone
+	tmp := filepath.Join(dir, "tmp")
+	run(t, dir, "git", "clone", bare, tmp)
+	run(t, tmp, "git", "config", "user.email", "test@test.com")
+	run(t, tmp, "git", "config", "user.name", "Test")
+	os.WriteFile(filepath.Join(tmp, "README.md"), []byte("# test"), 0o644)
+	run(t, tmp, "git", "add", ".")
+	run(t, tmp, "git", "commit", "-m", "initial")
+	run(t, tmp, "git", "push", "origin", "HEAD")
+
+	// Clone using our function (bare path acts as a local URL)
+	destDir := filepath.Join(dir, "repos")
+	os.MkdirAll(destDir, 0o755)
+
+	clonedPath, err := Clone(bare, destDir)
+	if err != nil {
+		t.Fatalf("Clone: %v", err)
+	}
+
+	if !IsGitRepo(clonedPath) {
+		t.Error("cloned path should be a git repo")
+	}
+
+	// Clone again — should succeed (repo already exists)
+	clonedPath2, err := Clone(bare, destDir)
+	if err != nil {
+		t.Fatalf("Clone (idempotent): %v", err)
+	}
+	if clonedPath != clonedPath2 {
+		t.Errorf("expected same path, got %q vs %q", clonedPath, clonedPath2)
+	}
+}
+
+func TestCloneExistingNonRepo(t *testing.T) {
+	dir := t.TempDir()
+	destDir := filepath.Join(dir, "repos")
+	os.MkdirAll(destDir, 0o755)
+
+	// Create a non-repo directory that would conflict
+	os.MkdirAll(filepath.Join(destDir, "origin.git"), 0o755)
+
+	_, err := Clone(filepath.Join(dir, "origin.git"), destDir)
+	if err == nil {
+		t.Error("expected error when destination exists but is not a git repo")
+	}
+}
+
 // helper
 func currentBranch(t *testing.T, repo string) string {
 	t.Helper()

@@ -7,6 +7,7 @@ import (
 	"github.com/nicksenap/grove/internal/config"
 	"github.com/nicksenap/grove/internal/console"
 	"github.com/nicksenap/grove/internal/discover"
+	"github.com/nicksenap/grove/internal/gitops"
 	"github.com/nicksenap/grove/internal/picker"
 	"github.com/nicksenap/grove/internal/state"
 	"github.com/nicksenap/grove/internal/workspace"
@@ -62,6 +63,23 @@ var addRepoCmd = &cobra.Command{
 			for i := range repoNames {
 				repoNames[i] = strings.TrimSpace(repoNames[i])
 			}
+			// Clone any remote URLs into the first repo_dir
+			for i, name := range repoNames {
+				if gitops.IsGitURL(name) {
+					if len(cfg.RepoDirs) == 0 {
+						exitError("No repo_dirs configured — cannot clone remote repo")
+					}
+					console.Infof("Cloning %s ...", name)
+					clonedPath, err := gitops.Clone(name, cfg.RepoDirs[0])
+					if err != nil {
+						exitError(err.Error())
+					}
+					repoName := gitops.RepoNameFromURL(name)
+					repoMap[repoName] = clonedPath
+					repoNames[i] = repoName
+					console.Successf("Cloned %s into %s", repoName, clonedPath)
+				}
+			}
 		} else {
 			// Interactive: show repos not already in workspace
 			ws, err := state.GetWorkspace(wsName)
@@ -98,7 +116,7 @@ var addRepoCmd = &cobra.Command{
 }
 
 func init() {
-	addRepoCmd.Flags().StringVarP(&addRepoRepos, "repos", "r", "", "Comma-separated repo names")
+	addRepoCmd.Flags().StringVarP(&addRepoRepos, "repos", "r", "", "Comma-separated repo names or git URLs")
 	addRepoCmd.RegisterFlagCompletionFunc("repos", completeRepoNames)
 	addRepoCmd.ValidArgsFunction = completeWorkspaceNames
 }

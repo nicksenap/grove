@@ -234,6 +234,109 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# Test: add-repo with remote URL (clone from URL)
+# ---------------------------------------------------------------------------
+section "Add repo from remote URL"
+
+# Create a bare repo to act as the "remote"
+REMOTE_REPO="${GROVE_HOME}/remote-origin.git"
+git init -q --bare "${REMOTE_REPO}"
+REMOTE_CLONE="${GROVE_HOME}/remote-tmp"
+git clone -q "${REMOTE_REPO}" "${REMOTE_CLONE}"
+(cd "${REMOTE_CLONE}" \
+    && git config user.email "e2e@grove.test" \
+    && git config user.name "Grove E2E" \
+    && echo "remote content" > README.md && git add . && git commit -q -m "initial" \
+    && git push -q origin HEAD)
+rm -rf "${REMOTE_CLONE}"
+
+# Add the remote URL (file:// protocol) to the workspace — should clone into REPOS_DIR
+REMOTE_URL="file://${REMOTE_REPO}"
+gw add-repo test-ws --repos "${REMOTE_URL}" 2>&1
+pass "add-repo with remote URL succeeded"
+
+# Verify the repo was cloned into REPOS_DIR
+if [ -d "${REPOS_DIR}/remote-origin" ] && [ -d "${REPOS_DIR}/remote-origin/.git" ]; then
+    pass "remote repo cloned into repo_dir"
+else
+    fail "remote repo not cloned into ${REPOS_DIR}"
+fi
+
+# Verify worktree was created in workspace
+if [ -d "${WS_DIR}/remote-origin" ]; then
+    pass "remote repo worktree created in workspace"
+else
+    fail "remote repo worktree missing"
+fi
+
+# Verify branch
+remote_branch=$(cd "${WS_DIR}/remote-origin" && git branch --show-current)
+if [ "${remote_branch}" = "feat/e2e" ]; then
+    pass "remote repo worktree on correct branch"
+else
+    fail "expected feat/e2e, got ${remote_branch}"
+fi
+
+# Verify state updated
+repo_count=$(gw ws show test-ws --json 2>/dev/null | jq '.repos | length')
+if [ "${repo_count}" = "4" ]; then
+    pass "state reflects 4 repos after remote add"
+else
+    fail "expected 4 repos, got ${repo_count}"
+fi
+
+# Adding same URL again should be idempotent (repo already in workspace)
+gw add-repo test-ws --repos "${REMOTE_URL}" 2>&1
+pass "add-repo with same URL is idempotent"
+
+# Clean up: remove the remote repo from workspace
+gw remove-repo test-ws --repos remote-origin --force 2>&1
+
+# ---------------------------------------------------------------------------
+# Test: add-repo with real HTTPS remote (gw-zellij)
+# ---------------------------------------------------------------------------
+section "Add repo from HTTPS remote"
+
+# Only run if we have network access
+if curl -sf --max-time 5 https://github.com > /dev/null 2>&1; then
+    HTTPS_URL="https://github.com/nicksenap/gw-zellij.git"
+    gw add-repo test-ws --repos "${HTTPS_URL}" 2>&1
+    pass "add-repo with HTTPS URL succeeded"
+
+    if [ -d "${REPOS_DIR}/gw-zellij" ] && [ -d "${REPOS_DIR}/gw-zellij/.git" ]; then
+        pass "HTTPS repo cloned into repo_dir"
+    else
+        fail "HTTPS repo not cloned into ${REPOS_DIR}"
+    fi
+
+    if [ -d "${WS_DIR}/gw-zellij" ]; then
+        pass "HTTPS repo worktree created in workspace"
+    else
+        fail "HTTPS repo worktree missing"
+    fi
+
+    https_branch=$(cd "${WS_DIR}/gw-zellij" && git branch --show-current)
+    if [ "${https_branch}" = "feat/e2e" ]; then
+        pass "HTTPS repo worktree on correct branch"
+    else
+        fail "expected feat/e2e, got ${https_branch}"
+    fi
+
+    # Verify origin remote points to the correct URL
+    cloned_url=$(cd "${REPOS_DIR}/gw-zellij" && git remote get-url origin)
+    if [ "${cloned_url}" = "${HTTPS_URL}" ]; then
+        pass "cloned repo has correct origin URL"
+    else
+        fail "expected origin ${HTTPS_URL}, got ${cloned_url}"
+    fi
+
+    gw remove-repo test-ws --repos gw-zellij --force 2>&1
+    pass "HTTPS remote repo cleaned up from workspace"
+else
+    echo "  ⊘ skipped (no network access)"
+fi
+
+# ---------------------------------------------------------------------------
 # Test: remove-repo
 # ---------------------------------------------------------------------------
 section "Remove repo"
