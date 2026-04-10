@@ -1,5 +1,18 @@
 # Changelog
 
+## v1.1.3
+
+### `gw add-repo` now supports remote git URLs
+
+Pass HTTPS, SSH, or `file://` URLs directly to `--repos` and Grove will clone the repo into your first configured `repo_dir` before adding it to the workspace. Works alongside local repo names — mix and match in a single command.
+
+```bash
+gw add-repo my-workspace -r https://github.com/owner/new-service.git
+gw add-repo my-workspace -r api,https://github.com/owner/lib.git
+```
+
+Clones are idempotent: if the repo already exists locally, it's reused. Includes path traversal protection and remote URL verification on re-use.
+
 ## v1.1.2
 
 ### New: `gw create --replace`
