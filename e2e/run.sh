@@ -287,7 +287,12 @@ fi
 
 # Adding same URL again should be idempotent (repo already in workspace)
 gw add-repo test-ws --repos "${REMOTE_URL}" 2>&1
-pass "add-repo with same URL is idempotent"
+repo_count_after=$(gw ws show test-ws --json 2>/dev/null | jq '.repos | length')
+if [ "${repo_count_after}" = "4" ]; then
+    pass "add-repo with same URL is idempotent (count unchanged)"
+else
+    fail "idempotent add-repo changed repo count to ${repo_count_after}"
+fi
 
 # Clean up: remove the remote repo from workspace
 gw remove-repo test-ws --repos remote-origin --force 2>&1

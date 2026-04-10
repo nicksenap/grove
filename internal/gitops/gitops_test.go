@@ -533,7 +533,7 @@ func TestClone(t *testing.T) {
 	destDir := filepath.Join(dir, "repos")
 	os.MkdirAll(destDir, 0o755)
 
-	clonedPath, err := Clone(bare, destDir)
+	clonedPath, name, err := Clone(bare, destDir)
 	if err != nil {
 		t.Fatalf("Clone: %v", err)
 	}
@@ -541,9 +541,12 @@ func TestClone(t *testing.T) {
 	if !IsGitRepo(clonedPath) {
 		t.Error("cloned path should be a git repo")
 	}
+	if name != "origin" {
+		t.Errorf("expected name %q, got %q", "origin", name)
+	}
 
 	// Clone again — should succeed (repo already exists)
-	clonedPath2, err := Clone(bare, destDir)
+	clonedPath2, _, err := Clone(bare, destDir)
 	if err != nil {
 		t.Fatalf("Clone (idempotent): %v", err)
 	}
@@ -560,9 +563,20 @@ func TestCloneExistingNonRepo(t *testing.T) {
 	// Create a non-repo directory that would conflict
 	os.MkdirAll(filepath.Join(destDir, "origin.git"), 0o755)
 
-	_, err := Clone(filepath.Join(dir, "origin.git"), destDir)
+	_, _, err := Clone(filepath.Join(dir, "origin.git"), destDir)
 	if err == nil {
 		t.Error("expected error when destination exists but is not a git repo")
+	}
+}
+
+func TestClonePathTraversal(t *testing.T) {
+	dir := t.TempDir()
+	_, _, err := Clone("file:///evil/..", dir)
+	if err == nil {
+		t.Error("expected error for path traversal URL")
+	}
+	if !strings.Contains(err.Error(), "unsafe") {
+		t.Errorf("expected 'unsafe' in error, got: %v", err)
 	}
 }
 

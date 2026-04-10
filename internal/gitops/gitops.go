@@ -344,27 +344,36 @@ func RepoNameFromURL(url string) string {
 }
 
 // Clone clones a remote repository into destDir/<repo-name>.
-// Returns the path to the cloned repository.
-func Clone(url, destDir string) (string, error) {
+// Returns the path to the cloned repository and the derived repo name.
+func Clone(url, destDir string) (string, string, error) {
 	name := RepoNameFromURL(url)
 	if name == "" {
-		return "", fmt.Errorf("cannot determine repo name from URL: %s", url)
+		return "", "", fmt.Errorf("cannot determine repo name from URL: %s", url)
 	}
+	// Guard against path traversal (e.g. "..", ".", or slashes in derived name)
+	if name == "." || name == ".." || strings.ContainsAny(name, "/\\") {
+		return "", "", fmt.Errorf("unsafe repo name derived from URL: %q", name)
+	}
+
 	dest := filepath.Join(destDir, name)
 
 	if _, err := os.Stat(dest); err == nil {
-		// Already exists — verify it's a git repo
-		if IsGitRepo(dest) {
-			return dest, nil
+		// Already exists — verify it's a git repo with a matching remote
+		if !IsGitRepo(dest) {
+			return "", "", fmt.Errorf("directory %s already exists but is not a git repo", dest)
 		}
-		return "", fmt.Errorf("directory %s already exists but is not a git repo", dest)
+		existingRemote := RemoteURL(dest, "origin")
+		if existingRemote != "" && existingRemote != url {
+			return "", "", fmt.Errorf("directory %s already exists but points to %s, not %s", name, existingRemote, url)
+		}
+		return dest, name, nil
 	}
 
 	_, err := runGit(destDir, "clone", url, name)
 	if err != nil {
-		return "", fmt.Errorf("cloning %s: %w", url, err)
+		return "", "", fmt.Errorf("cloning %s: %w", url, err)
 	}
-	return dest, nil
+	return dest, name, nil
 }
 
 // RepoBaseBranch returns "origin/<base>" from .grove.toml, or "".

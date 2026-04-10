@@ -70,11 +70,13 @@ var addRepoCmd = &cobra.Command{
 						exitError("No repo_dirs configured — cannot clone remote repo")
 					}
 					console.Infof("Cloning %s ...", name)
-					clonedPath, err := gitops.Clone(name, cfg.RepoDirs[0])
+					clonedPath, repoName, err := gitops.Clone(name, cfg.RepoDirs[0])
 					if err != nil {
 						exitError(err.Error())
 					}
-					repoName := gitops.RepoNameFromURL(name)
+					if existing, ok := repoMap[repoName]; ok && existing != clonedPath {
+						exitError("repo name conflict: " + repoName + " already exists locally at " + existing)
+					}
 					repoMap[repoName] = clonedPath
 					repoNames[i] = repoName
 					console.Successf("Cloned %s into %s", repoName, clonedPath)
