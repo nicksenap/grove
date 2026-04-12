@@ -1,5 +1,32 @@
 # Changelog
 
+## v1.1.4
+
+### New: `gw bug-report`
+
+Collects system info, workspace state, doctor output, and recent logs, then opens a pre-filled GitHub issue in your browser for review before submitting. Use `--print` to output the report to stdout instead.
+
+```bash
+gw bug-report          # opens GitHub issue in browser
+gw bug-report --print  # prints report to stdout
+```
+
+Auto-detects non-TTY environments (CI, piped output) and prints instead of launching a browser.
+
+### `--json` flag for `preset` and `plugin list`
+
+All table-rendering commands now support `--json` / `-j` for machine-readable output:
+
+```bash
+gw preset list --json
+gw preset show backend --json
+gw plugin list --json
+```
+
+### Clone retry with exponential backoff
+
+`git clone` operations now retry up to 3 times with exponential backoff (1s, 2s, 4s) on transient network failures. Auth errors (SSH key issues, host key verification) are detected and fail immediately without retrying. Partial clone directories are cleaned up between attempts.
+
 ## v1.1.3
 
 ### `gw add-repo` now supports remote git URLs
