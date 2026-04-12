@@ -19,13 +19,22 @@ import (
 
 const bugReportRepo = "nicksenap/grove"
 
+var bugReportPrint bool
+
 var bugReportCmd = &cobra.Command{
 	Use:   "bug-report",
 	Short: "Open a pre-filled GitHub issue with diagnostics",
 	Long: `Collects system info, workspace state, doctor output, and recent logs,
-then opens a pre-filled GitHub issue in your browser for review before submitting.`,
+then opens a pre-filled GitHub issue in your browser for review before submitting.
+
+Use --print to output the report to stdout instead of opening a browser.`,
 	Run: func(cmd *cobra.Command, args []string) {
 		report := collectReport()
+
+		if bugReportPrint || !console.IsTerminal(os.Stdin) {
+			fmt.Println(report)
+			return
+		}
 
 		issueURL := fmt.Sprintf("https://github.com/%s/issues/new?title=%s&body=%s",
 			bugReportRepo,
@@ -37,9 +46,8 @@ then opens a pre-filled GitHub issue in your browser for review before submittin
 		console.Info("Review the issue before submitting — it contains log output.")
 
 		if err := openBrowser(issueURL); err != nil {
-			// Print report to stderr only as fallback when browser fails
 			fmt.Fprintln(os.Stderr)
-			fmt.Fprintln(os.Stderr, report)
+			fmt.Println(report)
 		}
 	},
 }
@@ -135,3 +143,6 @@ func openBrowser(rawURL string) error {
 	}
 }
 
+func init() {
+	bugReportCmd.Flags().BoolVar(&bugReportPrint, "print", false, "Print report to stdout instead of opening browser")
+}

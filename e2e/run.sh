@@ -974,21 +974,24 @@ gw delete replace-new --force 2>&1
 # ---------------------------------------------------------------------------
 section "Bug report"
 
-# bug-report opens a browser (which will fail in CI), falling back to printing
-# the report to stderr. We verify the fallback output contains diagnostics.
-bug_out=$(gw bug-report 2>&1 || true)
-if echo "${bug_out}" | grep -q "Collected diagnostics"; then
-    pass "bug-report runs and collects diagnostics"
+# Use --print to output report to stdout instead of opening a browser
+bug_out=$(gw bug-report --print 2>/dev/null)
+if echo "${bug_out}" | grep -q "## Environment"; then
+    pass "bug-report --print includes environment info"
 else
-    fail "bug-report did not run"
+    fail "bug-report --print missing environment section"
 fi
 
-# In CI (no browser), the report is printed as fallback — verify sections
-if echo "${bug_out}" | grep -q "## Environment"; then
-    pass "bug-report fallback includes environment info"
+if echo "${bug_out}" | grep -q "## Doctor"; then
+    pass "bug-report --print includes doctor output"
 else
-    # Browser may have opened successfully — report not printed, still OK
-    pass "bug-report completed (browser opened)"
+    fail "bug-report --print missing doctor section"
+fi
+
+if echo "${bug_out}" | grep -q "## Recent Logs"; then
+    pass "bug-report --print includes recent logs"
+else
+    fail "bug-report --print missing logs section"
 fi
 
 # ---------------------------------------------------------------------------
