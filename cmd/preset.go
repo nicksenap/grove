@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
@@ -18,7 +19,11 @@ var presetCmd = &cobra.Command{
 	Short: "Manage workspace presets",
 }
 
-var presetAddRepos string
+var (
+	presetAddRepos  string
+	presetListJSON  bool
+	presetShowJSON  bool
+)
 
 var presetAddCmd = &cobra.Command{
 	Use:   "add [NAME]",
@@ -79,7 +84,17 @@ var presetListCmd = &cobra.Command{
 	Run: func(cmd *cobra.Command, args []string) {
 		cfg := config.RequireConfig()
 		if len(cfg.Presets) == 0 {
-			console.Info("No presets configured")
+			if !presetListJSON {
+				console.Info("No presets configured")
+			} else {
+				fmt.Println("{}")
+			}
+			return
+		}
+
+		if presetListJSON {
+			data, _ := json.MarshalIndent(cfg.Presets, "", "  ")
+			fmt.Println(string(data))
 			return
 		}
 
@@ -100,6 +115,16 @@ var presetShowCmd = &cobra.Command{
 		preset, ok := cfg.Presets[args[0]]
 		if !ok {
 			exitError(fmt.Sprintf("Preset %s not found", args[0]))
+		}
+
+		if presetShowJSON {
+			out := map[string]interface{}{
+				"name":  args[0],
+				"repos": preset.Repos,
+			}
+			data, _ := json.MarshalIndent(out, "", "  ")
+			fmt.Println(string(data))
+			return
 		}
 
 		fmt.Fprintf(os.Stderr, "Preset:  %s\n", args[0])
@@ -153,5 +178,7 @@ var presetRemoveCmd = &cobra.Command{
 
 func init() {
 	presetAddCmd.Flags().StringVarP(&presetAddRepos, "repos", "r", "", "Comma-separated repo names")
+	presetListCmd.Flags().BoolVarP(&presetListJSON, "json", "j", false, "Output as JSON")
+	presetShowCmd.Flags().BoolVarP(&presetShowJSON, "json", "j", false, "Output as JSON")
 	presetCmd.AddCommand(presetAddCmd, presetListCmd, presetShowCmd, presetRemoveCmd)
 }

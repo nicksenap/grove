@@ -157,6 +157,6 @@ func Remove(name string) error {
 
 // InstalledPlugin describes a plugin found in the plugins directory.
 type InstalledPlugin struct {
-	Name string
-	Path string
+	Name string `json:"name"`
+	Path string `json:"path"`
 }

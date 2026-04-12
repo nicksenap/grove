@@ -2,6 +2,7 @@ package gitops
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -9,8 +10,10 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/BurntSushi/toml"
+	"github.com/nicksenap/grove/internal/logging"
 	"github.com/nicksenap/grove/internal/models"
 )
 
@@ -369,11 +372,32 @@ func Clone(url, destDir string) (string, string, error) {
 		return dest, name, nil
 	}
 
-	_, err := runGit(destDir, "clone", url, name)
-	if err != nil {
-		return "", "", fmt.Errorf("cloning %s: %w", url, err)
+	const maxAttempts = 3
+	backoff := 1 * time.Second
+
+	var lastErr error
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		_, lastErr = runGit(destDir, "clone", url, name)
+		if lastErr == nil {
+			return dest, name, nil
+		}
+
+		// Don't retry auth errors — they'll fail every time
+		var gitErr *GitError
+		if errors.As(lastErr, &gitErr) && isAuthError(gitErr.Stderr) {
+			break
+		}
+
+		if attempt < maxAttempts {
+			logging.Warn("clone %s failed (attempt %d/%d), retrying in %v: %s",
+				url, attempt, maxAttempts, backoff, lastErr)
+			// Clean up partial clone before retrying
+			os.RemoveAll(dest)
+			time.Sleep(backoff)
+			backoff *= 2
+		}
 	}
-	return dest, name, nil
+	return "", "", fmt.Errorf("cloning %s: %w", url, lastErr)
 }
 
 // RepoBaseBranch returns "origin/<base>" from .grove.toml, or "".

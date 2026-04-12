@@ -649,6 +649,28 @@ fi
 gw delete preset-ws --force 2>&1
 pass "preset workspace cleaned up"
 
+# Test: preset list --json
+preset_json=$(gw preset list --json 2>/dev/null)
+if echo "${preset_json}" | jq -e '.backend.repos' > /dev/null 2>&1; then
+    pass "preset list --json shows presets"
+else
+    fail "preset list --json missing presets: ${preset_json}"
+fi
+
+# Test: preset show --json
+preset_show=$(gw preset show backend --json 2>/dev/null)
+if echo "${preset_show}" | jq -e '.name == "backend"' > /dev/null 2>&1; then
+    pass "preset show --json returns preset detail"
+else
+    fail "preset show --json failed: ${preset_show}"
+fi
+
+if echo "${preset_show}" | jq -e '.repos | length == 2' > /dev/null 2>&1; then
+    pass "preset show --json has correct repo count"
+else
+    fail "preset show --json wrong repo count"
+fi
+
 # ---------------------------------------------------------------------------
 # Test: stats
 # ---------------------------------------------------------------------------
@@ -834,6 +856,20 @@ else
     fail "plugin list missing hello"
 fi
 
+# plugin list --json
+plugin_json=$(gw plugin list --json 2>/dev/null)
+if echo "${plugin_json}" | jq -e '.[0].name == "hello"' > /dev/null 2>&1; then
+    pass "plugin list --json returns plugin data"
+else
+    fail "plugin list --json failed: ${plugin_json}"
+fi
+
+if echo "${plugin_json}" | jq -e '.[0].path' > /dev/null 2>&1; then
+    pass "plugin list --json includes path"
+else
+    fail "plugin list --json missing path"
+fi
+
 # Unknown command fallback — gw hello should exec the plugin
 hello_out=$(gw hello --test-flag 2>&1)
 if echo "${hello_out}" | grep -q "hello-from-plugin"; then
@@ -932,6 +968,31 @@ else
 fi
 
 gw delete replace-new --force 2>&1
+
+# ---------------------------------------------------------------------------
+# Test: bug-report (verify diagnostics collection — don't actually open browser)
+# ---------------------------------------------------------------------------
+section "Bug report"
+
+# bug-report opens a browser, but we can verify it runs and prints the report
+bug_out=$(gw bug-report 2>&1 || true)
+if echo "${bug_out}" | grep -q "## Environment"; then
+    pass "bug-report collects environment info"
+else
+    fail "bug-report missing environment section"
+fi
+
+if echo "${bug_out}" | grep -q "## Doctor"; then
+    pass "bug-report includes doctor output"
+else
+    fail "bug-report missing doctor section"
+fi
+
+if echo "${bug_out}" | grep -q "## Recent Logs"; then
+    pass "bug-report includes recent logs"
+else
+    fail "bug-report missing logs section"
+fi
 
 # ---------------------------------------------------------------------------
 # Cleanup: delete remaining workspace

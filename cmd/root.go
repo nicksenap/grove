@@ -66,6 +66,7 @@ func init() {
 		mcpServeCmd,
 		pluginCmd,
 		wizardCmd,
+		bugReportCmd,
 	)
 }
 

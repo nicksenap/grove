@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 
@@ -42,6 +43,8 @@ Examples:
 	},
 }
 
+var pluginListJSON bool
+
 var pluginListCmd = &cobra.Command{
 	Use:     "list",
 	Aliases: []string{"ls"},
@@ -53,8 +56,18 @@ var pluginListCmd = &cobra.Command{
 		}
 
 		if len(plugins) == 0 {
-			console.Info("No plugins installed")
-			fmt.Fprintf(os.Stderr, "  Install one with: gw plugin install <owner/repo>\n")
+			if !pluginListJSON {
+				console.Info("No plugins installed")
+				fmt.Fprintf(os.Stderr, "  Install one with: gw plugin install <owner/repo>\n")
+			} else {
+				fmt.Println("[]")
+			}
+			return
+		}
+
+		if pluginListJSON {
+			data, _ := json.MarshalIndent(plugins, "", "  ")
+			fmt.Println(string(data))
 			return
 		}
 
@@ -104,5 +117,6 @@ plugins that were installed via "gw plugin install".`,
 }
 
 func init() {
+	pluginListCmd.Flags().BoolVarP(&pluginListJSON, "json", "j", false, "Output as JSON")
 	pluginCmd.AddCommand(pluginInstallCmd, pluginListCmd, pluginRemoveCmd, pluginUpgradeCmd)
 }

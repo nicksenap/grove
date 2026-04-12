@@ -580,6 +580,23 @@ func TestClonePathTraversal(t *testing.T) {
 	}
 }
 
+func TestCloneRetryCleanup(t *testing.T) {
+	// Clone from a nonexistent URL should fail after retries and leave no
+	// partial directory behind.
+	destDir := t.TempDir()
+
+	_, _, err := Clone("file:///nonexistent/repo.git", destDir)
+	if err == nil {
+		t.Fatal("expected error cloning nonexistent repo")
+	}
+
+	// The derived name is "repo", verify no partial directory remains
+	partial := filepath.Join(destDir, "repo")
+	if _, statErr := os.Stat(partial); !os.IsNotExist(statErr) {
+		t.Error("partial clone directory should be cleaned up after retries")
+	}
+}
+
 // helper
 func currentBranch(t *testing.T, repo string) string {
 	t.Helper()
