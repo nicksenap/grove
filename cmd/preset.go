@@ -93,7 +93,10 @@ var presetListCmd = &cobra.Command{
 		}
 
 		if presetListJSON {
-			data, _ := json.MarshalIndent(cfg.Presets, "", "  ")
+			data, err := json.MarshalIndent(cfg.Presets, "", "  ")
+			if err != nil {
+				exitError(fmt.Sprintf("failed to marshal JSON: %s", err))
+			}
 			fmt.Println(string(data))
 			return
 		}
@@ -118,11 +121,14 @@ var presetShowCmd = &cobra.Command{
 		}
 
 		if presetShowJSON {
-			out := map[string]interface{}{
+			out := map[string]any{
 				"name":  args[0],
 				"repos": preset.Repos,
 			}
-			data, _ := json.MarshalIndent(out, "", "  ")
+			data, err := json.MarshalIndent(out, "", "  ")
+			if err != nil {
+				exitError(fmt.Sprintf("failed to marshal JSON: %s", err))
+			}
 			fmt.Println(string(data))
 			return
 		}

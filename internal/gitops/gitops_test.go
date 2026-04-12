@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // initBareRepo creates a bare git repo and a clone of it for testing.
@@ -581,8 +582,11 @@ func TestClonePathTraversal(t *testing.T) {
 }
 
 func TestCloneRetryCleanup(t *testing.T) {
-	// Clone from a nonexistent URL should fail after retries and leave no
-	// partial directory behind.
+	// Speed up retries for testing
+	origBackoff := cloneBackoff
+	cloneBackoff = 1 * time.Millisecond
+	t.Cleanup(func() { cloneBackoff = origBackoff })
+
 	destDir := t.TempDir()
 
 	_, _, err := Clone("file:///nonexistent/repo.git", destDir)
@@ -590,10 +594,15 @@ func TestCloneRetryCleanup(t *testing.T) {
 		t.Fatal("expected error cloning nonexistent repo")
 	}
 
-	// The derived name is "repo", verify no partial directory remains
+	// Verify no partial directory remains after exhausted retries
 	partial := filepath.Join(destDir, "repo")
 	if _, statErr := os.Stat(partial); !os.IsNotExist(statErr) {
 		t.Error("partial clone directory should be cleaned up after retries")
+	}
+
+	// Verify the error message is propagated
+	if !strings.Contains(err.Error(), "nonexistent") {
+		t.Errorf("error should reference the URL, got: %v", err)
 	}
 }
 

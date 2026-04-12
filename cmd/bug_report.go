@@ -27,19 +27,19 @@ then opens a pre-filled GitHub issue in your browser for review before submittin
 	Run: func(cmd *cobra.Command, args []string) {
 		report := collectReport()
 
-		console.Info("Collected diagnostics. Opening GitHub issue in browser...")
-		fmt.Fprintln(os.Stderr)
-		fmt.Fprintln(os.Stderr, report)
-
 		issueURL := fmt.Sprintf("https://github.com/%s/issues/new?title=%s&body=%s",
 			bugReportRepo,
 			url.QueryEscape("Bug: "),
 			url.QueryEscape(report),
 		)
 
+		console.Info("Collected diagnostics. Opening GitHub issue in browser...")
+		console.Info("Review the issue before submitting — it contains log output.")
+
 		if err := openBrowser(issueURL); err != nil {
-			console.Warning("Could not open browser. Copy this URL manually:")
-			fmt.Fprintln(os.Stderr, issueURL)
+			// Print report to stderr only as fallback when browser fails
+			fmt.Fprintln(os.Stderr)
+			fmt.Fprintln(os.Stderr, report)
 		}
 	},
 }
@@ -135,4 +135,3 @@ func openBrowser(rawURL string) error {
 	}
 }
 
-func init() {}

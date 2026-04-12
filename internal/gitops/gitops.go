@@ -34,7 +34,6 @@ func isAuthError(output string) bool {
 		"permission denied (publickey",
 		"host key verification failed",
 		"terminal prompts disabled",
-		"could not read from remote repository",
 	}
 	for _, p := range patterns {
 		if strings.Contains(lower, p) {
@@ -43,6 +42,9 @@ func isAuthError(output string) bool {
 	}
 	return false
 }
+
+// cloneBackoff is the initial retry delay for git clone. Override in tests.
+var cloneBackoff = 1 * time.Second
 
 // gitEnv is computed once at init and reused for every runGit call.
 // This avoids copying os.Environ() and scanning it on every git invocation.
@@ -373,7 +375,7 @@ func Clone(url, destDir string) (string, string, error) {
 	}
 
 	const maxAttempts = 3
-	backoff := 1 * time.Second
+	backoff := cloneBackoff
 
 	var lastErr error
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
@@ -391,11 +393,12 @@ func Clone(url, destDir string) (string, string, error) {
 		if attempt < maxAttempts {
 			logging.Warn("clone %s failed (attempt %d/%d), retrying in %v: %s",
 				url, attempt, maxAttempts, backoff, lastErr)
-			// Clean up partial clone before retrying
-			os.RemoveAll(dest)
 			time.Sleep(backoff)
 			backoff *= 2
 		}
+
+		// Clean up partial clone directory
+		os.RemoveAll(dest)
 	}
 	return "", "", fmt.Errorf("cloning %s: %w", url, lastErr)
 }

@@ -66,7 +66,10 @@ var pluginListCmd = &cobra.Command{
 		}
 
 		if pluginListJSON {
-			data, _ := json.MarshalIndent(plugins, "", "  ")
+			data, err := json.MarshalIndent(plugins, "", "  ")
+			if err != nil {
+				exitError(fmt.Sprintf("failed to marshal JSON: %s", err))
+			}
 			fmt.Println(string(data))
 			return
 		}
