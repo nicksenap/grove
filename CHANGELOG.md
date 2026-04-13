@@ -1,5 +1,12 @@
 # Changelog
 
+## v1.1.5
+
+### Fixes
+
+- Workspace deletion now fully cleans up branches, even when they contain unmerged commits. Previously, `gw delete` would warn "branch has unmerged commits, kept" but still remove the workspace from `gw list` — leaving an orphan branch with no way to find it through Grove.
+- Fetch failure warnings during `gw create` and `gw sync` now explain that local state is used, instead of the vague "continuing" message.
+
 ## v1.1.4
 
 ### New: `gw bug-report`
