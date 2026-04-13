@@ -54,7 +54,7 @@ func (s *Service) Create(name, branch string, repoNames []string, repoMap map[st
 		go func(source, name string) {
 			defer fetchWg.Done()
 			if err := gitops.Fetch(source); err != nil {
-				console.Warningf("  %s: fetch failed (continuing)", name)
+				console.Warningf("  %s: fetch failed, using local state", name)
 			}
 		}(sourcePaths[i], repoName)
 	}
@@ -295,9 +295,9 @@ func (s *Service) Delete(name string) error {
 				}
 			}
 
-			if err := gitops.DeleteBranch(repo.SourceRepo, repo.Branch, false); err != nil {
-				logging.Warn("branch %q has unmerged commits in %s — kept", repo.Branch, repo.RepoName)
-				console.Warningf("%s: branch %s has unmerged commits, kept", repo.RepoName, repo.Branch)
+			if err := gitops.DeleteBranch(repo.SourceRepo, repo.Branch, true); err != nil {
+				logging.Warn("failed to delete branch %q in %s: %s", repo.Branch, repo.RepoName, err)
+				console.Warningf("%s: failed to delete branch %s: %s", repo.RepoName, repo.Branch, err)
 			} else {
 				logging.Info("deleted branch %q in %s", repo.Branch, repo.RepoName)
 			}
@@ -510,7 +510,7 @@ func (s *Service) RemoveRepos(wsName string, repoNames []string) error {
 // syncOneRepo syncs a single repo.
 func (s *Service) syncOneRepo(r models.RepoWorktree) {
 	if err := gitops.Fetch(r.SourceRepo); err != nil {
-		console.Warningf("%s: fetch failed (continuing): %s", r.RepoName, err)
+		console.Warningf("%s: fetch failed, using local state: %s", r.RepoName, err)
 	}
 
 	groveCfg, _ := gitops.ReadGroveConfig(r.SourceRepo)

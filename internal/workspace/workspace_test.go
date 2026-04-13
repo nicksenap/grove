@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/nicksenap/grove/internal/gitops"
 	"github.com/nicksenap/grove/internal/logging"
 	"github.com/nicksenap/grove/internal/models"
 	"github.com/nicksenap/grove/internal/state"
@@ -1507,23 +1508,29 @@ func TestLoggingRename(t *testing.T) {
 	}
 }
 
-func TestLoggingDeleteBranchUnmergedWarning(t *testing.T) {
+func TestDeleteForceDeletesUnmergedBranch(t *testing.T) {
 	readLog := setupLogging(t)
 	env := setupTestEnv(t)
 	env.createRepo("api")
 
 	env.svc.Create("unmerged-ws", "feat/unmerged", []string{"api"}, env.repoMap, env.cfg)
 
-	// Add an unmerged commit to the worktree branch so -d (safe delete) fails
+	// Add an unmerged commit to the worktree branch
 	wt := filepath.Join(env.wsDir, "unmerged-ws", "api")
 	os.WriteFile(filepath.Join(wt, "new.txt"), []byte("unmerged work"), 0o644)
 	env.run(wt, "git", "add", ".")
 	env.run(wt, "git", "commit", "-q", "-m", "unmerged commit")
 
+	sourceRepo := env.repoMap["api"]
 	env.svc.Delete("unmerged-ws")
 
 	log := readLog()
-	if !strings.Contains(log, "unmerged commits") {
-		t.Errorf("log should warn about unmerged branch, got:\n%s", log)
+	if !strings.Contains(log, "deleted branch") {
+		t.Errorf("log should confirm branch deletion, got:\n%s", log)
+	}
+
+	// Verify the branch is actually gone from the source repo
+	if gitops.BranchExists(sourceRepo, "feat/unmerged") {
+		t.Error("branch feat/unmerged should have been force-deleted from source repo")
 	}
 }
