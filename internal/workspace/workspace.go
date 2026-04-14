@@ -245,12 +245,20 @@ func removeMCPConfig(ws models.Workspace) {
 	}
 	delete(servers, "grove")
 	if len(servers) == 0 {
-		os.Remove(path)
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			logging.Warn("could not remove %s: %s", path, err)
+		}
 		return
 	}
 	existing["mcpServers"] = servers
-	out, _ := json.MarshalIndent(existing, "", "  ")
-	os.WriteFile(path, out, 0o644)
+	out, err := json.MarshalIndent(existing, "", "  ")
+	if err != nil {
+		logging.Warn("could not marshal %s: %s", path, err)
+		return
+	}
+	if err := os.WriteFile(path, out, 0o644); err != nil {
+		logging.Warn("could not update %s: %s", path, err)
+	}
 }
 
 // Delete removes a workspace and its worktrees.
