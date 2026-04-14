@@ -243,10 +243,16 @@ func TestCreateWritesMCPConfig(t *testing.T) {
 		t.Error(".mcp.json missing grove server entry")
 	}
 
-	// .mcp.json in worktree dir
-	wtMcpPath := filepath.Join(env.wsDir, "mcp-ws", "api", ".mcp.json")
-	if _, err := os.Stat(wtMcpPath); os.IsNotExist(err) {
-		t.Error(".mcp.json not written to worktree dir")
+	// .mcp.json should NOT be written inside the repo worktree — that would
+	// dirty the tree and break sync. Claude Code is run from the workspace
+	// root, which is where the shell integration cd's the user.
+	wt := filepath.Join(env.wsDir, "mcp-ws", "api")
+	if _, err := os.Stat(filepath.Join(wt, ".mcp.json")); err == nil {
+		t.Error(".mcp.json should not be written inside a repo worktree")
+	}
+	status := env.run(wt, "git", "status", "--porcelain")
+	if status != "" {
+		t.Errorf("worktree should be clean after workspace create, got:\n%s", status)
 	}
 }
 
@@ -512,11 +518,6 @@ func TestSyncUpToDate(t *testing.T) {
 	env := setupTestEnv(t)
 	env.createRepoWithRemote("api")
 	env.svc.Create("sync-ws", "feat/sync", []string{"api"}, env.repoMap, env.cfg)
-
-	// Clean the worktree (untracked .mcp.json)
-	wt := filepath.Join(env.wsDir, "sync-ws", "api")
-	env.run(wt, "git", "add", "-A")
-	env.run(wt, "git", "commit", "-q", "-m", "clean")
 
 	// No upstream changes — should be up to date
 	err := env.svc.Sync("sync-ws")
@@ -864,13 +865,6 @@ func TestSyncMultiRepo(t *testing.T) {
 	env.createRepoWithRemote("web")
 	env.svc.Create("sync-multi", "feat/sm", []string{"api", "web"}, env.repoMap, env.cfg)
 
-	// Clean worktrees
-	for _, name := range []string{"api", "web"} {
-		wt := filepath.Join(env.wsDir, "sync-multi", name)
-		env.run(wt, "git", "add", "-A")
-		env.run(wt, "git", "commit", "-q", "-m", "clean")
-	}
-
 	err := env.svc.Sync("sync-multi")
 	if err != nil {
 		t.Fatalf("sync: %v", err)
@@ -885,11 +879,7 @@ func TestSyncRebases(t *testing.T) {
 	env := setupTestEnv(t)
 	repo := env.createRepoWithRemote("api")
 	env.svc.Create("rebase-ws", "feat/rebase", []string{"api"}, env.repoMap, env.cfg)
-
-	// Clean the worktree
 	wt := filepath.Join(env.wsDir, "rebase-ws", "api")
-	env.run(wt, "git", "add", "-A")
-	env.run(wt, "git", "commit", "-q", "-m", "clean")
 
 	// Add a commit upstream on main and push to origin
 	os.WriteFile(filepath.Join(repo, "upstream.txt"), []byte("new"), 0o644)
@@ -988,8 +978,8 @@ func TestMCPConfigRemoveOnlyGrove(t *testing.T) {
 
 	env.svc.Create("rmcp-ws", "feat/rmcp", []string{"api"}, env.repoMap, env.cfg)
 
-	// Add another server
-	mcpPath := filepath.Join(env.wsDir, "rmcp-ws", "api", ".mcp.json")
+	// Add another server at the workspace-root .mcp.json
+	mcpPath := filepath.Join(env.wsDir, "rmcp-ws", ".mcp.json")
 	existing := `{"mcpServers":{"grove":{"command":"gw","args":["mcp-serve","--workspace","rmcp-ws"]},"keeper":{"command":"keep-me","args":[]}}}`
 	os.WriteFile(mcpPath, []byte(existing), 0o644)
 
@@ -1017,8 +1007,8 @@ func TestSyncSkipsDirty(t *testing.T) {
 	env.createRepoWithRemote("api")
 	env.svc.Create("dirty-ws", "feat/dirty", []string{"api"}, env.repoMap, env.cfg)
 
-	// Make worktree dirty (don't commit the .mcp.json)
-	// It's already dirty due to .mcp.json, so sync should skip
+	wt := filepath.Join(env.wsDir, "dirty-ws", "api")
+	os.WriteFile(filepath.Join(wt, "dirt.txt"), []byte("uncommitted"), 0o644)
 
 	err := env.svc.Sync("dirty-ws")
 	if err != nil {
@@ -1112,11 +1102,6 @@ post_sync = "echo post"`
 	env.run(repo, "git", "push", "-q", "origin", "HEAD")
 
 	env.svc.Create("sync-hook-ws", "feat/sync-hook", []string{"api"}, env.repoMap, env.cfg)
-
-	// Clean worktree
-	wt := filepath.Join(env.wsDir, "sync-hook-ws", "api")
-	env.run(wt, "git", "add", "-A")
-	env.run(wt, "git", "commit", "-q", "-m", "clean")
 
 	// Add upstream commit to trigger rebase
 	os.WriteFile(filepath.Join(repo, "new.txt"), []byte("upstream"), 0o644)

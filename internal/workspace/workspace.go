@@ -226,40 +226,31 @@ func mergeMCPConfig(path string, wsName string) {
 
 func writeMCPConfig(ws models.Workspace) {
 	mergeMCPConfig(filepath.Join(ws.Path, ".mcp.json"), ws.Name)
-	for _, r := range ws.Repos {
-		mergeMCPConfig(filepath.Join(r.WorktreePath, ".mcp.json"), ws.Name)
-	}
 }
 
-// removeMCPConfig removes the grove entry from .mcp.json files.
+// removeMCPConfig removes the grove entry from the workspace's .mcp.json.
 func removeMCPConfig(ws models.Workspace) {
-	paths := []string{filepath.Join(ws.Path, ".mcp.json")}
-	for _, r := range ws.Repos {
-		paths = append(paths, filepath.Join(r.WorktreePath, ".mcp.json"))
+	path := filepath.Join(ws.Path, ".mcp.json")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return
 	}
-
-	for _, path := range paths {
-		data, err := os.ReadFile(path)
-		if err != nil {
-			continue
-		}
-		var existing map[string]any
-		if err := json.Unmarshal(data, &existing); err != nil {
-			continue
-		}
-		servers, ok := existing["mcpServers"].(map[string]any)
-		if !ok {
-			continue
-		}
-		delete(servers, "grove")
-		if len(servers) == 0 {
-			os.Remove(path)
-		} else {
-			existing["mcpServers"] = servers
-			out, _ := json.MarshalIndent(existing, "", "  ")
-			os.WriteFile(path, out, 0o644)
-		}
+	var existing map[string]any
+	if err := json.Unmarshal(data, &existing); err != nil {
+		return
 	}
+	servers, ok := existing["mcpServers"].(map[string]any)
+	if !ok {
+		return
+	}
+	delete(servers, "grove")
+	if len(servers) == 0 {
+		os.Remove(path)
+		return
+	}
+	existing["mcpServers"] = servers
+	out, _ := json.MarshalIndent(existing, "", "  ")
+	os.WriteFile(path, out, 0o644)
 }
 
 // Delete removes a workspace and its worktrees.
@@ -434,7 +425,6 @@ func (s *Service) AddRepos(wsName string, repoNames []string, repoMap map[string
 		}
 
 		ws.Repos = append(ws.Repos, *rw)
-		mergeMCPConfig(filepath.Join(rw.WorktreePath, ".mcp.json"), ws.Name)
 	}
 
 	newWS := models.Workspace{Repos: ws.Repos[beforeLen:]}
