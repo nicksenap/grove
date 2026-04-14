@@ -124,10 +124,10 @@ else
     fail ".mcp.json not created in workspace root"
 fi
 
-if [ -f "${WS_DIR}/svc-auth/.mcp.json" ] && jq -e '.mcpServers.grove' "${WS_DIR}/svc-auth/.mcp.json" > /dev/null 2>&1; then
-    pass ".mcp.json written to worktree directories"
+if [ ! -f "${WS_DIR}/svc-auth/.mcp.json" ]; then
+    pass ".mcp.json not written into repo worktrees (workspace root only)"
 else
-    fail ".mcp.json missing in worktree dir"
+    fail ".mcp.json should not be written inside a repo worktree"
 fi
 
 # Verify .grove.toml setup hook ran
@@ -428,9 +428,6 @@ GROVE_BASE=$(cd "${REPOS_DIR}/grove" && git symbolic-ref --short HEAD)
 gw create sync-ws --branch feat/sync-test --repos grove 2>&1
 SYNC_WS_DIR="${GROVE_HOME}/.grove/workspaces/sync-ws"
 pass "created sync workspace with Grove repo"
-
-# Clean the worktree so sync doesn't skip it (.mcp.json is untracked)
-(cd "${SYNC_WS_DIR}/grove" && git add -A && git commit -q -m "workspace setup files")
 
 # Add a commit to the base branch in the source repo
 (cd "${REPOS_DIR}/grove" \
