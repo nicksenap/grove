@@ -1,5 +1,23 @@
 # Changelog
 
+## v1.1.6
+
+### Fixes
+
+- `.mcp.json` is no longer written into every repo worktree — only the workspace root. The per-repo copies were leaving every worktree dirty with an untracked file, which caused `gw sync` to refuse rebasing. Claude Code picks up the workspace-root `.mcp.json` since the shell integration `cd`s you there after `gw create`.
+- Nushell auto-cd after `gw create` is now more robust. The wrapper uses an explicit `mktemp` template path (avoiding ambiguity between nushell's builtin and BSD `mktemp -t`), safer file reads, and prints the workspace path as a fallback if `cd` can't happen.
+- Errors during `.mcp.json` cleanup on `gw delete` are now logged instead of silently swallowed.
+
+### Migration note
+
+Existing workspaces created before this release still have stale `.mcp.json` files in each repo worktree. Clean them up with:
+
+```bash
+find ~/.grove/workspaces/*/*/.mcp.json -delete
+```
+
+This preserves the workspace-root `.mcp.json` files.
+
 ## v1.1.5
 
 ### Fixes
