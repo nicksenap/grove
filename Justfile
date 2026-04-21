@@ -4,8 +4,8 @@ set dotenv-load := false
 default:
     @just --list
 
-# Run all checks (test + vet)
-check: test vet
+# Run all checks (test + vet + fmt + gocyclo)
+check: test vet fmt-check gocyclo
 
 # Run tests
 test *args:
@@ -18,6 +18,25 @@ test-v *args:
 # Run go vet
 vet:
     go vet ./...
+
+# Fail if any file needs reformatting. Fix with: gofmt -w .
+fmt-check:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    out=$(gofmt -l .)
+    if [ -n "$out" ]; then
+        echo "files need gofmt:"
+        echo "$out"
+        exit 1
+    fi
+
+# Run cyclomatic-complexity check. Auto-installs gocyclo if missing.
+# Threshold 36 matches current baseline (picker.readKey); tighten as hot spots get refactored.
+gocyclo:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    command -v gocyclo >/dev/null 2>&1 || go install github.com/fzipp/gocyclo/cmd/gocyclo@latest
+    gocyclo -over 36 .
 
 # Build the gw binary (version from git tag)
 build:

@@ -20,9 +20,9 @@ var presetCmd = &cobra.Command{
 }
 
 var (
-	presetAddRepos  string
-	presetListJSON  bool
-	presetShowJSON  bool
+	presetAddRepos string
+	presetListJSON bool
+	presetShowJSON bool
 )
 
 var presetAddCmd = &cobra.Command{
