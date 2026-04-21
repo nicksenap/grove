@@ -12,6 +12,7 @@ import (
 	"github.com/nicksenap/grove/internal/config"
 	"github.com/nicksenap/grove/internal/console"
 	"github.com/nicksenap/grove/internal/lifecycle"
+	"github.com/nicksenap/grove/internal/logging"
 	"github.com/nicksenap/grove/internal/picker"
 	"github.com/nicksenap/grove/internal/state"
 	"github.com/spf13/cobra"
@@ -199,7 +200,9 @@ func deleteAsync(name string) {
 	cmd.Stdout = nil
 	cmd.Stderr = nil
 	cmd.Stdin = nil
-	cmd.Start() // fire and forget
+	if err := cmd.Start(); err != nil {
+		logging.Warn("deleteAsync: failed to spawn detached delete for %q: %v", name, err)
+	}
 }
 
 func init() {

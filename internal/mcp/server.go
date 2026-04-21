@@ -30,10 +30,14 @@ func unmarshalRequest(data []byte) (JSONRPCRequest, bool) {
 
 	var req JSONRPCRequest
 	if v, ok := raw["jsonrpc"]; ok {
-		json.Unmarshal(v, &req.JSONRPC)
+		if err := json.Unmarshal(v, &req.JSONRPC); err != nil {
+			return JSONRPCRequest{}, false
+		}
 	}
 	if v, ok := raw["method"]; ok {
-		json.Unmarshal(v, &req.Method)
+		if err := json.Unmarshal(v, &req.Method); err != nil {
+			return JSONRPCRequest{}, false
+		}
 	}
 	if v, ok := raw["params"]; ok {
 		req.Params = v
