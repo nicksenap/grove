@@ -4,8 +4,8 @@ set dotenv-load := false
 default:
     @just --list
 
-# Run all checks (test + vet + fmt + gocyclo)
-check: test vet fmt-check gocyclo
+# Run all checks (test + vet + fmt + gocyclo + staticcheck)
+check: test vet fmt-check gocyclo staticcheck
 
 # Run tests
 test *args:
@@ -37,6 +37,13 @@ gocyclo:
     set -euo pipefail
     command -v gocyclo >/dev/null 2>&1 || go install github.com/fzipp/gocyclo/cmd/gocyclo@latest
     gocyclo -over 36 .
+
+# Run staticcheck (bugs, simplifications, deprecations, unused code). Auto-installs if missing.
+staticcheck:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    command -v staticcheck >/dev/null 2>&1 || go install honnef.co/go/tools/cmd/staticcheck@latest
+    staticcheck ./...
 
 # Build the gw binary (version from git tag)
 build:

@@ -23,10 +23,9 @@ const (
 var LogDir string
 
 var (
-	mu       sync.Mutex
-	logFile  *os.File
-	verbose  bool
-	initDone bool
+	mu      sync.Mutex
+	logFile *os.File
+	verbose bool
 )
 
 func init() {
@@ -40,7 +39,6 @@ func Setup(v bool) {
 	mu.Lock()
 	defer mu.Unlock()
 	verbose = v
-	initDone = true
 
 	os.MkdirAll(LogDir, 0o755)
 	path := filepath.Join(LogDir, "grove.log")

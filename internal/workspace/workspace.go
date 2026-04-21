@@ -23,7 +23,7 @@ func (s *Service) Create(name, branch string, repoNames []string, repoMap map[st
 		return err
 	}
 	if existing != nil {
-		return fmt.Errorf("Workspace %s already exists", name)
+		return fmt.Errorf("workspace %s already exists", name)
 	}
 
 	logging.Info("creating workspace %q (branch=%s, repos=%v)", name, branch, repoNames)
@@ -268,7 +268,7 @@ func (s *Service) Delete(name string) error {
 		return err
 	}
 	if ws == nil {
-		return fmt.Errorf("Workspace %s not found", name)
+		return fmt.Errorf("workspace %s not found", name)
 	}
 
 	logging.Info("deleting workspace %q", name)
@@ -339,7 +339,7 @@ func (s *Service) Rename(oldName, newName string) error {
 		return err
 	}
 	if ws == nil {
-		return fmt.Errorf("Workspace %s not found", oldName)
+		return fmt.Errorf("workspace %s not found", oldName)
 	}
 
 	existing, err := s.State.GetWorkspace(newName)
@@ -347,7 +347,7 @@ func (s *Service) Rename(oldName, newName string) error {
 		return err
 	}
 	if existing != nil {
-		return fmt.Errorf("Workspace %s already exists", newName)
+		return fmt.Errorf("workspace %s already exists", newName)
 	}
 
 	oldPath := ws.Path
@@ -400,7 +400,7 @@ func (s *Service) AddRepos(wsName string, repoNames []string, repoMap map[string
 		return err
 	}
 	if ws == nil {
-		return fmt.Errorf("Workspace %s not found", wsName)
+		return fmt.Errorf("workspace %s not found", wsName)
 	}
 
 	existing := make(map[string]bool)
@@ -454,7 +454,7 @@ func (s *Service) RemoveRepos(wsName string, repoNames []string) error {
 		return err
 	}
 	if ws == nil {
-		return fmt.Errorf("Workspace %s not found", wsName)
+		return fmt.Errorf("workspace %s not found", wsName)
 	}
 
 	type removeItem struct {
@@ -564,7 +564,7 @@ func (s *Service) Sync(wsName string) error {
 		return err
 	}
 	if ws == nil {
-		return fmt.Errorf("Workspace %s not found", wsName)
+		return fmt.Errorf("workspace %s not found", wsName)
 	}
 
 	logging.Info("syncing workspace %q", wsName)
@@ -662,7 +662,7 @@ func (s *Service) Status(wsName string, opts StatusOptions) error {
 		return err
 	}
 	if ws == nil {
-		return fmt.Errorf("Workspace %s not found", wsName)
+		return fmt.Errorf("workspace %s not found", wsName)
 	}
 
 	results := make([]repoStatusResult, len(ws.Repos))
