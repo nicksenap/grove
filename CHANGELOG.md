@@ -1,5 +1,12 @@
 # Changelog
 
+## v1.1.7
+
+### Fixes
+
+- `gw go --delete` now logs a warning to `~/.grove/grove.log` when the detached cleanup subprocess fails to spawn, instead of silently leaving the workspace on disk.
+- `gw mcp` now rejects malformed JSON-RPC messages (e.g. `"method": 123`) instead of coercing them to zero values. Previously, bad fields were silently dropped and the server replied with a confusing "Method not found: " error (trailing empty string); now they take the consistent "skip malformed" path.
+
 ## v1.1.6
 
 ### Fixes
