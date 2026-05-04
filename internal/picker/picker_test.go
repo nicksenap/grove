@@ -2,6 +2,7 @@ package picker
 
 import (
 	"fmt"
+	"os"
 	"strings"
 	"testing"
 )
@@ -215,6 +216,61 @@ func TestModelEscCancels(t *testing.T) {
 	}
 	if !quit {
 		t.Error("esc should return quit=true")
+	}
+}
+
+func TestReadKeyByteSequences(t *testing.T) {
+	cases := []struct {
+		name  string
+		input []byte
+		want  KeyType
+		runes []rune
+	}{
+		{"ctrl+c", []byte{0x03}, KeyCtrlC, nil},
+		{"enter CR", []byte{0x0d}, KeyEnter, nil},
+		{"enter LF", []byte{0x0a}, KeyEnter, nil},
+		{"esc bare", []byte{0x1b}, KeyEsc, nil},
+		{"backspace DEL", []byte{0x7f}, KeyBackspace, nil},
+		{"backspace BS", []byte{0x08}, KeyBackspace, nil},
+		{"tab", []byte{0x09}, KeyTab, nil},
+		{"space", []byte{' '}, KeySpace, nil},
+		{"printable rune", []byte{'a'}, KeyRunes, []rune{'a'}},
+
+		{"up CSI A", []byte{0x1b, '[', 'A'}, KeyUp, nil},
+		{"down CSI B", []byte{0x1b, '[', 'B'}, KeyDown, nil},
+		{"home CSI H", []byte{0x1b, '[', 'H'}, KeyHome, nil},
+		{"end CSI F", []byte{0x1b, '[', 'F'}, KeyEnd, nil},
+
+		{"pgup CSI 5~", []byte{0x1b, '[', '5', '~'}, KeyPgUp, nil},
+		{"pgdown CSI 6~", []byte{0x1b, '[', '6', '~'}, KeyPgDown, nil},
+		{"home CSI 1~", []byte{0x1b, '[', '1', '~'}, KeyHome, nil},
+		{"end CSI 4~", []byte{0x1b, '[', '4', '~'}, KeyEnd, nil},
+
+		{"home SS3 H", []byte{0x1b, 'O', 'H'}, KeyHome, nil},
+		{"end SS3 F", []byte{0x1b, 'O', 'F'}, KeyEnd, nil},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			r, w, err := os.Pipe()
+			if err != nil {
+				t.Fatalf("os.Pipe: %v", err)
+			}
+			defer r.Close()
+
+			if _, err := w.Write(tc.input); err != nil {
+				t.Fatalf("write: %v", err)
+			}
+			w.Close()
+
+			got := readKey(r)
+			if got.Type != tc.want {
+				t.Errorf("type: got %v, want %v", got.Type, tc.want)
+			}
+			if tc.runes != nil && string(got.Runes) != string(tc.runes) {
+				t.Errorf("runes: got %q, want %q", string(got.Runes), string(tc.runes))
+			}
+		})
 	}
 }
 
