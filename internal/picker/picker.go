@@ -186,7 +186,7 @@ func (m selectModel) Update(msg Msg) (selectModel, bool) {
 	return m, false
 }
 
-func (m selectModel) applyWindowSize(msg WindowSizeMsg) selectModel {
+func (m *selectModel) applyWindowSize(msg WindowSizeMsg) {
 	m.termHeight = msg.Height
 	overhead := 6
 	if m.filter != "" {
@@ -197,7 +197,6 @@ func (m selectModel) applyWindowSize(msg WindowSizeMsg) selectModel {
 		available = 5
 	}
 	m.viewHeight = available
-	return m
 }
 
 func (m selectModel) handleKey(msg KeyMsg) (selectModel, bool) {

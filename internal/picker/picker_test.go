@@ -132,6 +132,24 @@ func TestModelMultiSelectToggle(t *testing.T) {
 	}
 }
 
+func TestModelWindowSizeUpdatesViewHeight(t *testing.T) {
+	m := newSelectModel("Pick:", []string{"a", "b"}, false)
+	if m.viewHeight != defaultViewHeight {
+		t.Fatalf("precondition: default viewHeight should be %d, got %d", defaultViewHeight, m.viewHeight)
+	}
+
+	m = update(m, resize(80, 30))
+	if m.viewHeight == defaultViewHeight {
+		t.Errorf("resize should mutate viewHeight; still at default %d", m.viewHeight)
+	}
+	if m.viewHeight != 30-6 {
+		t.Errorf("viewHeight after resize(80,30): got %d, want %d", m.viewHeight, 30-6)
+	}
+	if m.termHeight != 30 {
+		t.Errorf("termHeight after resize: got %d, want 30", m.termHeight)
+	}
+}
+
 func TestModelScrollIndicators(t *testing.T) {
 	choices := make([]string, 50)
 	for i := range choices {
