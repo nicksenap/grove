@@ -103,35 +103,28 @@ type KeyMsg struct {
 	Runes []rune
 }
 
+var keyNames = map[KeyType]string{
+	KeyUp:        "up",
+	KeyDown:      "down",
+	KeyEnter:     "enter",
+	KeyEsc:       "esc",
+	KeyTab:       "tab",
+	KeyBackspace: "backspace",
+	KeyCtrlC:     "ctrl+c",
+	KeyPgUp:      "pgup",
+	KeyPgDown:    "pgdown",
+	KeyHome:      "home",
+	KeyEnd:       "end",
+	KeySpace:     " ",
+}
+
 // String returns a human-readable name, matching the strings the model switches on.
 func (k KeyMsg) String() string {
-	switch k.Type {
-	case KeyUp:
-		return "up"
-	case KeyDown:
-		return "down"
-	case KeyEnter:
-		return "enter"
-	case KeyEsc:
-		return "esc"
-	case KeyTab:
-		return "tab"
-	case KeyBackspace:
-		return "backspace"
-	case KeyCtrlC:
-		return "ctrl+c"
-	case KeyPgUp:
-		return "pgup"
-	case KeyPgDown:
-		return "pgdown"
-	case KeyHome:
-		return "home"
-	case KeyEnd:
-		return "end"
-	case KeySpace:
-		return " "
-	case KeyRunes:
+	if k.Type == KeyRunes {
 		return string(k.Runes)
+	}
+	if name, ok := keyNames[k.Type]; ok {
+		return name
 	}
 	return ""
 }
@@ -186,93 +179,119 @@ func newSelectModel(prompt string, choices []string, multi bool) selectModel {
 func (m selectModel) Update(msg Msg) (selectModel, bool) {
 	switch msg := msg.(type) {
 	case WindowSizeMsg:
-		m.termHeight = msg.Height
-		// Reserve lines for header (prompt + hint + filter + padding + footer)
-		overhead := 6
-		if m.filter != "" {
-			overhead += 1
-		}
-		available := msg.Height - overhead
-		if available < 5 {
-			available = 5
-		}
-		m.viewHeight = available
-
+		m.applyWindowSize(msg)
 	case KeyMsg:
-		switch msg.String() {
-		case "ctrl+c", "esc":
-			m.cancelled = true
-			return m, true
+		return m.handleKey(msg)
+	}
+	return m, false
+}
 
-		case "up", "k":
-			if m.cursor > 0 {
-				m.cursor--
-				m.scrollToCursor()
-			}
+func (m selectModel) applyWindowSize(msg WindowSizeMsg) selectModel {
+	m.termHeight = msg.Height
+	overhead := 6
+	if m.filter != "" {
+		overhead++
+	}
+	available := msg.Height - overhead
+	if available < 5 {
+		available = 5
+	}
+	m.viewHeight = available
+	return m
+}
 
-		case "down", "j":
-			if m.cursor < len(m.filtered)-1 {
-				m.cursor++
-				m.scrollToCursor()
-			}
-
-		case "pgup":
-			m.cursor -= m.viewHeight
-			if m.cursor < 0 {
-				m.cursor = 0
-			}
-			m.scrollToCursor()
-
-		case "pgdown":
-			m.cursor += m.viewHeight
-			if m.cursor >= len(m.filtered) {
-				m.cursor = len(m.filtered) - 1
-			}
-			m.scrollToCursor()
-
-		case "home":
-			m.cursor = 0
-			m.scrollToCursor()
-
-		case "end":
-			m.cursor = len(m.filtered) - 1
-			m.scrollToCursor()
-
-		case "tab", " ":
-			if m.multi && len(m.filtered) > 0 {
-				idx := m.filtered[m.cursor]
-				if m.checked[idx] {
-					delete(m.checked, idx)
-				} else {
-					m.checked[idx] = true
-				}
-			}
-
-		case "enter":
-			if m.multi {
-				for idx := range m.checked {
-					m.selected = append(m.selected, m.choices[idx])
-				}
-			} else if len(m.filtered) > 0 {
-				m.selected = []string{m.choices[m.filtered[m.cursor]]}
-			}
-			return m, true
-
-		case "backspace":
-			if len(m.filter) > 0 {
-				runes := []rune(m.filter)
-				m.filter = string(runes[:len(runes)-1])
-				m.updateFilter()
-			}
-
-		default:
-			if len(msg.String()) == 1 {
-				m.filter += msg.String()
-				m.updateFilter()
-			}
+func (m selectModel) handleKey(msg KeyMsg) (selectModel, bool) {
+	switch msg.String() {
+	case "ctrl+c", "esc":
+		m.cancelled = true
+		return m, true
+	case "up", "k":
+		m.moveUp()
+	case "down", "j":
+		m.moveDown()
+	case "pgup":
+		m.movePageUp()
+	case "pgdown":
+		m.movePageDown()
+	case "home":
+		m.cursor = 0
+		m.scrollToCursor()
+	case "end":
+		m.cursor = len(m.filtered) - 1
+		m.scrollToCursor()
+	case "tab", " ":
+		m.toggleCheck()
+	case "enter":
+		m.confirm()
+		return m, true
+	case "backspace":
+		m.deleteFilterChar()
+	default:
+		if len(msg.String()) == 1 {
+			m.filter += msg.String()
+			m.updateFilter()
 		}
 	}
 	return m, false
+}
+
+func (m *selectModel) moveUp() {
+	if m.cursor > 0 {
+		m.cursor--
+		m.scrollToCursor()
+	}
+}
+
+func (m *selectModel) moveDown() {
+	if m.cursor < len(m.filtered)-1 {
+		m.cursor++
+		m.scrollToCursor()
+	}
+}
+
+func (m *selectModel) movePageUp() {
+	m.cursor -= m.viewHeight
+	if m.cursor < 0 {
+		m.cursor = 0
+	}
+	m.scrollToCursor()
+}
+
+func (m *selectModel) movePageDown() {
+	m.cursor += m.viewHeight
+	if m.cursor >= len(m.filtered) {
+		m.cursor = len(m.filtered) - 1
+	}
+	m.scrollToCursor()
+}
+
+func (m *selectModel) toggleCheck() {
+	if m.multi && len(m.filtered) > 0 {
+		idx := m.filtered[m.cursor]
+		if m.checked[idx] {
+			delete(m.checked, idx)
+		} else {
+			m.checked[idx] = true
+		}
+	}
+}
+
+func (m *selectModel) confirm() {
+	if m.multi {
+		for idx := range m.checked {
+			m.selected = append(m.selected, m.choices[idx])
+		}
+	} else if len(m.filtered) > 0 {
+		m.selected = []string{m.choices[m.filtered[m.cursor]]}
+	}
+}
+
+func (m *selectModel) deleteFilterChar() {
+	if len(m.filter) > 0 {
+		runes := []rune(m.filter)
+		m.filter = string(runes[:len(runes)-1])
+		m.updateFilter()
+	}
 }
 
 func (m *selectModel) scrollToCursor() {
@@ -425,7 +444,6 @@ func renderView(w *os.File, view string) {
 }
 
 // readKey reads a single key event from the terminal in raw mode.
-// Escape sequences are parsed into the appropriate KeyType.
 func readKey(f *os.File) KeyMsg {
 	buf := make([]byte, 8)
 	n, err := f.Read(buf)
@@ -433,71 +451,83 @@ func readKey(f *os.File) KeyMsg {
 		return KeyMsg{Type: KeyUnknown}
 	}
 
-	// Single byte
 	if n == 1 {
-		switch buf[0] {
-		case 0x03: // Ctrl+C
-			return KeyMsg{Type: KeyCtrlC}
-		case 0x0d, 0x0a: // Enter
-			return KeyMsg{Type: KeyEnter}
-		case 0x1b: // Bare escape (no more bytes followed)
-			return KeyMsg{Type: KeyEsc}
-		case 0x7f, 0x08: // Backspace
-			return KeyMsg{Type: KeyBackspace}
-		case 0x09: // Tab
-			return KeyMsg{Type: KeyTab}
-		case ' ':
-			return KeyMsg{Type: KeySpace}
-		default:
-			if buf[0] >= 0x20 && buf[0] < 0x7f {
-				return KeyMsg{Type: KeyRunes, Runes: []rune{rune(buf[0])}}
-			}
-		}
-		return KeyMsg{Type: KeyUnknown}
+		return parseSingleKey(buf[0])
 	}
 
-	// Escape sequences: ESC [ ...
-	if buf[0] == 0x1b && n >= 3 && buf[1] == '[' {
-		switch buf[2] {
-		case 'A':
-			return KeyMsg{Type: KeyUp}
-		case 'B':
-			return KeyMsg{Type: KeyDown}
-		case 'H':
-			return KeyMsg{Type: KeyHome}
-		case 'F':
-			return KeyMsg{Type: KeyEnd}
-		case '5':
-			if n >= 4 && buf[3] == '~' {
-				return KeyMsg{Type: KeyPgUp}
+	if n >= 3 && buf[0] == 0x1b {
+		if buf[1] == '[' {
+			if k, ok := parseCSI(buf, n); ok {
+				return k
 			}
-		case '6':
-			if n >= 4 && buf[3] == '~' {
-				return KeyMsg{Type: KeyPgDown}
-			}
-		case '1':
-			// ESC [ 1 ~ = Home (some terminals)
-			if n >= 4 && buf[3] == '~' {
-				return KeyMsg{Type: KeyHome}
-			}
-			// ESC [ 1 ; 5 A = Ctrl+Up (ignore)
-		case '4':
-			// ESC [ 4 ~ = End (some terminals)
-			if n >= 4 && buf[3] == '~' {
-				return KeyMsg{Type: KeyEnd}
-			}
+		}
+		if buf[1] == 'O' {
+			return parseSS3(buf[2])
 		}
 	}
 
-	// ESC O H / ESC O F — Home/End on some terminals
-	if buf[0] == 0x1b && n >= 3 && buf[1] == 'O' {
-		switch buf[2] {
-		case 'H':
-			return KeyMsg{Type: KeyHome}
-		case 'F':
-			return KeyMsg{Type: KeyEnd}
+	return KeyMsg{Type: KeyUnknown}
+}
+
+func parseSingleKey(b byte) KeyMsg {
+	switch b {
+	case 0x03:
+		return KeyMsg{Type: KeyCtrlC}
+	case 0x0d, 0x0a:
+		return KeyMsg{Type: KeyEnter}
+	case 0x1b:
+		return KeyMsg{Type: KeyEsc}
+	case 0x7f, 0x08:
+		return KeyMsg{Type: KeyBackspace}
+	case 0x09:
+		return KeyMsg{Type: KeyTab}
+	case ' ':
+		return KeyMsg{Type: KeySpace}
+	default:
+		if b >= 0x20 && b < 0x7f {
+			return KeyMsg{Type: KeyRunes, Runes: []rune{rune(b)}}
 		}
 	}
+	return KeyMsg{Type: KeyUnknown}
+}
 
+var csiSingles = map[byte]KeyType{
+	'A': KeyUp,
+	'B': KeyDown,
+	'H': KeyHome,
+	'F': KeyEnd,
+}
+
+func parseCSI(buf []byte, n int) (KeyMsg, bool) {
+	if t, ok := csiSingles[buf[2]]; ok {
+		return KeyMsg{Type: t}, true
+	}
+	if n >= 4 && buf[3] == '~' {
+		return parseCSITilde(buf[2]), true
+	}
+	return KeyMsg{}, false
+}
+
+func parseCSITilde(b byte) KeyMsg {
+	switch b {
+	case '5':
+		return KeyMsg{Type: KeyPgUp}
+	case '6':
+		return KeyMsg{Type: KeyPgDown}
+	case '1':
+		return KeyMsg{Type: KeyHome}
+	case '4':
+		return KeyMsg{Type: KeyEnd}
+	}
+	return KeyMsg{Type: KeyUnknown}
+}
+
+func parseSS3(b byte) KeyMsg {
+	switch b {
+	case 'H':
+		return KeyMsg{Type: KeyHome}
+	case 'F':
+		return KeyMsg{Type: KeyEnd}
+	}
 	return KeyMsg{Type: KeyUnknown}
 }

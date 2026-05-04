@@ -665,79 +665,101 @@ func (s *Service) Status(wsName string, opts StatusOptions) error {
 		return fmt.Errorf("workspace %s not found", wsName)
 	}
 
-	results := make([]repoStatusResult, len(ws.Repos))
+	results := s.fetchStatusResults(ws.Repos, opts.PR)
+
+	if opts.JSON {
+		return s.printStatusJSON(ws, results)
+	}
+
+	s.printStatusTable(ws, results, opts)
+	s.printVerboseStatus(results, opts)
+	return nil
+}
+
+func (s *Service) fetchStatusResults(repos []models.RepoWorktree, withPR bool) []repoStatusResult {
+	results := make([]repoStatusResult, len(repos))
 	var wg sync.WaitGroup
-	for i, r := range ws.Repos {
+	for i, r := range repos {
 		wg.Add(1)
 		go func(idx int, repo models.RepoWorktree) {
 			defer wg.Done()
 			results[idx] = collectRepoStatus(repo)
-			if opts.PR {
+			if withPR {
 				results[idx].PR = gitops.PRStatus(repo.WorktreePath)
 			}
 		}(i, r)
 	}
 	wg.Wait()
+	return results
+}
 
-	if opts.JSON {
-		type wsStatus struct {
-			Workspace string             `json:"workspace"`
-			Path      string             `json:"path"`
-			Repos     []repoStatusResult `json:"repos"`
-		}
-		result := wsStatus{
-			Workspace: ws.Name,
-			Path:      ws.Path,
-			Repos:     results,
-		}
-		data, _ := json.MarshalIndent(result, "", "  ")
-		fmt.Println(string(data))
-		return nil
+func (s *Service) printStatusJSON(ws *models.Workspace, results []repoStatusResult) error {
+	type wsStatus struct {
+		Workspace string             `json:"workspace"`
+		Path      string             `json:"path"`
+		Repos     []repoStatusResult `json:"repos"`
 	}
+	data, _ := json.MarshalIndent(wsStatus{
+		Workspace: ws.Name,
+		Path:      ws.Path,
+		Repos:     results,
+	}, "", "  ")
+	fmt.Println(string(data))
+	return nil
+}
 
+func (s *Service) printStatusTable(ws *models.Workspace, results []repoStatusResult, opts StatusOptions) {
 	fmt.Fprintf(os.Stdout, "Workspace: %s  (%s)\n\n", ws.Name, ws.Path)
 
-	var headers []string
+	headers := []string{"Repo", "Branch", "↑↓", "Status"}
 	if opts.PR {
 		headers = []string{"Repo", "Branch", "↑↓", "PR", "Status"}
-	} else {
-		headers = []string{"Repo", "Branch", "↑↓", "Status"}
 	}
 	table := console.NewTable(os.Stdout, headers)
 
 	for _, rs := range results {
-		statusStr := rs.Status
-		if rs.Status != "clean" && rs.Status != "" && !strings.HasPrefix(rs.Status, "error:") {
-			lines := strings.Count(rs.Status, "\n") + 1
-			statusStr = fmt.Sprintf("%d changed", lines)
-		}
-
-		upDown := "-"
-		if rs.Ahead != "-" && rs.Behind != "-" && rs.Ahead != "" && rs.Behind != "" {
-			upDown = fmt.Sprintf("%s↑ %s↓", rs.Ahead, rs.Behind)
-		}
-
-		if opts.PR {
-			prStr := "-"
-			if rs.PR != nil {
-				prStr = formatPR(rs.PR)
-			}
-			table.AddRow([]string{rs.Repo, rs.Branch, upDown, prStr, statusStr})
-		} else {
-			table.AddRow([]string{rs.Repo, rs.Branch, upDown, statusStr})
-		}
+		table.AddRow(statusRow(rs, opts.PR))
 	}
 	table.Render()
+}
 
-	if opts.Verbose {
-		for _, rs := range results {
-			if rs.Status != "clean" && rs.Status != "" && !strings.HasPrefix(rs.Status, "error:") {
-				fmt.Fprintf(os.Stderr, "\n%s:\n%s\n", rs.Repo, rs.Status)
-			}
+func statusRow(rs repoStatusResult, withPR bool) []string {
+	upDown := formatUpDown(rs.Ahead, rs.Behind)
+	statusStr := formatStatus(rs.Status)
+	if withPR {
+		prStr := "-"
+		if rs.PR != nil {
+			prStr = formatPR(rs.PR)
+		}
+		return []string{rs.Repo, rs.Branch, upDown, prStr, statusStr}
+	}
+	return []string{rs.Repo, rs.Branch, upDown, statusStr}
+}
+
+func formatUpDown(ahead, behind string) string {
+	if ahead != "-" && behind != "-" && ahead != "" && behind != "" {
+		return fmt.Sprintf("%s↑ %s↓", ahead, behind)
+	}
+	return "-"
+}
+
+func formatStatus(status string) string {
+	if status == "clean" || status == "" || strings.HasPrefix(status, "error:") {
+		return status
+	}
+	lines := strings.Count(status, "\n") + 1
+	return fmt.Sprintf("%d changed", lines)
+}
+
+func (s *Service) printVerboseStatus(results []repoStatusResult, opts StatusOptions) {
+	if !opts.Verbose {
+		return
+	}
+	for _, rs := range results {
+		if rs.Status != "clean" && rs.Status != "" && !strings.HasPrefix(rs.Status, "error:") {
+			fmt.Fprintf(os.Stderr, "\n%s:\n%s\n", rs.Repo, rs.Status)
 		}
 	}
-
-	return nil
 }
 
 // WorkspaceSummary holds summary info for list --status.
@@ -818,72 +840,88 @@ func (s *Service) Doctor(fix bool) ([]models.DoctorIssue, int, error) {
 	var issues []models.DoctorIssue
 	fixed := 0
 
-	var wsToRemove []string
-
 	for _, ws := range workspaces {
-		if _, err := os.Stat(ws.Path); os.IsNotExist(err) {
-			issues = append(issues, models.DoctorIssue{
-				Workspace:       ws.Name,
-				Repo:            nil,
-				Issue:           "workspace directory missing",
-				SuggestedAction: "remove stale state entry",
-			})
-			if fix {
-				wsToRemove = append(wsToRemove, ws.Name)
-				fixed++
-			}
+		f, iss := s.checkWorkspaceExists(ws, fix)
+		if f > 0 {
+			fixed += f
+		}
+		issues = append(issues, iss...)
+		if len(iss) > 0 {
 			continue
 		}
 
-		var reposToRemove []string
-		for _, r := range ws.Repos {
-			repoName := r.RepoName
-
-			if _, err := os.Stat(r.SourceRepo); os.IsNotExist(err) {
-				issues = append(issues, models.DoctorIssue{
-					Workspace:       ws.Name,
-					Repo:            &repoName,
-					Issue:           "source repo missing",
-					SuggestedAction: "remove stale repo entry",
-				})
-				if fix {
-					reposToRemove = append(reposToRemove, repoName)
-					fixed++
-				}
-				continue
-			}
-
-			if _, err := os.Stat(r.WorktreePath); os.IsNotExist(err) {
-				issues = append(issues, models.DoctorIssue{
-					Workspace:       ws.Name,
-					Repo:            &repoName,
-					Issue:           "worktree directory missing",
-					SuggestedAction: "remove stale repo entry",
-				})
-				if fix {
-					reposToRemove = append(reposToRemove, repoName)
-					fixed++
-				}
-				continue
-			}
-		}
-
-		if fix && len(reposToRemove) > 0 {
-			currentWS, _ := s.State.GetWorkspace(ws.Name)
-			if currentWS != nil {
-				for _, name := range reposToRemove {
-					currentWS.RemoveRepo(name)
-				}
-				s.State.UpdateWorkspace(*currentWS)
-			}
-		}
-	}
-
-	if fix {
-		for _, name := range wsToRemove {
-			s.State.RemoveWorkspace(name)
-		}
+		f, iss = s.checkWorkspaceRepos(&ws, fix)
+		fixed += f
+		issues = append(issues, iss...)
 	}
 
 	return issues, fixed, nil
+}
+
+func (s *Service) checkWorkspaceExists(ws models.Workspace, fix bool) (int, []models.DoctorIssue) {
+	if _, err := os.Stat(ws.Path); err == nil {
+		return 0, nil
+	}
+	issue := models.DoctorIssue{
+		Workspace:       ws.Name,
+		Repo:            nil,
+		Issue:           "workspace directory missing",
+		SuggestedAction: "remove stale state entry",
+	}
+	if fix {
+		s.State.RemoveWorkspace(ws.Name)
+		return 1, []models.DoctorIssue{issue}
+	}
+	return 0, []models.DoctorIssue{issue}
+}
+
+func (s *Service) checkWorkspaceRepos(ws *models.Workspace, fix bool) (int, []models.DoctorIssue) {
+	var issues []models.DoctorIssue
+	var toRemove []string
+	fixed := 0
+
+	for _, r := range ws.Repos {
+		if iss, shouldRemove := s.checkRepo(ws.Name, r); iss != nil {
+			issues = append(issues, *iss)
+			if fix && shouldRemove {
+				toRemove = append(toRemove, r.RepoName)
+				fixed++
+			}
+		}
+	}
+
+	if fix && len(toRemove) > 0 {
+		if currentWS, err := s.State.GetWorkspace(ws.Name); err == nil && currentWS != nil {
+			for _, name := range toRemove {
+				currentWS.RemoveRepo(name)
+			}
+			s.State.UpdateWorkspace(*currentWS)
+		}
+	}
+
+	return fixed, issues
+}
+
+func (s *Service) checkRepo(wsName string, r models.RepoWorktree) (*models.DoctorIssue, bool) {
+	repoName := r.RepoName
+
+	if _, err := os.Stat(r.SourceRepo); os.IsNotExist(err) {
+		return &models.DoctorIssue{
+			Workspace:       wsName,
+			Repo:            &repoName,
+			Issue:           "source repo missing",
+			SuggestedAction: "remove stale repo entry",
+		}, true
+	}
+
+	if _, err := os.Stat(r.WorktreePath); os.IsNotExist(err) {
+		return &models.DoctorIssue{
+			Workspace:       wsName,
+			Repo:            &repoName,
+			Issue:           "worktree directory missing",
+			SuggestedAction: "remove stale repo entry",
+		}, true
+	}
+
+	return nil, false
 }

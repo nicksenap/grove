@@ -31,12 +31,12 @@ fmt-check:
     fi
 
 # Run cyclomatic-complexity check. Auto-installs gocyclo if missing.
-# Threshold 36 matches current baseline (picker.readKey); tighten as hot spots get refactored.
+# Threshold 20 is a reasonable ceiling for non-test code.
 gocyclo:
     #!/usr/bin/env bash
     set -euo pipefail
     command -v gocyclo >/dev/null 2>&1 || go install github.com/fzipp/gocyclo/cmd/gocyclo@latest
-    gocyclo -over 36 .
+    gocyclo -over 20 .
 
 # Run staticcheck (bugs, simplifications, deprecations, unused code). Auto-installs if missing.
 staticcheck:

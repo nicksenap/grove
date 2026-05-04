@@ -111,11 +111,10 @@ func (t *Table) renderAdaptive(totalWidth int) {
 func allocateWidths(natural []int, totalWidth, padding int) []int {
 	n := len(natural)
 	available := totalWidth - (n-1)*padding
-	available = max(available, n) // at least 1 char per column
+	available = max(available, n)
 
-	// Start with min width of 4 or natural, whichever is smaller.
 	widths := make([]int, n)
-	minWidth := 4
+	const minWidth = 4
 	remaining := available
 
 	for i, nat := range natural {
@@ -125,69 +124,79 @@ func allocateWidths(natural []int, totalWidth, padding int) []int {
 	}
 
 	if remaining < 0 {
-		// Even minimums don't fit — just divide evenly.
-		each := available / n
-		for i := range widths {
-			widths[i] = each
-		}
-		// Give leftover to first columns.
-		leftover := available - each*n
-		for i := range leftover {
-			widths[i]++
-		}
-		return widths
+		return distributeEvenly(n, available, widths)
 	}
 
-	// Distribute remaining space proportionally to how much each column wants.
+	distributeProportionally(widths, natural, remaining)
+	clampWidths(widths, available)
+	return widths
+}
+
+func distributeEvenly(n, available int, widths []int) []int {
+	each := available / n
+	for i := range widths {
+		widths[i] = each
+	}
+	for i := range available - each*n {
+		widths[i]++
+	}
+	return widths
+}
+
+func distributeProportionally(widths, natural []int, remaining int) {
 	totalWant := 0
 	for i, nat := range natural {
-		want := max(nat-widths[i], 0)
-		totalWant += want
-	}
-
-	if totalWant > 0 {
-		distributed := 0
-		for i, nat := range natural {
-			want := nat - widths[i]
-			if want <= 0 {
-				continue
-			}
-			share := remaining * want / totalWant
-			widths[i] += share
-			distributed += share
-		}
-		// Give any rounding remainder to the first column that can use it.
-		leftover := remaining - distributed
-		for i := range widths {
-			if leftover <= 0 {
-				break
-			}
-			if widths[i] < natural[i] {
-				give := min(leftover, natural[i]-widths[i])
-				widths[i] += give
-				leftover -= give
-			}
+		if want := nat - widths[i]; want > 0 {
+			totalWant += want
 		}
 	}
+	if totalWant == 0 {
+		return
+	}
+	distributed := 0
+	for i, nat := range natural {
+		want := nat - widths[i]
+		if want <= 0 {
+			continue
+		}
+		share := remaining * want / totalWant
+		widths[i] += share
+		distributed += share
+	}
+	leftover := remaining - distributed
+	for i := range widths {
+		if leftover <= 0 {
+			break
+		}
+		if widths[i] < natural[i] {
+			give := min(leftover, natural[i]-widths[i])
+			widths[i] += give
+			leftover -= give
+		}
+	}
+}
 
-	// Final clamp: total column width must not exceed available.
+func clampWidths(widths []int, available int) {
 	total := 0
 	for _, w := range widths {
 		total += w
 	}
+	n := len(widths)
 	for total > available && total > n {
-		// Shrink the widest column.
-		maxIdx := 0
-		for i := 1; i < n; i++ {
-			if widths[i] > widths[maxIdx] {
-				maxIdx = i
-			}
-		}
+		maxIdx := findMaxIndex(widths)
 		widths[maxIdx]--
 		total--
 	}
+}
 
-	return widths
+func findMaxIndex(v []int) int {
+	maxIdx := 0
+	for i := 1; i < len(v); i++ {
+		if v[i] > v[maxIdx] {
+			maxIdx = i
+		}
+	}
+	return maxIdx
 }
 
 // printRow prints a single row with fixed column widths.
