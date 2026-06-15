@@ -67,6 +67,18 @@ func TestExpand(t *testing.T) {
 			vars: Vars{},
 			want: "do-thing ",
 		},
+		{
+			name: "source placeholders",
+			cmd:  "seed {source_url} {source_ref} {source_title}",
+			vars: Vars{SourceURL: "https://github.com/o/r/pull/7", SourceRef: "7", SourceTitle: "Fix bug"},
+			want: "seed 'https://github.com/o/r/pull/7' '7' 'Fix bug'",
+		},
+		{
+			name: "empty source placeholders expand to nothing",
+			cmd:  "seed {source_url}{source_ref}{source_title}",
+			vars: Vars{Name: "ws"},
+			want: "seed ",
+		},
 	}
 
 	for _, tt := range tests {

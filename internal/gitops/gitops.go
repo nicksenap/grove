@@ -162,6 +162,22 @@ func WorktreeAdd(repo, path, branch string) error {
 	return err
 }
 
+// WorktreeAddTracking creates a worktree on a new local branch that tracks
+// origin/<branch>. Used to check out an existing remote branch (e.g. a PR head)
+// rather than creating a fresh branch from the base. The remote-tracking ref
+// (refs/remotes/origin/<branch>) must already exist — fetch first.
+func WorktreeAddTracking(repo, path, branch string) error {
+	_, err := runGit(repo, "worktree", "add", "--track", "-b", branch, path, "origin/"+branch)
+	return err
+}
+
+// RemoteBranchExists reports whether refs/remotes/origin/<branch> exists locally.
+// Run Fetch first to ensure the remote-tracking ref is up to date.
+func RemoteBranchExists(repo, branch string) bool {
+	_, err := runGit(repo, "rev-parse", "--verify", "--quiet", "refs/remotes/origin/"+branch)
+	return err == nil
+}
+
 // WorktreeRemove removes a worktree.
 func WorktreeRemove(repo, path string) error {
 	_, err := runGit(repo, "worktree", "remove", path, "--force")
@@ -456,6 +472,66 @@ func PRStatus(path string) *PRInfo {
 	}
 
 	return nil
+}
+
+// PRRef holds the resolved head branch and metadata for a pull request.
+// Used to seed a workspace from a PR URL (check out the existing head branch).
+type PRRef struct {
+	Number      int    `json:"number"`
+	HeadRefName string `json:"headRefName"`
+	Title       string `json:"title"`
+	State       string `json:"state"`
+	URL         string `json:"url"`
+	// HeadRepositoryOwner is the owner of the head repo. For fork PRs this
+	// differs from the base repo owner, meaning origin/<head> won't exist.
+	HeadRepositoryOwner string `json:"headRepositoryOwner"`
+}
+
+// GhPRResolve resolves a pull request's head branch + metadata via the gh CLI.
+// repoSlug is "owner/repo"; host is the GitHub host ("" defaults to github.com,
+// gh honors GH_HOST / its own config for enterprise). Returns an error if gh is
+// unavailable or the PR cannot be resolved.
+func GhPRResolve(repoSlug string, number int, host string) (*PRRef, error) {
+	ghPath, err := exec.LookPath("gh")
+	if err != nil {
+		return nil, fmt.Errorf("gh CLI not found")
+	}
+	args := []string{"pr", "view", strconv.Itoa(number),
+		"--json", "number,headRefName,title,state,url,headRepositoryOwner"}
+	if repoSlug != "" {
+		args = append(args, "--repo", repoSlug)
+	}
+	cmd := exec.Command(ghPath, args...)
+	cmd.Stdin = nil
+	if host != "" {
+		cmd.Env = append(os.Environ(), "GH_HOST="+host)
+	}
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("gh pr view %d: %w", number, err)
+	}
+	// gh nests headRepositoryOwner as an object {login: ...}; decode loosely.
+	var raw struct {
+		Number              int    `json:"number"`
+		HeadRefName         string `json:"headRefName"`
+		Title               string `json:"title"`
+		State               string `json:"state"`
+		URL                 string `json:"url"`
+		HeadRepositoryOwner struct {
+			Login string `json:"login"`
+		} `json:"headRepositoryOwner"`
+	}
+	if err := json.Unmarshal(out, &raw); err != nil {
+		return nil, fmt.Errorf("parsing gh output: %w", err)
+	}
+	return &PRRef{
+		Number:              raw.Number,
+		HeadRefName:         raw.HeadRefName,
+		Title:               raw.Title,
+		State:               raw.State,
+		URL:                 raw.URL,
+		HeadRepositoryOwner: raw.HeadRepositoryOwner.Login,
+	}, nil
 }
 
 func ghPRStatus(path string) *PRInfo {

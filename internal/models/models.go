@@ -16,11 +16,24 @@ type RepoWorktree struct {
 
 // Workspace represents a named collection of worktrees.
 type Workspace struct {
-	Name      string         `json:"name"`
-	Path      string         `json:"path"`
-	Branch    string         `json:"branch"`
-	CreatedAt string         `json:"created_at"`
-	Repos     []RepoWorktree `json:"repos"`
+	Name      string           `json:"name"`
+	Path      string           `json:"path"`
+	Branch    string           `json:"branch"`
+	CreatedAt string           `json:"created_at"`
+	Repos     []RepoWorktree   `json:"repos"`
+	Source    *WorkspaceSource `json:"source,omitempty"`
+}
+
+// WorkspaceSource records where a workspace was seeded from (e.g. a GitHub PR,
+// a Notion page, a Slack thread). All fields are opaque to Grove core — they are
+// stored and displayed but never interpreted here; resolution lives in plugins.
+// The pointer + omitempty keeps existing state.json entries round-tripping
+// unchanged (a nil Source is omitted entirely).
+type WorkspaceSource struct {
+	Provider string `json:"provider"`        // e.g. "github", "gitlab", "notion", "slack"
+	URL      string `json:"url"`             // the original source URL
+	Ref      string `json:"ref,omitempty"`   // provider ref: PR number, page id, message ts
+	Title    string `json:"title,omitempty"` // human-readable title for display
 }
 
 // NewWorkspace creates a workspace with the current timestamp.

@@ -53,6 +53,7 @@ func init() {
 		statusCmd,
 		addRepoCmd,
 		removeRepoCmd,
+		reposCmd,
 		renameCmd,
 		syncCmd,
 		doctorCmd,

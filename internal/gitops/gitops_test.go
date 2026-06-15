@@ -156,6 +156,62 @@ func TestWorktreeAddAndRemove(t *testing.T) {
 	}
 }
 
+func TestRemoteBranchExists(t *testing.T) {
+	repo := initTestRepo(t)
+
+	// Push a new branch to origin so a remote-tracking ref can exist.
+	run(t, repo, "git", "checkout", "-b", "feat/remote-only")
+	run(t, repo, "git", "push", "origin", "feat/remote-only")
+	run(t, repo, "git", "checkout", "-")
+	// Drop the local branch; only the remote-tracking ref should remain.
+	run(t, repo, "git", "branch", "-D", "feat/remote-only")
+
+	if !RemoteBranchExists(repo, "feat/remote-only") {
+		t.Error("expected remote-tracking ref for feat/remote-only to exist")
+	}
+	if RemoteBranchExists(repo, "feat/does-not-exist") {
+		t.Error("expected false for a branch with no remote-tracking ref")
+	}
+}
+
+func TestWorktreeAddTracking(t *testing.T) {
+	repo := initTestRepo(t)
+
+	// Simulate a PR head branch living on origin.
+	run(t, repo, "git", "checkout", "-b", "feat/pr-head")
+	os.WriteFile(filepath.Join(repo, "pr.txt"), []byte("pr work"), 0o644)
+	run(t, repo, "git", "add", ".")
+	run(t, repo, "git", "commit", "-m", "pr commit")
+	run(t, repo, "git", "push", "origin", "feat/pr-head")
+	run(t, repo, "git", "checkout", "-")
+	run(t, repo, "git", "branch", "-D", "feat/pr-head")
+
+	wtPath := filepath.Join(t.TempDir(), "pr-worktree")
+	if err := WorktreeAddTracking(repo, wtPath, "feat/pr-head"); err != nil {
+		t.Fatalf("tracking add: %v", err)
+	}
+
+	// The worktree should be on the PR branch with the PR's file present.
+	if _, err := os.Stat(filepath.Join(wtPath, "pr.txt")); os.IsNotExist(err) {
+		t.Error("expected PR head content (pr.txt) in tracking worktree")
+	}
+	br, err := CurrentBranch(wtPath)
+	if err != nil {
+		t.Fatalf("current branch: %v", err)
+	}
+	if br != "feat/pr-head" {
+		t.Errorf("expected worktree on feat/pr-head, got %q", br)
+	}
+
+	// The new local branch should track origin/feat/pr-head.
+	upstream, _ := runGit(wtPath, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}")
+	if upstream != "origin/feat/pr-head" {
+		t.Errorf("expected upstream origin/feat/pr-head, got %q", upstream)
+	}
+
+	WorktreeRemove(repo, wtPath)
+}
+
 func TestWorktreeHasBranch(t *testing.T) {
 	repo := initTestRepo(t)
 

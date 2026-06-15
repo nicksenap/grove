@@ -14,9 +14,65 @@ import (
 	"github.com/nicksenap/grove/internal/models"
 )
 
+// BranchMode determines how a worktree's branch is provisioned.
+type BranchMode int
+
+const (
+	// BranchModeCreate creates a new branch from the resolved base branch.
+	// This is the default and matches Grove's historical behavior.
+	BranchModeCreate BranchMode = iota
+	// BranchModeTrack checks out an existing remote branch (e.g. a pull-request
+	// head) as a tracking branch instead of creating a new one from base.
+	BranchModeTrack
+)
+
+// CreateOpts carries the inputs for creating a workspace. It groups the original
+// positional Create parameters and adds optional branch-mode and provenance.
+type CreateOpts struct {
+	Branch  string
+	Repos   []string
+	RepoMap map[string]string // repo name → source path
+	Cfg     *models.Config
+
+	// BranchMode is the mode applied to the repos selected by TrackBranchRepo.
+	// When TrackBranchRepo is empty, BranchMode applies to every repo; when set,
+	// it applies only to that one repo and all others use BranchModeCreate.
+	//
+	// A PR URL identifies exactly one repo+branch, so a resolver names that repo
+	// in TrackBranchRepo — sibling repos added to the same workspace then still
+	// get fresh branches from base rather than coincidentally tracking a remote
+	// branch of the same name. Track mode always falls back to create mode for
+	// any repo where the remote branch does not exist, so a blanket
+	// (empty-TrackBranchRepo) track is safe too.
+	BranchMode      BranchMode
+	TrackBranchRepo string
+
+	// Source, when set, is persisted on the workspace as provenance (e.g. the
+	// GitHub PR / Notion page / Slack thread it was seeded from). Opaque to core.
+	Source *models.WorkspaceSource
+}
+
 // Create creates a new workspace with worktrees for the given repos.
-// repoMap is name→source_path.
+// repoMap is name→source_path. It preserves the historical positional signature
+// by delegating to CreateWithOpts.
 func (s *Service) Create(name, branch string, repoNames []string, repoMap map[string]string, cfg *models.Config) error {
+	return s.CreateWithOpts(name, CreateOpts{
+		Branch:  branch,
+		Repos:   repoNames,
+		RepoMap: repoMap,
+		Cfg:     cfg,
+	})
+}
+
+// CreateWithOpts creates a new workspace from the given options. It is the full
+// implementation behind Create, additionally supporting per-repo branch tracking
+// (BranchMode/TrackBranchRepo) and a persisted Source link.
+func (s *Service) CreateWithOpts(name string, opts CreateOpts) error {
+	branch := opts.Branch
+	repoNames := opts.Repos
+	repoMap := opts.RepoMap
+	cfg := opts.Cfg
+
 	// Check duplicate
 	existing, err := s.State.GetWorkspace(name)
 	if err != nil {
@@ -34,6 +90,7 @@ func (s *Service) Create(name, branch string, repoNames []string, repoMap map[st
 	}
 
 	ws := models.NewWorkspace(name, wsPath, branch)
+	ws.Source = opts.Source
 
 	// Validate all repo names first
 	sourcePaths := make([]string, len(repoNames))
@@ -64,7 +121,13 @@ func (s *Service) Create(name, branch string, repoNames []string, repoMap map[st
 	var created []models.RepoWorktree
 	for i, repoName := range repoNames {
 		console.Infof("[%d/%d] %s", i+1, len(repoNames), repoName)
-		rw, err := provisionWorktreeNoFetch(sourcePaths[i], repoName, wsPath, branch)
+		// Resolve the per-repo mode. With no TrackBranchRepo set, opts.BranchMode
+		// applies to every repo; otherwise only the named repo uses it.
+		mode := opts.BranchMode
+		if opts.TrackBranchRepo != "" && repoName != opts.TrackBranchRepo {
+			mode = BranchModeCreate
+		}
+		rw, err := provisionWorktreeNoFetch(sourcePaths[i], repoName, wsPath, branch, mode)
 		if err != nil {
 			logging.Error("workspace creation failed for %q — rolled back", name)
 			rollback(created)
@@ -108,16 +171,38 @@ func (s *Service) Create(name, branch string, repoNames []string, repoMap map[st
 
 func provisionWorktree(sourcePath, repoName, wsPath, branch string) (*models.RepoWorktree, error) {
 	_ = gitops.Fetch(sourcePath)
-	return provisionWorktreeNoFetch(sourcePath, repoName, wsPath, branch)
+	return provisionWorktreeNoFetch(sourcePath, repoName, wsPath, branch, BranchModeCreate)
 }
 
-func provisionWorktreeNoFetch(sourcePath, repoName, wsPath, branch string) (*models.RepoWorktree, error) {
+func provisionWorktreeNoFetch(sourcePath, repoName, wsPath, branch string, mode BranchMode) (*models.RepoWorktree, error) {
 	wtPath := filepath.Join(wsPath, repoName)
 
 	// Check if branch already has a worktree
 	hasWT, _ := gitops.WorktreeHasBranch(sourcePath, branch)
 	if hasWT {
 		return nil, fmt.Errorf("branch %s already has a worktree in %s", branch, repoName)
+	}
+
+	// Track mode: check out an existing remote branch (e.g. a PR head) rather
+	// than creating a new branch. Only meaningful when the branch does not
+	// already exist locally; otherwise fall through to the normal add below.
+	if mode == BranchModeTrack && !gitops.BranchExists(sourcePath, branch) {
+		if gitops.RemoteBranchExists(sourcePath, branch) {
+			logging.Info("tracking existing remote branch %q in %s", branch, repoName)
+			if err := gitops.WorktreeAddTracking(sourcePath, wtPath, branch); err != nil {
+				return nil, fmt.Errorf("adding tracking worktree: %w", err)
+			}
+			return &models.RepoWorktree{
+				RepoName:     repoName,
+				SourceRepo:   sourcePath,
+				WorktreePath: wtPath,
+				Branch:       branch,
+			}, nil
+		}
+		// Remote branch missing (deleted, force-pushed, or a fork PR whose head
+		// lives on another remote). Fall back to create-mode with a warning
+		// rather than failing mid-creation.
+		console.Warningf("%s: remote branch %s not found — creating a new branch from base instead", repoName, branch)
 	}
 
 	// Create branch if needed
@@ -648,6 +733,29 @@ func formatPR(pr *gitops.PRInfo) string {
 	}
 }
 
+// formatSourceLine renders a workspace's source provenance as a single line for
+// status output, or "" if there is no source. e.g.
+// "Source: github 1172 — Surface data source status  (https://github.com/...)".
+func formatSourceLine(src *models.WorkspaceSource) string {
+	if src == nil {
+		return ""
+	}
+	label := src.Provider
+	if label == "" {
+		label = "source"
+	}
+	if src.Ref != "" {
+		label += " " + src.Ref
+	}
+	if src.Title != "" {
+		label += " — " + src.Title
+	}
+	if src.URL != "" {
+		label += "  (" + src.URL + ")"
+	}
+	return "Source: " + label
+}
+
 // StatusOptions controls status output.
 type StatusOptions struct {
 	JSON    bool
@@ -695,13 +803,15 @@ func (s *Service) fetchStatusResults(repos []models.RepoWorktree, withPR bool) [
 
 func (s *Service) printStatusJSON(ws *models.Workspace, results []repoStatusResult) error {
 	type wsStatus struct {
-		Workspace string             `json:"workspace"`
-		Path      string             `json:"path"`
-		Repos     []repoStatusResult `json:"repos"`
+		Workspace string                  `json:"workspace"`
+		Path      string                  `json:"path"`
+		Source    *models.WorkspaceSource `json:"source,omitempty"`
+		Repos     []repoStatusResult      `json:"repos"`
 	}
 	data, _ := json.MarshalIndent(wsStatus{
 		Workspace: ws.Name,
 		Path:      ws.Path,
+		Source:    ws.Source,
 		Repos:     results,
 	}, "", "  ")
 	fmt.Println(string(data))
@@ -709,7 +819,11 @@ func (s *Service) printStatusJSON(ws *models.Workspace, results []repoStatusResu
 }
 
 func (s *Service) printStatusTable(ws *models.Workspace, results []repoStatusResult, opts StatusOptions) {
-	fmt.Fprintf(os.Stdout, "Workspace: %s  (%s)\n\n", ws.Name, ws.Path)
+	fmt.Fprintf(os.Stdout, "Workspace: %s  (%s)\n", ws.Name, ws.Path)
+	if line := formatSourceLine(ws.Source); line != "" {
+		fmt.Fprintf(os.Stdout, "%s\n", line)
+	}
+	fmt.Fprintln(os.Stdout)
 
 	headers := []string{"Repo", "Branch", "↑↓", "Status"}
 	if opts.PR {
