@@ -14,11 +14,16 @@ import (
 var ErrNoHook = errors.New("hook not configured")
 
 // Vars is a set of placeholder values expanded in hook commands.
-// Use {name}, {path}, {branch} in hook commands.
+// Use {name}, {path}, {branch}, {source_url}, {source_ref}, {source_title} in
+// hook commands. The source_* values are empty unless the workspace was seeded
+// from a source URL (e.g. a GitHub PR, Notion page, or Slack thread).
 type Vars struct {
-	Name   string
-	Path   string
-	Branch string
+	Name        string
+	Path        string
+	Branch      string
+	SourceURL   string
+	SourceRef   string
+	SourceTitle string
 }
 
 // Run fires a named hook if configured. Returns ErrNoHook if not set.
@@ -44,6 +49,9 @@ func expand(cmd string, vars Vars) string {
 		"{name}", shellQuote(vars.Name),
 		"{path}", shellQuote(vars.Path),
 		"{branch}", shellQuote(vars.Branch),
+		"{source_url}", shellQuote(vars.SourceURL),
+		"{source_ref}", shellQuote(vars.SourceRef),
+		"{source_title}", shellQuote(vars.SourceTitle),
 	)
 	return r.Replace(cmd)
 }

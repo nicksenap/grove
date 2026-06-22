@@ -223,6 +223,136 @@ func TestCreateAutoCreatesBranch(t *testing.T) {
 	}
 }
 
+// pushRemoteBranch creates a branch in repo, commits a marker file, pushes it to
+// origin, then deletes the local branch — leaving only origin/<branch>. This
+// simulates a PR head branch that exists on the remote but not locally.
+func (e *testEnv) pushRemoteBranch(repo, branch, marker string) {
+	e.t.Helper()
+	e.run(repo, "git", "checkout", "-q", "-b", branch)
+	os.WriteFile(filepath.Join(repo, marker), []byte(marker), 0o644)
+	e.run(repo, "git", "add", ".")
+	e.run(repo, "git", "commit", "-q", "-m", "remote work on "+branch)
+	e.run(repo, "git", "push", "-q", "origin", branch)
+	e.run(repo, "git", "checkout", "-q", "-")
+	e.run(repo, "git", "branch", "-q", "-D", branch)
+	// Forget the just-pushed ref locally so creation must rely on fetch.
+	e.run(repo, "git", "update-ref", "-d", "refs/remotes/origin/"+branch)
+}
+
+func TestCreateTrackModeChecksOutExistingBranch(t *testing.T) {
+	env := setupTestEnv(t)
+	env.createRepoWithRemote("api")
+	env.pushRemoteBranch(env.repoMap["api"], "feat/pr-head", "pr-marker.txt")
+
+	err := env.svc.CreateWithOpts("pr-ws", CreateOpts{
+		Branch:          "feat/pr-head",
+		Repos:           []string{"api"},
+		RepoMap:         env.repoMap,
+		Cfg:             env.cfg,
+		BranchMode:      BranchModeTrack,
+		TrackBranchRepo: "api",
+	})
+	if err != nil {
+		t.Fatalf("create track: %v", err)
+	}
+
+	wt := filepath.Join(env.wsDir, "pr-ws", "api")
+	// The PR head's marker file must be present (we checked out the existing branch).
+	if _, err := os.Stat(filepath.Join(wt, "pr-marker.txt")); os.IsNotExist(err) {
+		t.Error("expected PR head content (pr-marker.txt) in tracking worktree")
+	}
+	// The worktree branch must track origin/feat/pr-head.
+	upstream := env.run(wt, "git", "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}")
+	if upstream != "origin/feat/pr-head" {
+		t.Errorf("expected upstream origin/feat/pr-head, got %q", upstream)
+	}
+}
+
+func TestCreateTrackModeFallsBackWhenRemoteMissing(t *testing.T) {
+	env := setupTestEnv(t)
+	env.createRepoWithRemote("api")
+
+	// Track mode requested but no such remote branch exists → fall back to
+	// creating a new branch from base (no error).
+	err := env.svc.CreateWithOpts("fallback-ws", CreateOpts{
+		Branch:          "feat/ghost-pr",
+		Repos:           []string{"api"},
+		RepoMap:         env.repoMap,
+		Cfg:             env.cfg,
+		BranchMode:      BranchModeTrack,
+		TrackBranchRepo: "api",
+	})
+	if err != nil {
+		t.Fatalf("expected graceful fallback, got error: %v", err)
+	}
+
+	wt := filepath.Join(env.wsDir, "fallback-ws", "api")
+	branch := env.run(wt, "git", "branch", "--show-current")
+	if branch != "feat/ghost-pr" {
+		t.Errorf("expected new branch feat/ghost-pr, got %q", branch)
+	}
+}
+
+func TestCreateTrackModeOnlyAppliesToDesignatedRepo(t *testing.T) {
+	env := setupTestEnv(t)
+	env.createRepoWithRemote("api")
+	env.createRepoWithRemote("web")
+	env.pushRemoteBranch(env.repoMap["api"], "feat/shared", "api-pr.txt")
+
+	// Both repos share the branch name, but only "api" is the track repo;
+	// "web" should create a fresh branch from base (no api-pr.txt leakage).
+	err := env.svc.CreateWithOpts("mixed-ws", CreateOpts{
+		Branch:          "feat/shared",
+		Repos:           []string{"api", "web"},
+		RepoMap:         env.repoMap,
+		Cfg:             env.cfg,
+		BranchMode:      BranchModeTrack,
+		TrackBranchRepo: "api",
+	})
+	if err != nil {
+		t.Fatalf("create mixed: %v", err)
+	}
+
+	apiWT := filepath.Join(env.wsDir, "mixed-ws", "api")
+	if _, err := os.Stat(filepath.Join(apiWT, "api-pr.txt")); os.IsNotExist(err) {
+		t.Error("api worktree should have tracked the PR head (api-pr.txt missing)")
+	}
+	webWT := filepath.Join(env.wsDir, "mixed-ws", "web")
+	if _, err := os.Stat(filepath.Join(webWT, "api-pr.txt")); err == nil {
+		t.Error("web worktree should NOT contain api's PR content — create mode expected")
+	}
+}
+
+func TestCreateWithOptsPersistsSource(t *testing.T) {
+	env := setupTestEnv(t)
+	env.createRepo("api")
+
+	src := &models.WorkspaceSource{
+		Provider: "github",
+		URL:      "https://github.com/funnel-io/conversational-analytics/pull/1172",
+		Ref:      "1172",
+		Title:    "Surface data source status",
+	}
+	err := env.svc.CreateWithOpts("src-ws", CreateOpts{
+		Branch:  "feat/src",
+		Repos:   []string{"api"},
+		RepoMap: env.repoMap,
+		Cfg:     env.cfg,
+		Source:  src,
+	})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	ws, _ := env.svc.State.GetWorkspace("src-ws")
+	if ws == nil || ws.Source == nil {
+		t.Fatal("expected persisted Source on workspace")
+	}
+	if *ws.Source != *src {
+		t.Errorf("source mismatch: got %+v, want %+v", *ws.Source, *src)
+	}
+}
+
 func TestCreateWritesMCPConfig(t *testing.T) {
 	env := setupTestEnv(t)
 	env.createRepo("api")
@@ -663,6 +793,38 @@ func TestRemoveReposNonexistent(t *testing.T) {
 // ---------------------------------------------------------------------------
 // Status tests
 // ---------------------------------------------------------------------------
+
+func TestFormatSourceLine(t *testing.T) {
+	tests := []struct {
+		name string
+		src  *models.WorkspaceSource
+		want string
+	}{
+		{"nil", nil, ""},
+		{
+			"full",
+			&models.WorkspaceSource{Provider: "github", Ref: "1172", Title: "Surface data source status", URL: "https://github.com/o/r/pull/1172"},
+			"Source: github 1172 — Surface data source status  (https://github.com/o/r/pull/1172)",
+		},
+		{
+			"url only",
+			&models.WorkspaceSource{Provider: "slack", URL: "https://x.slack.com/archives/C/p1"},
+			"Source: slack  (https://x.slack.com/archives/C/p1)",
+		},
+		{
+			"no provider",
+			&models.WorkspaceSource{Title: "untitled"},
+			"Source: source — untitled",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := formatSourceLine(tt.src); got != tt.want {
+				t.Errorf("formatSourceLine() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
 
 func TestStatusSuccess(t *testing.T) {
 	env := setupTestEnv(t)

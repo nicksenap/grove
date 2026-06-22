@@ -2,6 +2,7 @@ package models
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -130,6 +131,47 @@ func TestWorkspaceJSONRoundtrip(t *testing.T) {
 	}
 	if ws2.Repos[0].RepoName != "api" {
 		t.Errorf("repo_name: got %q, want 'api'", ws2.Repos[0].RepoName)
+	}
+}
+
+func TestWorkspaceSourceRoundtrip(t *testing.T) {
+	ws := Workspace{
+		Name:   "pr-feature",
+		Path:   "/ws/pr-feature",
+		Branch: "feat/data-status",
+		Source: &WorkspaceSource{
+			Provider: "github",
+			URL:      "https://github.com/funnel-io/conversational-analytics/pull/1172",
+			Ref:      "1172",
+			Title:    "Surface data source status",
+		},
+	}
+
+	data, err := json.Marshal(ws)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+
+	var ws2 Workspace
+	if err := json.Unmarshal(data, &ws2); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if ws2.Source == nil {
+		t.Fatal("expected non-nil Source after roundtrip")
+	}
+	if *ws2.Source != *ws.Source {
+		t.Errorf("source roundtrip mismatch: got %+v, want %+v", *ws2.Source, *ws.Source)
+	}
+}
+
+func TestWorkspaceSourceOmittedWhenNil(t *testing.T) {
+	ws := Workspace{Name: "plain", Path: "/ws/plain", Branch: "main"}
+	data, err := json.Marshal(ws)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if strings.Contains(string(data), "source") {
+		t.Errorf("expected no 'source' key for nil Source, got: %s", data)
 	}
 }
 

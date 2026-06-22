@@ -9,6 +9,7 @@ import (
 	"github.com/nicksenap/grove/internal/config"
 	"github.com/nicksenap/grove/internal/console"
 	"github.com/nicksenap/grove/internal/discover"
+	"github.com/nicksenap/grove/internal/gitops"
 	"github.com/nicksenap/grove/internal/lifecycle"
 	"github.com/nicksenap/grove/internal/models"
 	"github.com/nicksenap/grove/internal/picker"
@@ -18,12 +19,17 @@ import (
 )
 
 var (
-	createBranch  string
-	createRepos   string
-	createPreset  string
-	createAll     bool
-	createReplace bool
-	createForce   bool
+	createBranch        string
+	createRepos         string
+	createPreset        string
+	createAll           bool
+	createReplace       bool
+	createForce         bool
+	createTrack         bool
+	createSourceURL     string
+	createSourceProvide string
+	createSourceRef     string
+	createSourceTitle   string
 )
 
 var createCmd = &cobra.Command{
@@ -52,6 +58,27 @@ var createCmd = &cobra.Command{
 			repoNames = strings.Split(createRepos, ",")
 			for i := range repoNames {
 				repoNames[i] = strings.TrimSpace(repoNames[i])
+			}
+			// Clone any remote git URLs into the first repo_dir (mirrors add-repo).
+			// This lets a resolver pass an unmatched repo as a clone URL.
+			for i, name := range repoNames {
+				if !gitops.IsGitURL(name) {
+					continue
+				}
+				if len(cfg.RepoDirs) == 0 {
+					exitError("No repo_dirs configured — cannot clone remote repo")
+				}
+				console.Infof("Cloning %s ...", name)
+				clonedPath, repoName, err := gitops.Clone(name, cfg.RepoDirs[0])
+				if err != nil {
+					exitError(err.Error())
+				}
+				if existing, ok := repoMap[repoName]; ok && existing != clonedPath {
+					exitError("repo name conflict: " + repoName + " already exists locally at " + existing)
+				}
+				repoMap[repoName] = clonedPath
+				repoNames[i] = repoName
+				console.Successf("Cloned %s into %s", repoName, clonedPath)
 			}
 		} else {
 			// Interactive
@@ -173,7 +200,30 @@ var createCmd = &cobra.Command{
 			replacedName = currentWs.Name
 		}
 
-		if err := workspace.NewService().Create(name, branch, repoNames, repoMap, cfg); err != nil {
+		// Build provenance + branch-mode options. A source URL is opaque to core;
+		// --track checks out an existing remote branch (e.g. a PR head) instead
+		// of creating a new one, falling back to create-mode if it is missing.
+		var source *models.WorkspaceSource
+		if createSourceURL != "" || createSourceProvide != "" {
+			source = &models.WorkspaceSource{
+				Provider: createSourceProvide,
+				URL:      createSourceURL,
+				Ref:      createSourceRef,
+				Title:    createSourceTitle,
+			}
+		}
+		opts := workspace.CreateOpts{
+			Branch:  branch,
+			Repos:   repoNames,
+			RepoMap: repoMap,
+			Cfg:     cfg,
+			Source:  source,
+		}
+		if createTrack {
+			opts.BranchMode = workspace.BranchModeTrack
+		}
+
+		if err := workspace.NewService().CreateWithOpts(name, opts); err != nil {
 			if replacedName != "" {
 				exitError("failed to create new workspace (old workspace " + replacedName + " was already deleted): " + err.Error())
 			}
@@ -183,6 +233,11 @@ var createCmd = &cobra.Command{
 		// Fire post_create hook if configured
 		wsPath := filepath.Join(cfg.WorkspaceDir, name)
 		vars := lifecycle.Vars{Name: name, Path: wsPath, Branch: branch}
+		if source != nil {
+			vars.SourceURL = source.URL
+			vars.SourceRef = source.Ref
+			vars.SourceTitle = source.Title
+		}
 		if err := lifecycle.Run("post_create", vars); err != nil && !errors.Is(err, lifecycle.ErrNoHook) {
 			console.Warningf("post_create hook failed: %s", err)
 		}
@@ -196,6 +251,11 @@ func init() {
 	createCmd.Flags().BoolVar(&createAll, "all", false, "Use all discovered repos")
 	createCmd.Flags().BoolVar(&createReplace, "replace", false, "Delete the current workspace (detected from cwd) before creating the new one")
 	createCmd.Flags().BoolVarP(&createForce, "force", "f", false, "Skip --replace confirmation prompt")
+	createCmd.Flags().BoolVar(&createTrack, "track", false, "Check out an existing remote branch (e.g. a PR head) instead of creating a new one")
+	createCmd.Flags().StringVar(&createSourceURL, "source-url", "", "Record the source URL this workspace was seeded from")
+	createCmd.Flags().StringVar(&createSourceProvide, "source-provider", "", "Source provider label (e.g. github, notion, slack)")
+	createCmd.Flags().StringVar(&createSourceRef, "source-ref", "", "Source ref (PR number, page id, message ts)")
+	createCmd.Flags().StringVar(&createSourceTitle, "source-title", "", "Human-readable source title for display")
 
 	createCmd.RegisterFlagCompletionFunc("repos", completeRepoNames)
 	createCmd.RegisterFlagCompletionFunc("preset", completePresetNames)

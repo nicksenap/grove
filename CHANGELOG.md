@@ -1,5 +1,20 @@
 # Changelog
 
+## v1.1.8
+
+### Features
+
+- `gw create` can now seed a workspace from an **existing remote branch** with `--track` (e.g. a pull-request head): instead of creating a new branch from the base, it checks out `origin/<branch>` as a tracking worktree. If the remote branch is missing (deleted, force-pushed, or a fork PR whose head lives on another remote), it falls back to creating a new branch from base with a warning.
+- `gw create` records where a workspace came from. New `--source-url`, `--source-provider`, `--source-ref`, and `--source-title` flags persist an opaque `source` link on the workspace, which is surfaced in `gw status` (and its `--json`) and exposed to the `post_create` hook via the new `{source_url}`, `{source_ref}`, and `{source_title}` placeholders.
+- `gw create --repos` now accepts git URLs and clones them into the first configured repo dir (matching `gw add-repo` behavior).
+- New `gw repos` command lists discovered repos with their origin remote and derived `owner/repo` name. `gw repos --json` gives machine-readable output so external tooling can map a remote `owner/repo` back to a local clone.
+
+These primitives are provider-agnostic building blocks: they let an external plugin (e.g. `gw-grab`) turn a GitHub PR / Notion / Slack URL into a ready-to-work workspace, while Grove core stays a pure git worktree orchestrator.
+
+### Internal
+
+- e2e suite now covers `gw repos`, `gw create --track` (incl. the missing-remote fallback), source-link persistence/surfacing, and the `post_create` `{source_*}` placeholders. The MCP e2e tests now use a portable timeout wrapper (`gtimeout` fallback) so the suite runs green on macOS.
+
 ## v1.1.7
 
 ### Fixes

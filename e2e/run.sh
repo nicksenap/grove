@@ -21,6 +21,17 @@ fi
 
 gw() { "${GW_BIN}" "$@"; }
 
+# Portable timeout wrapper: macOS ships `gtimeout` (coreutils) rather than
+# `timeout`. Fall back to running the command without a timeout if neither
+# exists so the suite still works everywhere.
+if command -v timeout >/dev/null 2>&1; then
+    timeout_cmd() { timeout "$@"; }
+elif command -v gtimeout >/dev/null 2>&1; then
+    timeout_cmd() { gtimeout "$@"; }
+else
+    timeout_cmd() { shift; "$@"; }  # drop the duration arg, run unbounded
+fi
+
 # ---------------------------------------------------------------------------
 # Setup: create test repos
 # ---------------------------------------------------------------------------
@@ -203,6 +214,159 @@ if gw status test-ws > /dev/null 2>&1; then
 else
     fail "status command failed"
 fi
+
+# ---------------------------------------------------------------------------
+# Test: gw repos (discovered repos + remotes, machine-readable)
+# ---------------------------------------------------------------------------
+section "Repos listing"
+
+repos_json=$(gw repos --json 2>/dev/null)
+if echo "${repos_json}" | jq -e '.[] | select(.name == "svc-auth")' > /dev/null 2>&1; then
+    pass "gw repos --json lists discovered repos"
+else
+    fail "gw repos --json missing svc-auth: ${repos_json}"
+fi
+
+if echo "${repos_json}" | jq -e '.[0] | has("name") and has("path") and has("remote") and has("display_name")' > /dev/null 2>&1; then
+    pass "gw repos --json entries have name/path/remote/display_name"
+else
+    fail "gw repos --json missing expected fields: ${repos_json}"
+fi
+
+# Plain (non-JSON) output should mention a known repo.
+# Capture first, then grep: piping `gw` straight into `grep -q` can race under
+# `set -o pipefail` (grep exits on match, gw gets SIGPIPE, pipeline fails).
+repos_table=$(gw repos 2>&1)
+if echo "${repos_table}" | grep -q "svc-auth"; then
+    pass "gw repos (table) lists repos"
+else
+    fail "gw repos table missing svc-auth"
+fi
+
+# ---------------------------------------------------------------------------
+# Test: create --track (check out an existing remote branch, e.g. a PR head)
+# ---------------------------------------------------------------------------
+section "Create --track (existing remote branch)"
+
+# Build a repo whose origin has a 'PR head' branch that does NOT exist locally,
+# so create --track must resolve it from the remote.
+git init -q --bare "${GROVE_HOME}/pr-svc-origin.git"
+git clone -q "${GROVE_HOME}/pr-svc-origin.git" "${REPOS_DIR}/pr-svc"
+(cd "${REPOS_DIR}/pr-svc" \
+    && git config user.email "e2e@grove.test" \
+    && git config user.name "Grove E2E" \
+    && echo base > README.md && git add . && git commit -q -m initial && git push -q origin HEAD \
+    && git checkout -q -b feat/pr-head \
+    && echo "pr work" > pr-marker.txt && git add . && git commit -q -m "pr work" \
+    && git push -q origin feat/pr-head \
+    && git checkout -q - \
+    && git branch -q -D feat/pr-head \
+    && git update-ref -d refs/remotes/origin/feat/pr-head)
+
+gw create pr-ws --repos pr-svc --branch feat/pr-head --track \
+    --source-url "https://github.com/acme/pr-svc/pull/42" \
+    --source-provider github --source-ref 42 --source-title "Add the thing" 2>&1
+pass "create --track succeeded"
+
+PR_WS_DIR="${GROVE_HOME}/.grove/workspaces/pr-ws"
+
+# The PR head's content must be present — we checked out the existing branch,
+# not a fresh branch from base.
+if [ -f "${PR_WS_DIR}/pr-svc/pr-marker.txt" ]; then
+    pass "create --track checked out existing PR head (content present)"
+else
+    fail "create --track did not check out PR head content"
+fi
+
+# The new local branch should track origin/feat/pr-head.
+pr_upstream=$(cd "${PR_WS_DIR}/pr-svc" && git rev-parse --abbrev-ref --symbolic-full-name '@{upstream}' 2>/dev/null || echo none)
+if [ "${pr_upstream}" = "origin/feat/pr-head" ]; then
+    pass "create --track set upstream to origin/feat/pr-head"
+else
+    fail "expected upstream origin/feat/pr-head, got ${pr_upstream}"
+fi
+
+# Source provenance persisted on the workspace.
+if gw ws show pr-ws --json 2>/dev/null | jq -e '.source.provider == "github" and .source.ref == "42"' > /dev/null 2>&1; then
+    pass "source persisted on workspace (provider + ref)"
+else
+    fail "source not persisted correctly: $(gw ws show pr-ws --json 2>/dev/null | jq -c .source)"
+fi
+
+# Source surfaced in status --json.
+status_src=$(gw status pr-ws --json 2>/dev/null | jq -r '.source.url')
+if [ "${status_src}" = "https://github.com/acme/pr-svc/pull/42" ]; then
+    pass "gw status --json surfaces source url"
+else
+    fail "status --json source url wrong: ${status_src}"
+fi
+
+# Source surfaced in status table. Capture first, then grep (see note above:
+# `gw ... | grep -q` races under pipefail once grep matches and exits early).
+status_table=$(gw status pr-ws 2>&1)
+if echo "${status_table}" | grep -q "Source: github 42"; then
+    pass "gw status table shows Source line"
+else
+    fail "status table missing Source line: ${status_table}"
+fi
+
+gw delete pr-ws --force 2>&1
+
+# ---------------------------------------------------------------------------
+# Test: create --track fallback (remote branch missing → new branch, no error)
+# ---------------------------------------------------------------------------
+section "Create --track fallback"
+
+gw create fallback-ws --repos pr-svc --branch feat/ghost-pr --track 2>&1
+pass "create --track with missing remote branch did not error"
+
+fb_branch=$(cd "${GROVE_HOME}/.grove/workspaces/fallback-ws/pr-svc" && git branch --show-current)
+if [ "${fb_branch}" = "feat/ghost-pr" ]; then
+    pass "fallback created a new branch from base"
+else
+    fail "expected feat/ghost-pr, got ${fb_branch}"
+fi
+
+gw delete fallback-ws --force 2>&1
+
+# ---------------------------------------------------------------------------
+# Test: post_create hook receives source_* placeholders
+# ---------------------------------------------------------------------------
+section "post_create source placeholders"
+
+SRC_HOOK_MARKER="${GROVE_HOME}/src_hook_out"
+cat > "${GROVE_HOME}/.grove/config.toml" <<EOF
+repo_dirs = ["${REPOS_DIR}"]
+workspace_dir = "${GROVE_HOME}/.grove/workspaces"
+
+[hooks]
+post_create = "echo url={source_url} ref={source_ref} title={source_title} > ${SRC_HOOK_MARKER}"
+EOF
+
+gw create hooksrc-ws --repos svc-auth --branch feat/hooksrc \
+    --source-url "https://example.com/x" --source-provider notion \
+    --source-ref pageid123 --source-title "My Task" 2>&1
+
+if [ -f "${SRC_HOOK_MARKER}" ] \
+    && grep -q "url=https://example.com/x" "${SRC_HOOK_MARKER}" \
+    && grep -q "ref=pageid123" "${SRC_HOOK_MARKER}" \
+    && grep -q "title=My Task" "${SRC_HOOK_MARKER}"; then
+    pass "post_create hook received source_url/ref/title"
+else
+    fail "post_create source vars wrong: $(cat "${SRC_HOOK_MARKER}" 2>/dev/null)"
+fi
+
+gw delete hooksrc-ws --force 2>&1
+rm -f "${SRC_HOOK_MARKER}"
+
+# Restore config without hooks for subsequent tests.
+cat > "${GROVE_HOME}/.grove/config.toml" <<EOF
+repo_dirs = ["${REPOS_DIR}"]
+workspace_dir = "${GROVE_HOME}/.grove/workspaces"
+EOF
+
+# Remove the throwaway PR repo so it doesn't affect later discovery.
+rm -rf "${REPOS_DIR}/pr-svc" "${GROVE_HOME}/pr-svc-origin.git"
 
 # ---------------------------------------------------------------------------
 # Test: add-repo
@@ -763,7 +927,7 @@ mcp_test() {
     local expected_id="$2"
 
     # Send all messages and capture output
-    echo "$input" | timeout 10 gw mcp-serve --workspace mcp-ws 2>/dev/null || true
+    echo "$input" | timeout_cmd 10 gw mcp-serve --workspace mcp-ws 2>/dev/null || true
 }
 
 # Test initialize + tools/list + announce + get_announcements + list_workspaces
@@ -778,7 +942,7 @@ MCP_INPUT=$(cat <<'JSONRPC'
 JSONRPC
 )
 
-MCP_OUT=$(echo "${MCP_INPUT}" | timeout 10 "${GW_BIN}" mcp-serve --workspace mcp-ws 2>/dev/null || true)
+MCP_OUT=$(echo "${MCP_INPUT}" | timeout_cmd 10 "${GW_BIN}" mcp-serve --workspace mcp-ws 2>/dev/null || true)
 
 # Check initialize response
 if echo "${MCP_OUT}" | grep -q '"protocolVersion"'; then
