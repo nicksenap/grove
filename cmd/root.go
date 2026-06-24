@@ -36,7 +36,7 @@ var rootCmd = &cobra.Command{
 
 func init() {
 	rootCmd.PersistentFlags().BoolVar(&verbose, "verbose", false, "Enable debug logging")
-	rootCmd.PersistentFlags().BoolVar(&lifecycle.Disabled, "no-hooks", false, "Skip lifecycle hooks")
+	rootCmd.PersistentFlags().BoolVarP(&lifecycle.Disabled, "no-hooks", "n", false, "Skip lifecycle hooks")
 	rootCmd.Version = Version
 	rootCmd.SetVersionTemplate("gw {{.Version}}\n")
 

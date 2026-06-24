@@ -47,11 +47,11 @@ on_close = "tmux kill-pane"
 
 ### Skipping hooks
 
-Pass `--no-hooks` to any command to skip all global hooks for that run — handy for scripting or one-off operations where you don't want side effects to fire:
+Pass `--no-hooks` (shorthand `-n`) to any command to skip all global hooks for that run — handy for scripting or one-off operations where you don't want side effects to fire:
 
 ```sh
 gw --no-hooks create my-feature --repos svc-auth
-gw --no-hooks delete my-feature --force
+gw -n delete my-feature --force
 ```
 
 Per-repo hooks (`.grove.toml`) are unaffected.

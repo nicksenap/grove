@@ -760,11 +760,12 @@ else
     fail "--no-hooks did not skip post_create hook"
 fi
 
-gw --no-hooks delete nohook-ws --force 2>&1
+# Use the -n shorthand here to cover both spellings.
+gw -n delete nohook-ws --force 2>&1
 if [ ! -f "${PRE_DELETE_MARKER}" ]; then
-    pass "--no-hooks skipped pre_delete hook"
+    pass "-n (--no-hooks shorthand) skipped pre_delete hook"
 else
-    fail "--no-hooks did not skip pre_delete hook"
+    fail "-n did not skip pre_delete hook"
 fi
 
 rm -f "${POST_CREATE_MARKER}" "${PRE_DELETE_MARKER}"
