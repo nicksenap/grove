@@ -13,6 +13,9 @@ import (
 // ErrNoHook is returned when the requested hook is not configured.
 var ErrNoHook = errors.New("hook not configured")
 
+// Disabled, when true, skips all hooks. Set by the --no-hooks flag.
+var Disabled bool
+
 // Vars is a set of placeholder values expanded in hook commands.
 // Use {name}, {path}, {branch}, {source_url}, {source_ref}, {source_title} in
 // hook commands. The source_* values are empty unless the workspace was seeded
@@ -28,6 +31,10 @@ type Vars struct {
 
 // Run fires a named hook if configured. Returns ErrNoHook if not set.
 func Run(hookName string, vars Vars) error {
+	if Disabled {
+		return ErrNoHook
+	}
+
 	cfg, err := config.Load()
 	if err != nil || cfg == nil {
 		return ErrNoHook

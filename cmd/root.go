@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/nicksenap/grove/internal/config"
+	"github.com/nicksenap/grove/internal/lifecycle"
 	"github.com/nicksenap/grove/internal/logging"
 	"github.com/nicksenap/grove/internal/picker"
 	"github.com/nicksenap/grove/internal/plugin"
@@ -35,6 +36,7 @@ var rootCmd = &cobra.Command{
 
 func init() {
 	rootCmd.PersistentFlags().BoolVar(&verbose, "verbose", false, "Enable debug logging")
+	rootCmd.PersistentFlags().BoolVarP(&lifecycle.Disabled, "no-hooks", "n", false, "Skip lifecycle hooks")
 	rootCmd.Version = Version
 	rootCmd.SetVersionTemplate("gw {{.Version}}\n")
 

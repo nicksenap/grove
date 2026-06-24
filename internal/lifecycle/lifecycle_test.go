@@ -1,6 +1,13 @@
 package lifecycle
 
-import "testing"
+import (
+	"errors"
+	"os"
+	"path/filepath"
+	"testing"
+
+	"github.com/nicksenap/grove/internal/config"
+)
 
 func TestShellQuote(t *testing.T) {
 	tests := []struct {
@@ -88,5 +95,40 @@ func TestExpand(t *testing.T) {
 				t.Errorf("expand(%q, %+v) = %q, want %q", tt.cmd, tt.vars, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestRunDisabled(t *testing.T) {
+	dir := t.TempDir()
+	marker := filepath.Join(dir, "fired")
+
+	// Point config at a temp config.toml with a post_create hook that writes a marker.
+	origPath := config.ConfigPath
+	config.ConfigPath = filepath.Join(dir, "config.toml")
+	t.Cleanup(func() { config.ConfigPath = origPath })
+
+	cfg := "[hooks]\npost_create = \"touch " + marker + "\"\n"
+	if err := os.WriteFile(config.ConfigPath, []byte(cfg), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	// With Disabled set, Run must skip the hook entirely and report ErrNoHook.
+	Disabled = true
+	t.Cleanup(func() { Disabled = false })
+
+	if err := Run("post_create", Vars{}); !errors.Is(err, ErrNoHook) {
+		t.Fatalf("Run(disabled) = %v, want ErrNoHook", err)
+	}
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatalf("hook fired despite Disabled (marker exists: %v)", err)
+	}
+
+	// Sanity: with Disabled cleared, the same hook fires.
+	Disabled = false
+	if err := Run("post_create", Vars{}); err != nil {
+		t.Fatalf("Run(enabled) = %v, want nil", err)
+	}
+	if _, err := os.Stat(marker); err != nil {
+		t.Fatalf("hook did not fire when enabled: %v", err)
 	}
 }

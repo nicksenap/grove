@@ -8,6 +8,7 @@
 - `gw create` records where a workspace came from. New `--source-url`, `--source-provider`, `--source-ref`, and `--source-title` flags persist an opaque `source` link on the workspace, which is surfaced in `gw status` (and its `--json`) and exposed to the `post_create` hook via the new `{source_url}`, `{source_ref}`, and `{source_title}` placeholders.
 - `gw create --repos` now accepts git URLs and clones them into the first configured repo dir (matching `gw add-repo` behavior).
 - New `gw repos` command lists discovered repos with their origin remote and derived `owner/repo` name. `gw repos --json` gives machine-readable output so external tooling can map a remote `owner/repo` back to a local clone.
+- New global `--no-hooks` flag (shorthand `-n`) skips all global lifecycle hooks (`post_create`, `pre_delete`, `on_close`) for a single command — useful for scripting or one-off operations. Per-repo `.grove.toml` hooks are unaffected.
 
 These primitives are provider-agnostic building blocks: they let an external plugin (e.g. `gw-grab`) turn a GitHub PR / Notion / Slack URL into a ready-to-work workspace, while Grove core stays a pure git worktree orchestrator.
 

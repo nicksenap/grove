@@ -746,6 +746,30 @@ fi
 
 rm -f "${POST_CREATE_MARKER}" "${PRE_DELETE_MARKER}"
 
+# ---------------------------------------------------------------------------
+# Test: --no-hooks skips lifecycle hooks
+# ---------------------------------------------------------------------------
+section "--no-hooks flag"
+
+# Hooks are still configured from the previous section. With --no-hooks the
+# create + delete should run but neither marker should appear.
+gw --no-hooks create nohook-ws --branch feat/no-hooks --repos svc-auth 2>&1
+if [ ! -f "${POST_CREATE_MARKER}" ]; then
+    pass "--no-hooks skipped post_create hook"
+else
+    fail "--no-hooks did not skip post_create hook"
+fi
+
+# Use the -n shorthand here to cover both spellings.
+gw -n delete nohook-ws --force 2>&1
+if [ ! -f "${PRE_DELETE_MARKER}" ]; then
+    pass "-n (--no-hooks shorthand) skipped pre_delete hook"
+else
+    fail "-n did not skip pre_delete hook"
+fi
+
+rm -f "${POST_CREATE_MARKER}" "${PRE_DELETE_MARKER}"
+
 # Restore config without hooks for subsequent tests
 cat > "${GROVE_HOME}/.grove/config.toml" <<EOF
 repo_dirs = ["${REPOS_DIR}"]
