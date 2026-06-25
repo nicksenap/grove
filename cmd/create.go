@@ -192,7 +192,10 @@ var createCmd = &cobra.Command{
 			console.Infof("Replacing workspace: deleting %s", currentWs.Name)
 			vars := lifecycle.Vars{Name: currentWs.Name, Path: currentWs.Path, Branch: currentWs.Branch}
 			if err := lifecycle.Run("pre_delete", vars); err != nil && !errors.Is(err, lifecycle.ErrNoHook) {
-				console.Warningf("pre_delete hook failed: %s", err)
+				if lifecycle.ShouldAbort(err) {
+					exitError(err.Error())
+				}
+				console.Warning(err.Error())
 			}
 			if err := workspace.NewService().Delete(currentWs.Name); err != nil {
 				exitError("failed to delete current workspace: " + err.Error())
@@ -239,7 +242,10 @@ var createCmd = &cobra.Command{
 			vars.SourceTitle = source.Title
 		}
 		if err := lifecycle.Run("post_create", vars); err != nil && !errors.Is(err, lifecycle.ErrNoHook) {
-			console.Warningf("post_create hook failed: %s", err)
+			if lifecycle.ShouldAbort(err) {
+				exitError(err.Error())
+			}
+			console.Warning(err.Error())
 		}
 	},
 }

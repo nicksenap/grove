@@ -45,7 +45,7 @@ var goCmd = &cobra.Command{
 			if err := lifecycle.Run("on_close", lifecycle.Vars{}); errors.Is(err, lifecycle.ErrNoHook) {
 				exitError("No on_close hook configured. Set one in ~/.grove/config.toml:\n\n  [hooks]\n  on_close = \"gw zellij close-pane\"")
 			} else if err != nil {
-				exitError(fmt.Sprintf("on_close hook failed: %s", err))
+				exitError(err.Error())
 			}
 			return
 		}

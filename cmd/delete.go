@@ -75,7 +75,10 @@ func doDelete(args []string, force bool) {
 		if ws != nil {
 			vars := lifecycle.Vars{Name: name, Path: ws.Path, Branch: ws.Branch}
 			if err := lifecycle.Run("pre_delete", vars); err != nil && !errors.Is(err, lifecycle.ErrNoHook) {
-				console.Warningf("pre_delete hook failed: %s", err)
+				if lifecycle.ShouldAbort(err) {
+					exitError(err.Error())
+				}
+				console.Warning(err.Error())
 			}
 		}
 

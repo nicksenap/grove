@@ -8,6 +8,7 @@ import (
 
 	"github.com/nicksenap/grove/internal/config"
 	"github.com/nicksenap/grove/internal/console"
+	"github.com/nicksenap/grove/internal/models"
 	"github.com/nicksenap/grove/internal/plugin"
 	"github.com/spf13/cobra"
 )
@@ -54,10 +55,10 @@ var wizardCmd = &cobra.Command{
 				if _, ok := cfg.Hooks["post_create"]; !ok {
 					if console.Confirm("Configure Claude memory sync hooks?", true) {
 						if cfg.Hooks == nil {
-							cfg.Hooks = make(map[string]string)
+							cfg.Hooks = make(map[string]models.Hook)
 						}
-						cfg.Hooks["post_create"] = "gw claude sync rehydrate {path} && gw claude copy-md {path}"
-						cfg.Hooks["pre_delete"] = "gw claude sync harvest {path}"
+						cfg.Hooks["post_create"] = models.Hook{Command: "gw claude sync rehydrate {path} && gw claude copy-md {path}"}
+						cfg.Hooks["pre_delete"] = models.Hook{Command: "gw claude sync harvest {path}"}
 						changed = true
 						console.Success("Added post_create and pre_delete hooks")
 					}
@@ -107,9 +108,9 @@ var wizardCmd = &cobra.Command{
 				if _, ok := cfg.Hooks["on_close"]; !ok {
 					if console.Confirm("Configure on_close hook for Zellij?", true) {
 						if cfg.Hooks == nil {
-							cfg.Hooks = make(map[string]string)
+							cfg.Hooks = make(map[string]models.Hook)
 						}
-						cfg.Hooks["on_close"] = "gw zellij close-pane"
+						cfg.Hooks["on_close"] = models.Hook{Command: "gw zellij close-pane"}
 						changed = true
 						console.Success("Added on_close hook")
 					}
