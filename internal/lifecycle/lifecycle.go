@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/nicksenap/grove/internal/config"
@@ -89,6 +90,7 @@ func Run(hookName string, vars Vars) error {
 	logging.Info("hook %s: %s", hookName, expanded)
 
 	ctx := context.Background()
+	hasTimeout := false
 	if hook.Timeout != "" {
 		d, perr := time.ParseDuration(hook.Timeout)
 		if perr != nil {
@@ -97,10 +99,29 @@ func Run(hookName string, vars Vars) error {
 			var cancel context.CancelFunc
 			ctx, cancel = context.WithTimeout(ctx, d)
 			defer cancel()
+			hasTimeout = true
 		}
 	}
 
 	cmd := exec.CommandContext(ctx, "sh", "-c", expanded)
+	if hasTimeout {
+		// Run the hook in its own process group so a timeout can kill the whole
+		// tree. The shell typically spawns the real work (e.g. an installer) as
+		// a child; killing only the shell would leave that child running and
+		// holding the output pipe open, so cmd.Wait would block until the child
+		// finished anyway — defeating the timeout. Killing the group (-pgid)
+		// terminates the children too.
+		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+		cmd.Cancel = func() error {
+			if cmd.Process == nil {
+				return nil
+			}
+			return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+		}
+		// Backstop: if a stray descendant still holds the output pipe after the
+		// group kill, don't let Wait hang — give it a moment, then force-close.
+		cmd.WaitDelay = 2 * time.Second
+	}
 
 	prefix := fmt.Sprintf("[%s] ", hookName)
 	var captured *bytes.Buffer

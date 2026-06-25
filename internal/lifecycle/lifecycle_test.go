@@ -5,7 +5,9 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -242,8 +244,12 @@ func TestRunOnFailureAbort(t *testing.T) {
 }
 
 // TestRunTimeout verifies a hook exceeding its timeout is aborted and reported.
+// The command forces the shell to spawn a child (background sleep + wait) so the
+// shell cannot be exec-optimized into the sleep itself — this reproduces the
+// real case where killing only the shell would leave a child holding the output
+// pipe open and block Wait until the child exits.
 func TestRunTimeout(t *testing.T) {
-	useTempConfig(t, "[hooks.post_create]\ncommand = \"sleep 5\"\ntimeout = \"100ms\"\n")
+	useTempConfig(t, "[hooks.post_create]\ncommand = \"sleep 30 & wait\"\ntimeout = \"100ms\"\n")
 
 	start := time.Now()
 	err := Run("post_create", Vars{})
@@ -257,5 +263,37 @@ func TestRunTimeout(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "timed out") {
 		t.Errorf("error = %q, want it to mention the timeout", err.Error())
+	}
+}
+
+// TestRunTimeoutKillsChildren verifies the timeout kills the hook's child
+// processes, not just the shell — otherwise a hook like "npm install" would
+// leave the real work running after the timeout fired.
+func TestRunTimeoutKillsChildren(t *testing.T) {
+	dir := t.TempDir()
+	pidFile := filepath.Join(dir, "child.pid")
+	// Spawn a long sleep, record its PID, then wait on it. If the group kill
+	// works, the recorded PID is dead shortly after Run returns.
+	cmd := "sleep 30 & echo $! > " + pidFile + "; wait"
+	useTempConfig(t, "[hooks.post_create]\ncommand = \""+cmd+"\"\ntimeout = \"200ms\"\n")
+
+	if err := Run("post_create", Vars{}); err == nil {
+		t.Fatal("Run = nil, want timeout failure")
+	}
+
+	data, err := os.ReadFile(pidFile)
+	if err != nil {
+		t.Fatalf("read child pid: %v", err)
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
+	if err != nil {
+		t.Fatalf("parse child pid %q: %v", data, err)
+	}
+
+	// Give the kill a moment to propagate, then confirm the child is gone.
+	time.Sleep(200 * time.Millisecond)
+	if err := syscall.Kill(pid, 0); err == nil {
+		syscall.Kill(pid, syscall.SIGKILL) // clean up the leak
+		t.Errorf("child process %d still alive after timeout; group kill did not reap it", pid)
 	}
 }
