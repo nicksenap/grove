@@ -106,38 +106,3 @@ func TestSignalTerminatesProcessGroup(t *testing.T) {
 		}
 	}
 }
-
-// TestPrefixWriterUsesIndexByte verifies the prefixWriter handles
-// various output patterns correctly.
-func TestPrefixWriterLines(t *testing.T) {
-	f, _ := os.CreateTemp(t.TempDir(), "pw")
-	defer f.Close()
-
-	// We can't easily test with *os.File to a string, so test the logic
-	// by writing to a temp file and reading back
-	pw := &prefixWriter{prefix: "[test] ", w: f}
-
-	pw.Write([]byte("hello\nworld\n"))
-	pw.Write([]byte("partial"))
-	pw.Write([]byte(" line\ndone\n"))
-
-	f.Seek(0, 0)
-	data, _ := os.ReadFile(f.Name())
-
-	lines := strings.Split(strings.TrimRight(string(data), "\n"), "\n")
-	expected := []string{
-		"[test] hello",
-		"[test] world",
-		"[test] partial line",
-		"[test] done",
-	}
-
-	if len(lines) != len(expected) {
-		t.Fatalf("expected %d lines, got %d: %v", len(expected), len(lines), lines)
-	}
-	for i, line := range lines {
-		if line != expected[i] {
-			t.Errorf("line %d: got %q, want %q", i, line, expected[i])
-		}
-	}
-}

@@ -1,7 +1,6 @@
 package workspace
 
 import (
-	"bytes"
 	"fmt"
 	"os"
 	"os/exec"
@@ -15,6 +14,7 @@ import (
 	"github.com/nicksenap/grove/internal/console"
 	"github.com/nicksenap/grove/internal/gitops"
 	"github.com/nicksenap/grove/internal/models"
+	"github.com/nicksenap/grove/internal/streamio"
 )
 
 // RunnableRepo holds a repo's run commands.
@@ -83,8 +83,10 @@ func Run(wsName string) error {
 		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 
 		// Prefix output with repo name
-		cmd.Stdout = &prefixWriter{prefix: fmt.Sprintf("[%s] ", r.RepoName), w: os.Stdout}
-		cmd.Stderr = &prefixWriter{prefix: fmt.Sprintf("[%s] ", r.RepoName), w: os.Stderr}
+		outW := &streamio.PrefixWriter{Prefix: fmt.Sprintf("[%s] ", r.RepoName), W: os.Stdout}
+		errW := &streamio.PrefixWriter{Prefix: fmt.Sprintf("[%s] ", r.RepoName), W: os.Stderr}
+		cmd.Stdout = outW
+		cmd.Stderr = errW
 
 		if err := cmd.Start(); err != nil {
 			console.Warningf("%s: failed to start: %s", r.RepoName, err)
@@ -97,16 +99,20 @@ func Run(wsName string) error {
 		mu.Unlock()
 
 		wg.Add(1)
-		go func(name string, c *exec.Cmd) {
+		go func(name string, c *exec.Cmd, outW, errW *streamio.PrefixWriter) {
 			defer wg.Done()
-			if err := c.Wait(); err != nil {
+			err := c.Wait()
+			// Emit any trailing line the process printed without a newline.
+			outW.Flush()
+			errW.Flush()
+			if err != nil {
 				if !shuttingDown.Load() {
 					console.Warningf("%s: exited with error: %s", name, err)
 				}
 			} else {
 				console.Infof("%s: exited (0)", name)
 			}
-		}(r.RepoName, cmd)
+		}(r.RepoName, cmd, outW, errW)
 	}
 
 	// Wait for signal or all processes to complete
@@ -182,29 +188,4 @@ func runHooks(runnable []RunnableRepo, hookName string, getCmd func(RunnableRepo
 		}(r, cmdStr)
 	}
 	wg.Wait()
-}
-
-// prefixWriter prefixes each line written with a string.
-type prefixWriter struct {
-	prefix string
-	w      *os.File
-	buf    []byte
-}
-
-func (pw *prefixWriter) Write(p []byte) (int, error) {
-	pw.buf = append(pw.buf, p...)
-	for {
-		idx := bytes.IndexByte(pw.buf, '\n')
-		if idx < 0 {
-			break
-		}
-		fmt.Fprintf(pw.w, "%s%s\n", pw.prefix, pw.buf[:idx])
-		pw.buf = pw.buf[idx+1:]
-	}
-	// Prevent unbounded growth: flush partial line if buffer exceeds 64KB
-	if len(pw.buf) > 65536 {
-		fmt.Fprintf(pw.w, "%s%s", pw.prefix, pw.buf)
-		pw.buf = pw.buf[:0]
-	}
-	return len(p), nil
 }

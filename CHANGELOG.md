@@ -1,5 +1,29 @@
 # Changelog
 
+## v1.1.9
+
+### Features
+
+- Global lifecycle hooks (`post_create`, `pre_delete`, `on_close`) can now be written as a **table with metadata**, not just a command string. The new `[hooks.<name>]` form accepts `command`, `description`, `stream`, `timeout`, and `on_failure`:
+
+  ```toml
+  [hooks.post_create]
+  command     = "npm install && npm run build"
+  description = "Install deps and build assets"
+  stream      = true        # stream output live to the terminal
+  timeout     = "5m"         # abort if the hook runs too long
+  on_failure  = "abort"      # "warn" (default) or "abort"
+  ```
+
+  The plain string form (`post_create = "..."`) still works unchanged, and config saved by `gw wizard` keeps metadata-free hooks as bare strings.
+- `stream = true` streams a hook's output **live** to the terminal as it runs, each line prefixed with the hook name (e.g. `[post_create] added 412 packages`) — so a hook that installs dependencies or builds assets shows progress instead of looking hung.
+- When a hook is **not** streaming (the default), its output is captured and **echoed on failure** instead of being discarded — so a failed hook shows the actual command output rather than a bare `exit status 1`. Successful non-streaming hooks stay quiet.
+- `timeout` aborts a runaway hook after a [Go duration](https://pkg.go.dev/time#ParseDuration), and `on_failure = "abort"` lets a hook make its failure fatal to the command. Hook output goes to stderr, keeping Grove's stdout clean for shell integration.
+
+### Internal
+
+- Extracted the per-line prefixing writer (previously private to `gw run`) into a shared `internal/streamio` package, now used by both `gw run` and the hook paths. It also fixes a dropped trailing line (output with no final newline) and a mid-line re-prefix bug on very large unbroken output.
+
 ## v1.1.8
 
 ### Features

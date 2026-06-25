@@ -45,6 +45,40 @@ pre_delete = "gw claude sync harvest {path}"
 on_close = "tmux kill-pane"
 ```
 
+### Hook output and behavior
+
+A global hook can be written as a plain command string (above) **or** as a table
+when you want to control how it runs. Both forms are valid and can be mixed:
+
+```toml
+[hooks]
+pre_delete = "gw claude sync harvest {path}"   # simple string form
+
+[hooks.post_create]                            # table form with metadata
+command     = "npm install && npm run build"
+description = "Install deps and build assets"
+stream      = true        # show output live in the terminal
+timeout     = "5m"         # abort the hook if it runs longer than this
+on_failure  = "abort"      # "warn" (default) or "abort"
+```
+
+| Field | Default | Meaning |
+|---|---|---|
+| `command` | — | The shell command to run (required in table form). |
+| `description` | — | What the hook is expected to do. Documents the hook inline. |
+| `stream` | `false` | When `true`, the hook's output streams **live** to the terminal as it runs, each line prefixed with the hook name (e.g. `[post_create] added 412 packages`). Use this for hooks that install dependencies or build assets so the run doesn't look hung. |
+| `timeout` | none | A [Go duration](https://pkg.go.dev/time#ParseDuration) (`30s`, `5m`, `1h`). The hook is aborted if it exceeds this, instead of hanging the terminal indefinitely. |
+| `on_failure` | `warn` | `warn` logs a warning and continues; `abort` makes a hook failure fatal to the command. |
+
+**Output when `stream` is off (the default):** the hook runs quietly and its
+output is captured. On success nothing is printed; **on failure the captured
+output is echoed** (prefixed) so you see what actually went wrong instead of a
+bare `exit status 1`. Turn on `stream` only for hooks whose progress you want to
+watch live.
+
+Hook output goes to **stderr**, keeping Grove's stdout clean for shell
+integration (e.g. `cd "$(gw go my-feature)"`).
+
 ### Skipping hooks
 
 Pass `--no-hooks` (shorthand `-n`) to any command to skip all global hooks for that run — handy for scripting or one-off operations where you don't want side effects to fire:

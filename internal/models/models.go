@@ -3,6 +3,8 @@ package models
 import (
 	"encoding/json"
 	"fmt"
+	"strconv"
+	"strings"
 	"time"
 )
 
@@ -87,9 +89,95 @@ type Config struct {
 	RepoDirs     []string          `toml:"repo_dirs"`
 	WorkspaceDir string            `toml:"workspace_dir"`
 	Presets      map[string]Preset `toml:"presets"`
-	Hooks        map[string]string `toml:"hooks"`
+	Hooks        map[string]Hook   `toml:"hooks"`
 	// Legacy field — auto-migrated to RepoDirs
 	ReposDir string `toml:"repos_dir"`
+}
+
+// Hook is a global lifecycle hook in ~/.grove/config.toml [hooks]. It accepts
+// either a bare command string or a table that adds metadata describing what
+// the hook does and how it should run:
+//
+//	[hooks]
+//	pre_delete = "gw claude sync harvest {path}"   # bare string (simple form)
+//
+//	[hooks.post_create]                            # table form (with metadata)
+//	command     = "npm install && npm run build"
+//	description = "Install deps and build assets"
+//	stream      = true                             # stream output live
+//	timeout     = "5m"                             # abort if it runs too long
+//	on_failure  = "warn"                           # "warn" (default) or "abort"
+//
+// When stream is false (the default) the hook's output is captured and only
+// shown if the hook fails, so a clean run stays quiet but failures are no
+// longer an opaque "exit status 1".
+type Hook struct {
+	Command     string `toml:"command"`
+	Description string `toml:"description"`
+	Stream      bool   `toml:"stream"`
+	// Timeout is a Go duration string (e.g. "30s", "5m"). Empty means no limit.
+	Timeout string `toml:"timeout"`
+	// OnFailure is "warn" (default — log a warning and continue) or "abort"
+	// (treat a hook failure as a fatal error for the command).
+	OnFailure string `toml:"on_failure"`
+}
+
+// UnmarshalTOML accepts either a bare command string or a table with metadata,
+// so existing string-form hooks keep working unchanged.
+func (h *Hook) UnmarshalTOML(data interface{}) error {
+	switch v := data.(type) {
+	case string:
+		h.Command = v
+	case map[string]interface{}:
+		if c, ok := v["command"].(string); ok {
+			h.Command = c
+		}
+		if d, ok := v["description"].(string); ok {
+			h.Description = d
+		}
+		if s, ok := v["stream"].(bool); ok {
+			h.Stream = s
+		}
+		if t, ok := v["timeout"].(string); ok {
+			h.Timeout = t
+		}
+		if f, ok := v["on_failure"].(string); ok {
+			h.OnFailure = f
+		}
+	default:
+		return fmt.Errorf("expected a hook command string or table, got %T", data)
+	}
+	return nil
+}
+
+// MarshalTOML keeps the on-disk format minimal: a hook with no metadata is
+// written back as a bare string (matching how most users author it), while a
+// hook carrying metadata is written as an inline table. This means
+// config.Save() never rewrites a plain string hook into a verbose table.
+func (h Hook) MarshalTOML() ([]byte, error) {
+	if h.isBare() {
+		return []byte(strconv.Quote(h.Command)), nil
+	}
+	var parts []string
+	parts = append(parts, "command = "+strconv.Quote(h.Command))
+	if h.Description != "" {
+		parts = append(parts, "description = "+strconv.Quote(h.Description))
+	}
+	if h.Stream {
+		parts = append(parts, "stream = true")
+	}
+	if h.Timeout != "" {
+		parts = append(parts, "timeout = "+strconv.Quote(h.Timeout))
+	}
+	if h.OnFailure != "" {
+		parts = append(parts, "on_failure = "+strconv.Quote(h.OnFailure))
+	}
+	return []byte("{" + strings.Join(parts, ", ") + "}"), nil
+}
+
+// isBare reports whether the hook carries no metadata beyond its command.
+func (h Hook) isBare() bool {
+	return h.Description == "" && !h.Stream && h.Timeout == "" && h.OnFailure == ""
 }
 
 // GroveConfig is per-repo .grove.toml configuration.
