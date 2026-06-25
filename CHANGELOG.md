@@ -24,6 +24,8 @@
 
 - Extracted the per-line prefixing writer (previously private to `gw run`) into a shared `internal/streamio` package, now used by both `gw run` and the hook paths. It also fixes a dropped trailing line (output with no final newline) and a mid-line re-prefix bug on very large unbroken output.
 
+Special thanks to [@fabianhuss](https://github.com/fabianhuss) for the metadata-driven hooks work that powers this release. 🙌
+
 ## v1.1.8
 
 ### Features
