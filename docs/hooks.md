@@ -76,6 +76,11 @@ output is echoed** (prefixed) so you see what actually went wrong instead of a
 bare `exit status 1`. Turn on `stream` only for hooks whose progress you want to
 watch live.
 
+> **Platform note:** `timeout` aborts a runaway hook by killing its whole
+> process group, which relies on Unix process-group semantics. Grove ships for
+> macOS and Linux only, so this is always available on supported platforms; the
+> rest of the hook behavior is platform-independent.
+
 Hook output goes to **stderr**, keeping Grove's stdout clean for shell
 integration (e.g. `cd "$(gw go my-feature)"`).
 

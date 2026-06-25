@@ -266,6 +266,22 @@ func TestRunTimeout(t *testing.T) {
 	}
 }
 
+// TestRunInvalidTimeoutFailsOpen verifies an unparseable timeout string is
+// ignored (logged as a warning) and the hook still runs unbounded, rather than
+// being rejected — so a typo in `timeout` never silently stops a hook firing.
+func TestRunInvalidTimeoutFailsOpen(t *testing.T) {
+	dir := t.TempDir()
+	marker := filepath.Join(dir, "fired")
+	useTempConfig(t, "[hooks.post_create]\ncommand = \"touch "+marker+"\"\ntimeout = \"banana\"\n")
+
+	if err := Run("post_create", Vars{}); err != nil {
+		t.Fatalf("Run = %v, want nil (invalid timeout should be ignored, not fatal)", err)
+	}
+	if _, err := os.Stat(marker); err != nil {
+		t.Fatalf("hook did not fire despite only an invalid timeout: %v", err)
+	}
+}
+
 // TestRunTimeoutKillsChildren verifies the timeout kills the hook's child
 // processes, not just the shell — otherwise a hook like "npm install" would
 // leave the real work running after the timeout fired.

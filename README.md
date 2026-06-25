@@ -74,8 +74,11 @@ gw add-dir ~/other/repos
 gw remove-dir ~/old/repos
 gw explore                                             # deep-scan for repos (2–3 levels)
 
-# Workspaces
-gw create my-feature -r svc-a,svc-b -b feat/login     # create workspace
+# Workspaces — recommended: name the branch with -b and let Grove derive the
+# workspace name; grab repos from a saved preset (-p) or an ad-hoc list (-r).
+gw create -b feat/login -p backend                     # → workspace "feat-login" (name derived from branch)
+gw create -b feat/login -r svc-a,svc-b                 # ad-hoc repos instead of a preset
+gw create my-feature -r svc-a,svc-b -b feat/login      # …or pass an explicit workspace name
 gw list                                                # list workspaces (compact)
 gw list -s                                             # list with git status summary
 gw ws show my-feature                                  # show workspace details
