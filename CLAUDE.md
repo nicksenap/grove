@@ -43,7 +43,7 @@ Tool-specific integrations (Claude Code memory sync, Zellij, archive, dashboard)
 - **internal/console/** — Colored output helpers and table rendering.
 - **internal/discover/** — Finds git repos in configured directories. Caches remote URLs on disk.
 - **internal/gitops/** — Thin wrappers around `git` subprocess calls. Includes `ReadGroveConfig()`.
-- **internal/lifecycle/** — Runs global lifecycle hooks (`on_close`, `pre_delete`, etc.) defined in `[hooks]`. Plugins register here.
+- **internal/lifecycle/** — Runs global lifecycle hooks (`post_create`, `pre_delete`, `on_close`) defined in `[hooks]`. Hooks may be bare command strings or tables with metadata (`stream`, `timeout`, `on_failure`); the global `--no-hooks`/`-n` flag skips them all. Plugins register here.
 - **internal/logging/** — Structured logging.
 - **internal/mcp/** — MCP JSON-RPC server exposing workspace state to Claude Code.
 - **internal/models/** — Data structs with JSON serialization.
@@ -51,5 +51,6 @@ Tool-specific integrations (Claude Code memory sync, Zellij, archive, dashboard)
 - **internal/plugin/** — Plugin install/upgrade/remove from GitHub releases.
 - **internal/state/** — Workspace state persisted to `~/.grove/state.json`. Uses atomic writes.
 - **internal/stats/** — Workspace usage stats and heatmap.
+- **internal/streamio/** — Per-line prefixing writer (e.g. `[post_create] ...`). Shared by `gw run` and the lifecycle hook paths for live/streamed output.
 - **internal/update/** — Non-blocking version check.
 - **internal/workspace/** — Core worktree orchestration (create, delete, status, sync). Uses goroutines for concurrent multi-repo operations.

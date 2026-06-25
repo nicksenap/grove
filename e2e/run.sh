@@ -777,6 +777,71 @@ workspace_dir = "${GROVE_HOME}/.grove/workspaces"
 EOF
 
 # ---------------------------------------------------------------------------
+# Test: hook metadata (stream + on_failure)
+# ---------------------------------------------------------------------------
+section "Hook metadata (stream + on_failure)"
+
+# stream = true should send the hook's output live to stderr, each line
+# prefixed with the hook name.
+cat > "${GROVE_HOME}/.grove/config.toml" <<EOF
+repo_dirs = ["${REPOS_DIR}"]
+workspace_dir = "${GROVE_HOME}/.grove/workspaces"
+
+[hooks.post_create]
+command = "echo hello-from-stream"
+stream = true
+EOF
+
+stream_out=$(gw create stream-ws --branch feat/stream --repos svc-auth 2>&1)
+if echo "${stream_out}" | grep -q '\[post_create\] hello-from-stream'; then
+    pass "stream = true streamed prefixed hook output"
+else
+    fail "stream hook output missing [post_create] prefix: ${stream_out}"
+fi
+gw delete stream-ws --force 2>&1
+
+# on_failure = "abort" should make a failing hook fatal — gw exits non-zero.
+cat > "${GROVE_HOME}/.grove/config.toml" <<EOF
+repo_dirs = ["${REPOS_DIR}"]
+workspace_dir = "${GROVE_HOME}/.grove/workspaces"
+
+[hooks.post_create]
+command = "echo boom-details; exit 1"
+on_failure = "abort"
+EOF
+
+if gw create abort-ws --branch feat/abort --repos svc-auth 2>&1; then
+    fail "on_failure = abort did not make the failing hook fatal"
+else
+    pass "on_failure = abort made the failing hook fatal (gw exited non-zero)"
+fi
+# The workspace is created before post_create runs, so it still exists. Only
+# pre_delete fires on delete (unset here), so cleanup succeeds cleanly.
+gw delete abort-ws --force 2>&1
+
+# Default on_failure ("warn") should NOT abort — a failing hook only warns.
+cat > "${GROVE_HOME}/.grove/config.toml" <<EOF
+repo_dirs = ["${REPOS_DIR}"]
+workspace_dir = "${GROVE_HOME}/.grove/workspaces"
+
+[hooks.post_create]
+command = "echo boom-details; exit 1"
+EOF
+
+if gw create warn-ws --branch feat/warn --repos svc-auth 2>&1; then
+    pass "default on_failure = warn did not abort on hook failure"
+else
+    fail "default on_failure = warn should not abort the command"
+fi
+gw delete warn-ws --force 2>&1
+
+# Restore config without hooks for subsequent tests
+cat > "${GROVE_HOME}/.grove/config.toml" <<EOF
+repo_dirs = ["${REPOS_DIR}"]
+workspace_dir = "${GROVE_HOME}/.grove/workspaces"
+EOF
+
+# ---------------------------------------------------------------------------
 # Test: gw ws delete (subcommand parity with gw delete)
 # ---------------------------------------------------------------------------
 section "ws delete subcommand"
