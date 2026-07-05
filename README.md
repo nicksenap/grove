@@ -52,11 +52,13 @@ brew update && brew upgrade grove
 Then add shell integration:
 
 **Bash / Zsh** — add to `.zshrc` or `.bashrc`:
+
 ```bash
 eval "$(gw shell-init)"
 ```
 
 **Nushell** — generate and source the init file:
+
 ```nu
 gw shell-init --shell nu | save -f ~/.config/nushell/grove.nu
 # then add to config.nu:
@@ -112,6 +114,16 @@ gw wizard                                              # interactive plugin + ho
 All interactive menus support **type-to-search** filtering, arrow-key navigation (single-select), or arrow + tab (multi-select) with an `(all)` shortcut.
 
 ## Documentation
+
+Full documentation lives in the [OpenWiki](openwiki/quickstart.md) — start with the quickstart, then dive into the area you need:
+
+- [Quickstart](openwiki/quickstart.md) — install, first commands, key concepts, and a source map
+- [Architecture](openwiki/architecture.md) — layered design, data model, concurrency, and key decisions
+- [Workflows](openwiki/workflows.md) — how each command maps to code (create, sync, run, delete, presets…)
+- [Operations](openwiki/operations.md) — configuration, hooks, state, troubleshooting, and release process
+- [Integrations](openwiki/integrations.md) — plugins, the MCP server, and workspace source provenance
+
+### Focused topic guides
 
 - [Hooks](docs/hooks.md) — global hooks (terminal integration) & per-repo hooks (`.grove.toml`, `gw run`)
 - [Plugins](docs/plugins.md) — extend gw with external commands

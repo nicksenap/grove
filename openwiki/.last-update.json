@@ -1,0 +1,12 @@
+{
+  "updatedAt": "2024-01-15T00:00:00Z",
+  "gitHead": "HEAD",
+  "pages": [
+    "quickstart.md",
+    "architecture.md",
+    "workflows.md",
+    "operations.md",
+    "integrations.md"
+  ],
+  "summary": "Initial OpenWiki documentation for Grove. Covers quick start, architecture design, user workflows, operations/config, and plugin integrations."
+}

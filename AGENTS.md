@@ -1,6 +1,6 @@
-# CLAUDE.md
+# AGENTS.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file provides guidance to Codex (Codex.ai/code) when working with code in this repository.
 
 ## OpenWiki
 
@@ -44,7 +44,7 @@ Repos managed by Grove can have a `.grove.toml` at their root:
 
 Entry point: `cmd/gw/main.go` → `cmd.Execute()` (Cobra).
 
-Tool-specific integrations (Claude Code memory sync, Zellij, archive, dashboard) live in external plugins (`gw-claude`, `gw-zellij`, `gw-archive`, `gw-dash`) — Grove core is a pure git worktree orchestrator. Plugins hook into lifecycle events configured in `~/.grove/config.toml`.
+Tool-specific integrations (Codex memory sync, Zellij, archive, dashboard) live in external plugins (`gw-Codex`, `gw-zellij`, `gw-archive`, `gw-dash`) — Grove core is a pure git worktree orchestrator. Plugins hook into lifecycle events configured in `~/.grove/config.toml`.
 
 ### Package layout
 
@@ -56,7 +56,7 @@ Tool-specific integrations (Claude Code memory sync, Zellij, archive, dashboard)
 - **internal/gitops/** — Thin wrappers around `git` subprocess calls. Includes `ReadGroveConfig()`.
 - **internal/lifecycle/** — Runs global lifecycle hooks (`post_create`, `pre_delete`, `on_close`) defined in `[hooks]`. Hooks may be bare command strings or tables with metadata (`stream`, `timeout`, `on_failure`); the global `--no-hooks`/`-n` flag skips them all. Plugins register here.
 - **internal/logging/** — Structured logging.
-- **internal/mcp/** — MCP JSON-RPC server exposing workspace state to Claude Code.
+- **internal/mcp/** — MCP JSON-RPC server exposing workspace state to Codex.
 - **internal/models/** — Data structs with JSON serialization.
 - **internal/picker/** — Interactive terminal menus.
 - **internal/plugin/** — Plugin install/upgrade/remove from GitHub releases.
