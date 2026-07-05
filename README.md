@@ -70,48 +70,26 @@ This enables `gw go` to change your working directory and auto-cds into new work
 ## Usage
 
 ```bash
-# Setup — register one or more directories containing your repos
+# Register your repo directories (one-time)
 gw init ~/dev ~/work/microservices
-gw add-dir ~/other/repos
-gw remove-dir ~/old/repos
-gw explore                                             # deep-scan for repos (2–3 levels)
 
-# Workspaces — recommended: name the branch with -b and let Grove derive the
-# workspace name; grab repos from a saved preset (-p) or an ad-hoc list (-r).
-gw create -b feat/login -p backend                     # → workspace "feat-login" (name derived from branch)
-gw create -b feat/login -r svc-a,svc-b                 # ad-hoc repos instead of a preset
-gw create my-feature -r svc-a,svc-b -b feat/login      # …or pass an explicit workspace name
-gw list                                                # list workspaces (compact)
-gw list -s                                             # list with git status summary
-gw ws show my-feature                                  # show workspace details
-gw status my-feature                                   # git status across repos
-gw sync my-feature                                     # rebase all repos onto base branch
-gw go my-feature                                       # cd into workspace
-gw run my-feature                                      # run dev processes (TUI)
-gw add-repo my-feature -r svc-c                        # add a repo to existing workspace
-gw remove-repo my-feature -r svc-a                     # remove a repo from workspace
-gw rename my-feature --to new-name                     # rename a workspace
-gw doctor                                              # diagnose workspace health issues
-gw delete my-feature                                   # clean up (worktrees + branches)
+# Create a workspace: name the branch, pull repos from a preset or a list
+gw create -b feat/login -p backend        # repos from a saved preset
+gw create -b feat/login -r svc-a,svc-b    # …or an ad-hoc repo list
 
-# Presets — save repo groups for quick workspace creation
-gw preset add backend -r svc-auth,svc-api,svc-worker
-gw preset list                                         # list presets (compact)
-gw preset show backend                                 # show preset details
-gw preset remove backend
-gw create my-feature -p backend                        # use a preset instead of -r
+# Work across the whole workspace
+gw go my-feature       # cd into the workspace
+gw status my-feature   # git status across every repo
+gw sync my-feature     # rebase all repos onto their base branch
+gw run my-feature      # run dev processes (TUI)
 
-# Plugins — extend gw with external commands
-gw plugin install nicksenap/gw-claude                  # Claude Code integration
-gw plugin install nicksenap/gw-zellij                  # Zellij terminal integration
-gw plugin install nicksenap/gw-dash                    # agent monitoring dashboard
-gw plugin list                                         # list installed plugins
-gw plugin upgrade                                      # upgrade all plugins
-gw plugin remove dash                                  # uninstall a plugin
-gw wizard                                              # interactive plugin + hook setup
+# Clean up when done
+gw delete my-feature   # removes worktrees + branches
 ```
 
-All interactive menus support **type-to-search** filtering, arrow-key navigation (single-select), or arrow + tab (multi-select) with an `(all)` shortcut.
+Interactive menus support **type-to-search** filtering, arrow-key navigation (single-select), or arrow + tab (multi-select) with an `(all)` shortcut.
+
+Presets, plugins, hooks, and the full command reference are covered in [Workflows](openwiki/workflows.md) and [Operations](openwiki/operations.md).
 
 ## Documentation
 
