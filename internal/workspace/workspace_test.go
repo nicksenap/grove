@@ -837,6 +837,42 @@ func TestStatusSuccess(t *testing.T) {
 	}
 }
 
+func TestCollectRepoStatusReportsCurrentBranch(t *testing.T) {
+	env := setupTestEnv(t)
+	env.createRepo("api")
+	env.svc.Create("status-ws", "feat/status", []string{"api"}, env.repoMap, env.cfg)
+
+	ws, err := env.svc.State.GetWorkspace("status-ws")
+	if err != nil {
+		t.Fatalf("get workspace: %v", err)
+	}
+	repo := ws.Repos[0]
+	env.run(repo.WorktreePath, "git", "switch", "-q", "-c", "feat/actual")
+
+	result := collectRepoStatus(repo)
+	if result.Branch != "feat/actual" {
+		t.Errorf("branch: got %q, want %q", result.Branch, "feat/actual")
+	}
+}
+
+func TestCollectRepoStatusReportsDetachedHead(t *testing.T) {
+	env := setupTestEnv(t)
+	env.createRepo("api")
+	env.svc.Create("status-ws", "feat/status", []string{"api"}, env.repoMap, env.cfg)
+
+	ws, err := env.svc.State.GetWorkspace("status-ws")
+	if err != nil {
+		t.Fatalf("get workspace: %v", err)
+	}
+	repo := ws.Repos[0]
+	env.run(repo.WorktreePath, "git", "switch", "-q", "--detach")
+
+	result := collectRepoStatus(repo)
+	if result.Branch != "(detached)" {
+		t.Errorf("branch: got %q, want %q", result.Branch, "(detached)")
+	}
+}
+
 func TestStatusJSON(t *testing.T) {
 	env := setupTestEnv(t)
 	env.createRepo("api")
