@@ -1,5 +1,13 @@
 # Changelog
 
+## v1.1.10
+
+### Fixes
+
+- `gw status` now reports each worktree's **live** current branch instead of the branch recorded when the workspace was created. If you `git switch` to a different branch inside a worktree, `gw status` (and its `--json` output) now reflect where the worktree actually is, and a detached HEAD is shown as `(detached)`. Branch detection falls back to the recorded branch if the live lookup fails, so status stays robust.
+
+Special thanks to [@igor-kupczynski](https://github.com/igor-kupczynski) for spotting and fixing the stale status branch reporting. 🙌
+
 ## v1.1.9
 
 ### Features
