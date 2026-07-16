@@ -681,6 +681,13 @@ func collectRepoStatus(r models.RepoWorktree) repoStatusResult {
 		Repo:   r.RepoName,
 		Branch: r.Branch,
 	}
+	if branch, err := gitops.CurrentBranch(r.WorktreePath); err == nil {
+		if branch == "" {
+			rs.Branch = "(detached)"
+		} else {
+			rs.Branch = branch
+		}
+	}
 	status, err := gitops.RepoStatus(r.WorktreePath)
 	if err != nil {
 		rs.Status = "error: " + err.Error()
