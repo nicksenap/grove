@@ -158,5 +158,5 @@ func (c *Checker) FormatNotice(current string) string {
 	if newer == "" {
 		return ""
 	}
-	return fmt.Sprintf("A newer version of gw is available: %s → %s. Update with: brew upgrade gw", current, newer)
+	return fmt.Sprintf("A newer version of gw is available: %s → %s. Update with: brew update && brew upgrade grove", current, newer)
 }
