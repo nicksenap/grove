@@ -12,6 +12,7 @@ import (
 	"github.com/nicksenap/grove/internal/gitops"
 	"github.com/nicksenap/grove/internal/logging"
 	"github.com/nicksenap/grove/internal/models"
+	"github.com/nicksenap/grove/internal/state"
 )
 
 // BranchMode determines how a worktree's branch is provisioned.
@@ -64,109 +65,12 @@ func (s *Service) Create(name, branch string, repoNames []string, repoMap map[st
 	})
 }
 
-// CreateWithOpts creates a new workspace from the given options. It is the full
-// implementation behind Create, additionally supporting per-repo branch tracking
-// (BranchMode/TrackBranchRepo) and a persisted Source link.
+// CreateWithOpts creates a new workspace from the given options. It is a
+// backward-compatible shim over CreateWithResult that returns a synthesized
+// error for non-success outcomes; new callers should prefer CreateWithResult to
+// render ordered per-repository outcomes and meaningful exit codes.
 func (s *Service) CreateWithOpts(name string, opts CreateOpts) error {
-	branch := opts.Branch
-	repoNames := opts.Repos
-	repoMap := opts.RepoMap
-	cfg := opts.Cfg
-
-	// Check duplicate
-	existing, err := s.State.GetWorkspace(name)
-	if err != nil {
-		return err
-	}
-	if existing != nil {
-		return fmt.Errorf("workspace %s already exists", name)
-	}
-
-	logging.Info("creating workspace %q (branch=%s, repos=%v)", name, branch, repoNames)
-
-	wsPath := filepath.Join(cfg.WorkspaceDir, name)
-	if err := os.MkdirAll(wsPath, 0o755); err != nil {
-		return fmt.Errorf("creating workspace dir: %w", err)
-	}
-
-	ws := models.NewWorkspace(name, wsPath, branch)
-	ws.Source = opts.Source
-
-	// Validate all repo names first
-	sourcePaths := make([]string, len(repoNames))
-	for i, repoName := range repoNames {
-		sourcePath, ok := repoMap[repoName]
-		if !ok {
-			os.RemoveAll(wsPath)
-			return fmt.Errorf("repo %s not found", repoName)
-		}
-		sourcePaths[i] = sourcePath
-	}
-
-	// Phase 1: parallel fetch (the slow network part)
-	console.Infof("fetching %d repos...", len(repoNames))
-	var fetchWg sync.WaitGroup
-	for i, repoName := range repoNames {
-		fetchWg.Add(1)
-		go func(source, name string) {
-			defer fetchWg.Done()
-			if err := gitops.Fetch(source); err != nil {
-				console.Warningf("  %s: fetch failed, using local state", name)
-			}
-		}(sourcePaths[i], repoName)
-	}
-	fetchWg.Wait()
-
-	// Phase 2: sequential worktree creation (for rollback safety)
-	var created []models.RepoWorktree
-	for i, repoName := range repoNames {
-		console.Infof("[%d/%d] %s", i+1, len(repoNames), repoName)
-		// Resolve the per-repo mode. With no TrackBranchRepo set, opts.BranchMode
-		// applies to every repo; otherwise only the named repo uses it.
-		mode := opts.BranchMode
-		if opts.TrackBranchRepo != "" && repoName != opts.TrackBranchRepo {
-			mode = BranchModeCreate
-		}
-		rw, err := provisionWorktreeNoFetch(sourcePaths[i], repoName, wsPath, branch, mode)
-		if err != nil {
-			logging.Error("workspace creation failed for %q — rolled back", name)
-			rollback(created)
-			os.RemoveAll(wsPath)
-			return fmt.Errorf("provisioning %s: %w", repoName, err)
-		}
-		created = append(created, *rw)
-	}
-
-	ws.Repos = created
-
-	// Run setup hooks (parallel)
-	if hasSetupHooks(ws) {
-		console.Infof("running setup hooks...")
-	}
-	s.runSetupHooks(ws)
-
-	// Save state
-	if err := s.State.AddWorkspace(ws); err != nil {
-		rollback(created)
-		os.RemoveAll(wsPath)
-		return err
-	}
-
-	// Record stats
-	s.Stats.RecordCreated(ws)
-
-	// Write .mcp.json
-	writeMCPConfig(ws)
-
-	logging.Info("workspace %q created at %s", name, wsPath)
-	console.Successf("Workspace %s created at %s", name, wsPath)
-
-	// Write GROVE_CD_FILE if set
-	if cdFile := os.Getenv("GROVE_CD_FILE"); cdFile != "" {
-		os.WriteFile(cdFile, []byte(wsPath), 0o644)
-	}
-
-	return nil
+	return s.CreateWithResult(name, opts).toError()
 }
 
 func provisionWorktree(sourcePath, repoName, wsPath, branch string) (*models.RepoWorktree, error) {
@@ -233,22 +137,6 @@ func provisionWorktreeNoFetch(sourcePath, repoName, wsPath, branch string, mode 
 		WorktreePath: wtPath,
 		Branch:       branch,
 	}, nil
-}
-
-func rollback(repos []models.RepoWorktree) {
-	for _, r := range repos {
-		gitops.WorktreeRemove(r.SourceRepo, r.WorktreePath)
-	}
-}
-
-func hasSetupHooks(ws models.Workspace) bool {
-	for _, r := range ws.Repos {
-		groveCfg, _ := gitops.ReadGroveConfig(r.SourceRepo)
-		if groveCfg != nil && len(groveCfg.Setup) > 0 {
-			return true
-		}
-	}
-	return false
 }
 
 func (s *Service) runSetupHooks(ws models.Workspace) {
@@ -958,11 +846,18 @@ func (s *Service) Doctor(fix bool) ([]models.DoctorIssue, int, error) {
 		return nil, 0, err
 	}
 
+	// Scan recovery records first so legacy fixes can be suppressed for any
+	// workspace with a pending operation — its state may be mid-reconciliation
+	// and must not be treated as merely stale. A corrupt/unreadable journal
+	// disables all destructive fixes, since the affected workspace is unknown.
+	recIssues, pending, journalOK := s.checkRecoveryRecords()
+
 	var issues []models.DoctorIssue
 	fixed := 0
 
 	for _, ws := range workspaces {
-		f, iss := s.checkWorkspaceExists(ws, fix)
+		allowFix := fix && journalOK && !pending[ws.Name]
+		f, iss := s.checkWorkspaceExists(ws, allowFix)
 		if f > 0 {
 			fixed += f
 		}
@@ -971,12 +866,83 @@ func (s *Service) Doctor(fix bool) ([]models.DoctorIssue, int, error) {
 			continue
 		}
 
-		f, iss = s.checkWorkspaceRepos(&ws, fix)
+		f, iss = s.checkWorkspaceRepos(&ws, allowFix)
 		fixed += f
 		issues = append(issues, iss...)
 	}
 
+	// Recovery records are reported but never mutated here; repair of each record
+	// kind is delivered by later tasks (doctor --fix).
+	issues = append(issues, recIssues...)
+
 	return issues, fixed, nil
+}
+
+// checkRecoveryRecords surfaces durable operation records left behind by an
+// interrupted or crashed mutation. It is read-only and returns the set of
+// workspace names that have a pending record plus whether the journal was fully
+// readable, so callers can suppress unsafe legacy fixes.
+func (s *Service) checkRecoveryRecords() ([]models.DoctorIssue, map[string]bool, bool) {
+	recs, err := s.ops().List()
+	pending := map[string]bool{}
+	journalOK := err == nil
+	var issues []models.DoctorIssue
+	if err != nil {
+		issues = append(issues, models.DoctorIssue{
+			Workspace:       "",
+			Repo:            nil,
+			Issue:           "corrupt recovery record: " + err.Error(),
+			SuggestedAction: "inspect ~/.grove/operations",
+		})
+	}
+	for i := range recs {
+		rec := recs[i]
+		if rec.Workspace != "" {
+			pending[rec.Workspace] = true
+		}
+		issue := "interrupted " + string(rec.Kind) + " operation"
+		if rec.Phase != "" {
+			issue += " (phase " + rec.Phase + ")"
+		}
+		if rec.LastError != "" {
+			issue += ": " + rec.LastError
+		}
+		// Repair of recovery records is not yet implemented (Tasks 10-13); guide
+		// the user to resume the original command rather than over-promising
+		// doctor --fix.
+		action := "re-run the original " + resumeCommand(rec.Kind) + " to resume"
+		if !rec.Supported() {
+			action = "unsupported recovery record; inspect ~/.grove/operations"
+		}
+		issues = append(issues, models.DoctorIssue{
+			Workspace:       rec.Workspace,
+			Repo:            nil,
+			Issue:           issue,
+			SuggestedAction: action,
+		})
+	}
+	return issues, pending, journalOK
+}
+
+// resumeCommand maps an operation kind to the gw command a user re-runs to
+// resume it.
+func resumeCommand(k state.OperationKind) string {
+	switch k {
+	case state.OpCreate:
+		return "gw create"
+	case state.OpAdd:
+		return "gw add-repo"
+	case state.OpRemove:
+		return "gw remove-repo"
+	case state.OpDelete:
+		return "gw delete"
+	case state.OpSync:
+		return "gw sync"
+	case state.OpRename:
+		return "gw rename"
+	default:
+		return "gw command"
+	}
 }
 
 func (s *Service) checkWorkspaceExists(ws models.Workspace, fix bool) (int, []models.DoctorIssue) {

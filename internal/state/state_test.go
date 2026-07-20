@@ -278,6 +278,11 @@ func TestAtomicWrite(t *testing.T) {
 
 	tmpPath := s.Path + ".tmp"
 	if _, err := os.Stat(tmpPath); !os.IsNotExist(err) {
-		t.Error("temp file should be cleaned up")
+		t.Error("legacy temp file should not exist")
+	}
+	// No uniquely named temp files should leak either.
+	matches, _ := filepath.Glob(filepath.Join(filepath.Dir(s.Path), ".*.tmp"))
+	if len(matches) != 0 {
+		t.Errorf("leaked temp files: %v", matches)
 	}
 }

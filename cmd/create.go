@@ -41,6 +41,29 @@ var createCmd = &cobra.Command{
 		repos := discover.FindAllRepos(cfg.RepoDirs)
 		repoMap := discover.RepoMap(repos)
 
+		// Resolve and validate branch and name BEFORE any source cloning, so a bad
+		// name, missing branch, or aborted prompt never triggers a network clone.
+		// (Cloning is source acquisition; a successful clone is intentionally
+		// retained even if workspace creation later fails.)
+		branch := createBranch
+		if branch == "" {
+			if console.IsTerminal(os.Stdin) {
+				branch = console.Prompt("Branch name")
+			}
+			if branch == "" {
+				exitError("Branch is required: --branch / -b")
+			}
+		}
+		var name string
+		if len(args) > 0 {
+			name = args[0]
+		} else {
+			name = deriveName(branch)
+		}
+		if err := workspace.ValidateWorkspaceName(name); err != nil {
+			exitError(err.Error())
+		}
+
 		var repoNames []string
 
 		// Resolve repos from preset
@@ -58,6 +81,17 @@ var createCmd = &cobra.Command{
 			repoNames = strings.Split(createRepos, ",")
 			for i := range repoNames {
 				repoNames[i] = strings.TrimSpace(repoNames[i])
+			}
+			// Validate non-URL repo names against known repos BEFORE cloning any
+			// URLs, so a mixed list with an unknown local repo is rejected without a
+			// network clone.
+			for _, name := range repoNames {
+				if gitops.IsGitURL(name) {
+					continue
+				}
+				if _, ok := repoMap[name]; !ok {
+					exitError("Unknown repo: " + name + ". Available: " + strings.Join(repoNamesList(repos), ", "))
+				}
 			}
 			// Clone any remote git URLs into the first repo_dir (mirrors add-repo).
 			// This lets a resolver pass an unmatched repo as a clone URL.
@@ -145,29 +179,10 @@ var createCmd = &cobra.Command{
 		}
 
 		// Validate repos exist
-		for _, name := range repoNames {
-			if _, ok := repoMap[name]; !ok {
-				exitError("Unknown repo: " + name + ". Available: " + strings.Join(repoNamesList(repos), ", "))
+		for _, rn := range repoNames {
+			if _, ok := repoMap[rn]; !ok {
+				exitError("Unknown repo: " + rn + ". Available: " + strings.Join(repoNamesList(repos), ", "))
 			}
-		}
-
-		// Branch — prompt if omitted and in a terminal
-		branch := createBranch
-		if branch == "" {
-			if console.IsTerminal(os.Stdin) {
-				branch = console.Prompt("Branch name")
-			}
-			if branch == "" {
-				exitError("Branch is required: --branch / -b")
-			}
-		}
-
-		// Name
-		var name string
-		if len(args) > 0 {
-			name = args[0]
-		} else {
-			name = deriveName(branch)
 		}
 
 		// --replace: delete the current workspace (detected from cwd) before creating the new one.
@@ -226,11 +241,12 @@ var createCmd = &cobra.Command{
 			opts.BranchMode = workspace.BranchModeTrack
 		}
 
-		if err := workspace.NewService().CreateWithOpts(name, opts); err != nil {
+		if res := workspace.NewService().CreateWithResult(name, opts); res.NonZeroExit() {
+			renderRepoOutcomes(res)
 			if replacedName != "" {
-				exitError("failed to create new workspace (old workspace " + replacedName + " was already deleted): " + err.Error())
+				exitError("failed to create new workspace (old workspace " + replacedName + " was already deleted): " + res.Message)
 			}
-			exitError(err.Error())
+			exitError(res.Message)
 		}
 
 		// Fire post_create hook if configured
@@ -242,10 +258,10 @@ var createCmd = &cobra.Command{
 			vars.SourceTitle = source.Title
 		}
 		if err := lifecycle.Run("post_create", vars); err != nil && !errors.Is(err, lifecycle.ErrNoHook) {
-			if lifecycle.ShouldAbort(err) {
-				exitError(err.Error())
-			}
+			// A post-create hook failure is a partial outcome: the workspace is
+			// valid but a lifecycle step failed, so exit non-zero.
 			console.Warning(err.Error())
+			os.Exit(1)
 		}
 	},
 }

@@ -52,6 +52,7 @@ func setupTestEnv(t *testing.T) *testEnv {
 	svc := &Service{
 		State:        store,
 		Stats:        &stats.Tracker{StatsPath: filepath.Join(groveDir, "stats.json"), NowFn: time.Now},
+		Ops:          state.NewOperationStore(groveDir),
 		RunCmd:       prodRunCmd,
 		RunCmdSilent: prodRunCmdSilent,
 	}
