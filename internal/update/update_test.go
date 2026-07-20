@@ -189,3 +189,21 @@ func TestFetchAndCacheWritesToDisk(t *testing.T) {
 		t.Errorf("last_check: got %d, want %d", cache.LastCheck, fixed.Unix())
 	}
 }
+
+func TestFormatNoticeUsesHomebrewFormulaName(t *testing.T) {
+	c := testChecker(t)
+	cache := CacheData{LastCheck: time.Now().Unix(), Latest: "1.2.0"}
+	data, err := json.Marshal(cache)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(c.CachePath, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	got := c.FormatNotice("1.1.0")
+	want := "A newer version of gw is available: 1.1.0 → 1.2.0. Update with: brew update && brew upgrade grove"
+	if got != want {
+		t.Errorf("FormatNotice() = %q, want %q", got, want)
+	}
+}
