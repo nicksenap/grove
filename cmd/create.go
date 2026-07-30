@@ -151,22 +151,23 @@ var createCmd = &cobra.Command{
 			}
 		}
 
-		// Branch — prompt if omitted and in a terminal
+		// Name — known early so the branch prompt can default to it.
+		var name string
+		if len(args) > 0 {
+			name = args[0]
+		}
+
+		// Branch — prompt if omitted and in a terminal.
 		branch := createBranch
 		if branch == "" {
 			if console.IsTerminal(os.Stdin) {
-				branch = console.Prompt("Branch name")
+				branch = console.PromptDefault("Branch name", name)
 			}
 			if branch == "" {
 				exitError("Branch is required: --branch / -b")
 			}
 		}
-
-		// Name
-		var name string
-		if len(args) > 0 {
-			name = args[0]
-		} else {
+		if name == "" {
 			name = deriveName(branch)
 		}
 

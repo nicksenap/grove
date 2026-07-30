@@ -77,10 +77,24 @@ func Confirm(prompt string, defaultYes bool) bool {
 
 // Prompt asks the user for text input.
 func Prompt(label string) string {
-	fmt.Fprintf(os.Stderr, "%s: ", label)
+	return PromptDefault(label, "")
+}
+
+// PromptDefault asks the user for text input, showing defaultValue in brackets
+// when non-empty. Empty input (just Enter) returns defaultValue.
+func PromptDefault(label, defaultValue string) string {
+	if defaultValue != "" {
+		fmt.Fprintf(os.Stderr, "%s [%s]: ", label, defaultValue)
+	} else {
+		fmt.Fprintf(os.Stderr, "%s: ", label)
+	}
 	reader := bufio.NewReader(os.Stdin)
 	input, _ := reader.ReadString('\n')
-	return strings.TrimSpace(input)
+	input = strings.TrimSpace(input)
+	if input == "" {
+		return defaultValue
+	}
+	return input
 }
 
 // IsTerminal returns true if the given file is a terminal.
