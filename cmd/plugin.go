@@ -6,6 +6,7 @@ import (
 	"os"
 
 	"github.com/nicksenap/grove/internal/console"
+	"github.com/nicksenap/grove/internal/machine"
 	"github.com/nicksenap/grove/internal/plugin"
 	"github.com/spf13/cobra"
 )
@@ -52,7 +53,15 @@ var pluginListCmd = &cobra.Command{
 	Run: func(cmd *cobra.Command, args []string) {
 		plugins, err := plugin.List()
 		if err != nil {
-			exitError(err.Error())
+			fail(err)
+		}
+
+		if machine.Enabled() {
+			if plugins == nil {
+				plugins = []plugin.InstalledPlugin{}
+			}
+			machine.Emit(map[string]any{"plugins": plugins, "count": len(plugins)})
+			return
 		}
 
 		if len(plugins) == 0 {
@@ -120,6 +129,6 @@ plugins that were installed via "gw plugin install".`,
 }
 
 func init() {
-	pluginListCmd.Flags().BoolVarP(&pluginListJSON, "json", "j", false, "Output as JSON")
+	pluginListCmd.Flags().BoolVarP(&pluginListJSON, "json", "j", false, legacyJSONUsage)
 	pluginCmd.AddCommand(pluginInstallCmd, pluginListCmd, pluginRemoveCmd, pluginUpgradeCmd)
 }

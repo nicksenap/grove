@@ -16,7 +16,7 @@ func ResolveWorkspace(name string) (*models.Workspace, error) {
 			return nil, err
 		}
 		if ws == nil {
-			return nil, fmt.Errorf("workspace %s not found", name)
+			return nil, ErrWorkspaceNotFound(name)
 		}
 		return ws, nil
 	}
@@ -35,5 +35,5 @@ func ResolveWorkspace(name string) (*models.Workspace, error) {
 		return ws, nil
 	}
 
-	return nil, fmt.Errorf("not inside a workspace. Provide a workspace name or cd into one")
+	return nil, ErrNotInWorkspace()
 }

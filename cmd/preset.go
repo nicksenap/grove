@@ -9,6 +9,7 @@ import (
 	"github.com/nicksenap/grove/internal/config"
 	"github.com/nicksenap/grove/internal/console"
 	"github.com/nicksenap/grove/internal/discover"
+	"github.com/nicksenap/grove/internal/machine"
 	"github.com/nicksenap/grove/internal/models"
 	"github.com/nicksenap/grove/internal/picker"
 	"github.com/spf13/cobra"
@@ -83,6 +84,16 @@ var presetListCmd = &cobra.Command{
 	Short: "List all presets",
 	Run: func(cmd *cobra.Command, args []string) {
 		cfg := config.RequireConfig()
+
+		if machine.Enabled() {
+			presets := cfg.Presets
+			if presets == nil {
+				presets = map[string]models.Preset{}
+			}
+			machine.Emit(map[string]any{"presets": presets, "count": len(presets)})
+			return
+		}
+
 		if len(cfg.Presets) == 0 {
 			if !presetListJSON {
 				console.Info("No presets configured")
@@ -117,7 +128,13 @@ var presetShowCmd = &cobra.Command{
 		cfg := config.RequireConfig()
 		preset, ok := cfg.Presets[args[0]]
 		if !ok {
-			exitError(fmt.Sprintf("Preset %s not found", args[0]))
+			fail(machine.Errorf(machine.CodeRepoNotFound, "preset %s not found", args[0]).
+				WithActions(machine.NextAction("List presets", "gw preset list --format json")))
+		}
+
+		if machine.Enabled() {
+			machine.Emit(map[string]any{"name": args[0], "repos": preset.Repos})
+			return
 		}
 
 		if presetShowJSON {
@@ -184,7 +201,7 @@ var presetRemoveCmd = &cobra.Command{
 
 func init() {
 	presetAddCmd.Flags().StringVarP(&presetAddRepos, "repos", "r", "", "Comma-separated repo names")
-	presetListCmd.Flags().BoolVarP(&presetListJSON, "json", "j", false, "Output as JSON")
-	presetShowCmd.Flags().BoolVarP(&presetShowJSON, "json", "j", false, "Output as JSON")
+	presetListCmd.Flags().BoolVarP(&presetListJSON, "json", "j", false, legacyJSONUsage)
+	presetShowCmd.Flags().BoolVarP(&presetShowJSON, "json", "j", false, legacyJSONUsage)
 	presetCmd.AddCommand(presetAddCmd, presetListCmd, presetShowCmd, presetRemoveCmd)
 }

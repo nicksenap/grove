@@ -7,6 +7,8 @@ import (
 	"strings"
 
 	"github.com/nicksenap/grove/internal/console"
+	"github.com/nicksenap/grove/internal/machine"
+	"github.com/nicksenap/grove/internal/models"
 	"github.com/nicksenap/grove/internal/state"
 	"github.com/nicksenap/grove/internal/workspace"
 	"github.com/spf13/cobra"
@@ -56,13 +58,26 @@ var listCmd = &cobra.Command{
 }
 
 func init() {
-	wsListCmd.Flags().BoolVarP(&listJSON, "json", "j", false, "Output as JSON")
+	wsListCmd.Flags().BoolVarP(&listJSON, "json", "j", false, legacyJSONUsage)
 	wsListCmd.Flags().BoolVarP(&listStatus, "status", "s", false, "Include git status")
-	wsShowCmd.Flags().BoolVarP(&wsShowJSON, "json", "j", false, "Output as JSON")
+	wsShowCmd.Flags().BoolVarP(&wsShowJSON, "json", "j", false, legacyJSONUsage)
 	wsCmd.AddCommand(wsListCmd, wsShowCmd, wsDeleteCmd)
 
-	listCmd.Flags().BoolVarP(&listJSON, "json", "j", false, "Output as JSON")
+	listCmd.Flags().BoolVarP(&listJSON, "json", "j", false, legacyJSONUsage)
 	listCmd.Flags().BoolVarP(&listStatus, "status", "s", false, "Include git status")
+}
+
+// listResult is the machine payload for `gw list`. Count is included so a client
+// can assert on it without walking the array.
+type listResult struct {
+	Workspaces []models.Workspace `json:"workspaces"`
+	Count      int                `json:"count"`
+}
+
+// listStatusResult is the machine payload for `gw list --status`.
+type listStatusResult struct {
+	Workspaces []workspace.WorkspaceSummary `json:"workspaces"`
+	Count      int                          `json:"count"`
 }
 
 func doListAll() {
@@ -73,12 +88,16 @@ func doListAll() {
 
 	workspaces, err := state.Load()
 	if err != nil {
-		exitError(err.Error())
+		fail(err)
+	}
+
+	if machine.Enabled() {
+		machine.Emit(listResult{Workspaces: workspaces, Count: len(workspaces)}, listNextActions(workspaces)...)
+		return
 	}
 
 	if listJSON {
-		data, _ := json.MarshalIndent(workspaces, "", "  ")
-		fmt.Println(string(data))
+		emitLegacyJSON(workspaces)
 		return
 	}
 
@@ -99,15 +118,34 @@ func doListAll() {
 	table.Render()
 }
 
+// listNextActions points at the cheapest useful follow-up: inspecting a real
+// workspace, or creating the first one when there are none.
+func listNextActions(workspaces []models.Workspace) []machine.Action {
+	if len(workspaces) == 0 {
+		return []machine.Action{
+			machine.NextAction("Create the first workspace",
+				"gw create <name> -r <repo1,repo2> -b <branch> --format json"),
+		}
+	}
+	return []machine.Action{
+		machine.NextAction("Inspect repo state for a workspace",
+			"gw status "+workspaces[0].Name+" --format json"),
+	}
+}
+
 func listWithStatus() {
 	summaries, err := workspace.NewService().AllWorkspacesSummary()
 	if err != nil {
-		exitError(err.Error())
+		fail(err)
+	}
+
+	if machine.Enabled() {
+		machine.Emit(listStatusResult{Workspaces: summaries, Count: len(summaries)})
+		return
 	}
 
 	if listJSON {
-		data, _ := json.MarshalIndent(summaries, "", "  ")
-		fmt.Println(string(data))
+		emitLegacyJSON(summaries)
 		return
 	}
 
@@ -131,15 +169,20 @@ func listWithStatus() {
 func doShowOne(name string) {
 	ws, err := state.GetWorkspace(name)
 	if err != nil {
-		exitError(err.Error())
+		fail(err)
 	}
 	if ws == nil {
-		exitError("Workspace not found: " + name)
+		fail(workspace.ErrWorkspaceNotFound(name))
+	}
+
+	if machine.Enabled() {
+		machine.Emit(map[string]any{"workspace": ws},
+			machine.NextAction("Inspect repo state", "gw status "+ws.Name+" --format json"))
+		return
 	}
 
 	if wsShowJSON {
-		data, _ := json.MarshalIndent(ws, "", "  ")
-		fmt.Println(string(data))
+		emitLegacyJSON(ws)
 		return
 	}
 
@@ -176,4 +219,15 @@ func doShowOne(name string) {
 		table.AddRow([]string{r.RepoName, r.Branch, wt, src})
 	}
 	table.Render()
+}
+
+// emitLegacyJSON prints the pre-envelope bare JSON shape behind the deprecated
+// `--json` flag. Kept byte-compatible for existing scripts and plugins; new
+// consumers should use `--format json`.
+func emitLegacyJSON(v any) {
+	data, err := json.MarshalIndent(v, "", "  ")
+	if err != nil {
+		fail(machine.Wrap(machine.CodeInternal, err, "could not serialize output: %s", err))
+	}
+	fmt.Println(string(data))
 }

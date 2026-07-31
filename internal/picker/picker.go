@@ -8,11 +8,28 @@ import (
 	"strings"
 
 	"github.com/nicksenap/grove/internal/console"
+	"github.com/nicksenap/grove/internal/machine"
 	"golang.org/x/term"
 )
 
 // ErrCancelled is returned when the user cancels a picker with Escape or Ctrl+C.
 var ErrCancelled = errors.New("selection cancelled")
+
+// unavailable reports why an interactive picker cannot run: machine mode
+// promises never to prompt, and a non-TTY session cannot render one. Both are
+// USAGE failures — the caller has to name what it wants explicitly.
+func unavailable(prompt string) error {
+	if machine.Enabled() {
+		return machine.Errorf(machine.CodeUsage,
+			"%s requires an explicit value in --format json (machine mode never prompts)", strings.TrimSuffix(prompt, ":")).
+			WithFix("Pass the value as an argument or flag instead of relying on interactive selection")
+	}
+	if !console.IsTerminal(os.Stdin) || !console.IsTerminal(os.Stderr) {
+		return machine.Errorf(machine.CodeUsage,
+			"interactive selection requires a terminal. Provide explicit flags instead")
+	}
+	return nil
+}
 
 // PickOne shows a single-select picker with type-to-search.
 // Returns the selected item or error if cancelled.
@@ -23,8 +40,8 @@ func PickOne(prompt string, choices []string) (string, error) {
 	if len(choices) == 1 {
 		return choices[0], nil
 	}
-	if !console.IsTerminal(os.Stdin) || !console.IsTerminal(os.Stderr) {
-		return "", fmt.Errorf("interactive selection requires a terminal. Provide explicit flags instead")
+	if err := unavailable(prompt); err != nil {
+		return "", err
 	}
 
 	m := newSelectModel(prompt, choices, false)
@@ -43,8 +60,8 @@ func PickOne(prompt string, choices []string) (string, error) {
 // Prepends an "(all)" option for quick select-all.
 // Returns the selected items or error if cancelled.
 func PickMany(prompt string, choices []string) ([]string, error) {
-	if !console.IsTerminal(os.Stdin) || !console.IsTerminal(os.Stderr) {
-		return nil, fmt.Errorf("interactive selection requires a terminal. Provide explicit flags instead")
+	if err := unavailable(prompt); err != nil {
+		return nil, err
 	}
 	if len(choices) == 0 {
 		return nil, fmt.Errorf("no choices available")

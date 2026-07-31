@@ -79,7 +79,7 @@ func (s *Service) CreateWithOpts(name string, opts CreateOpts) error {
 		return err
 	}
 	if existing != nil {
-		return fmt.Errorf("workspace %s already exists", name)
+		return ErrWorkspaceExists(name)
 	}
 
 	logging.Info("creating workspace %q (branch=%s, repos=%v)", name, branch, repoNames)
@@ -98,7 +98,7 @@ func (s *Service) CreateWithOpts(name string, opts CreateOpts) error {
 		sourcePath, ok := repoMap[repoName]
 		if !ok {
 			os.RemoveAll(wsPath)
-			return fmt.Errorf("repo %s not found", repoName)
+			return ErrRepoNotFound(repoName)
 		}
 		sourcePaths[i] = sourcePath
 	}
@@ -177,7 +177,7 @@ func provisionWorktreeNoFetch(sourcePath, repoName, wsPath, branch string, mode 
 	// Check if branch already has a worktree
 	hasWT, _ := gitops.WorktreeHasBranch(sourcePath, branch)
 	if hasWT {
-		return nil, fmt.Errorf("branch %s already has a worktree in %s", branch, repoName)
+		return nil, ErrWorktreeExists(branch, repoName)
 	}
 
 	// Track mode: check out an existing remote branch (e.g. a PR head) rather
@@ -187,7 +187,7 @@ func provisionWorktreeNoFetch(sourcePath, repoName, wsPath, branch string, mode 
 		if gitops.RemoteBranchExists(sourcePath, branch) {
 			logging.Info("tracking existing remote branch %q in %s", branch, repoName)
 			if err := gitops.WorktreeAddTracking(sourcePath, wtPath, branch); err != nil {
-				return nil, fmt.Errorf("adding tracking worktree: %w", err)
+				return nil, ErrGit(err, "adding tracking worktree for %s", repoName)
 			}
 			return &models.RepoWorktree{
 				RepoName:     repoName,
@@ -213,7 +213,7 @@ func provisionWorktreeNoFetch(sourcePath, repoName, wsPath, branch string, mode 
 			plainBase := strings.TrimPrefix(base, "origin/")
 			if err2 := gitops.CreateBranch(sourcePath, branch, plainBase); err2 != nil {
 				if err3 := gitops.CreateBranch(sourcePath, branch, "HEAD"); err3 != nil {
-					return nil, fmt.Errorf("creating branch: %w", err)
+					return nil, ErrGit(err, "creating branch %s in %s", branch, repoName)
 				}
 			}
 		}
@@ -221,7 +221,7 @@ func provisionWorktreeNoFetch(sourcePath, repoName, wsPath, branch string, mode 
 
 	// Add worktree
 	if err := gitops.WorktreeAdd(sourcePath, wtPath, branch); err != nil {
-		return nil, fmt.Errorf("adding worktree: %w", err)
+		return nil, ErrGit(err, "adding worktree for %s", repoName)
 	}
 
 	return &models.RepoWorktree{
@@ -275,7 +275,7 @@ func (s *Service) Delete(name string) error {
 		return err
 	}
 	if ws == nil {
-		return fmt.Errorf("workspace %s not found", name)
+		return ErrWorkspaceNotFound(name)
 	}
 
 	logging.Info("deleting workspace %q", name)
@@ -345,7 +345,7 @@ func (s *Service) Rename(oldName, newName string) error {
 		return err
 	}
 	if ws == nil {
-		return fmt.Errorf("workspace %s not found", oldName)
+		return ErrWorkspaceNotFound(oldName)
 	}
 
 	existing, err := s.State.GetWorkspace(newName)
@@ -353,7 +353,7 @@ func (s *Service) Rename(oldName, newName string) error {
 		return err
 	}
 	if existing != nil {
-		return fmt.Errorf("workspace %s already exists", newName)
+		return ErrWorkspaceExists(newName)
 	}
 
 	oldPath := ws.Path
@@ -406,7 +406,7 @@ func (s *Service) AddRepos(wsName string, repoNames []string, repoMap map[string
 		return err
 	}
 	if ws == nil {
-		return fmt.Errorf("workspace %s not found", wsName)
+		return ErrWorkspaceNotFound(wsName)
 	}
 
 	existing := make(map[string]bool)
@@ -430,7 +430,7 @@ func (s *Service) AddRepos(wsName string, repoNames []string, repoMap map[string
 	for _, repoName := range toAdd {
 		sourcePath, ok := repoMap[repoName]
 		if !ok {
-			return fmt.Errorf("repo %s not found", repoName)
+			return ErrRepoNotFound(repoName)
 		}
 
 		rw, err := provisionWorktree(sourcePath, repoName, ws.Path, ws.Branch)
@@ -460,7 +460,7 @@ func (s *Service) RemoveRepos(wsName string, repoNames []string) error {
 		return err
 	}
 	if ws == nil {
-		return fmt.Errorf("workspace %s not found", wsName)
+		return ErrWorkspaceNotFound(wsName)
 	}
 
 	type removeItem struct {
@@ -570,7 +570,7 @@ func (s *Service) Sync(wsName string) error {
 		return err
 	}
 	if ws == nil {
-		return fmt.Errorf("workspace %s not found", wsName)
+		return ErrWorkspaceNotFound(wsName)
 	}
 
 	logging.Info("syncing workspace %q", wsName)
@@ -588,7 +588,10 @@ func (s *Service) Sync(wsName string) error {
 	return nil
 }
 
-type repoStatusResult struct {
+// RepoStatus is one repo's git state within a workspace. Ahead/Behind are
+// strings because "-" means "could not be determined" — a distinct outcome from
+// zero that agents need to see rather than have flattened into 0.
+type RepoStatus struct {
 	Repo   string         `json:"repo"`
 	Branch string         `json:"branch"`
 	Status string         `json:"status"`
@@ -597,8 +600,42 @@ type repoStatusResult struct {
 	PR     *gitops.PRInfo `json:"pr,omitempty"`
 }
 
-func collectRepoStatus(r models.RepoWorktree) repoStatusResult {
-	rs := repoStatusResult{
+// Clean reports whether the worktree has no uncommitted changes.
+func (r RepoStatus) Clean() bool { return r.Status == "clean" || r.Status == "" }
+
+// StatusReport is the full status of a workspace: the data behind both the human
+// table and the machine envelope, so the two can never disagree.
+type StatusReport struct {
+	Workspace string                  `json:"workspace"`
+	Path      string                  `json:"path"`
+	Branch    string                  `json:"branch"`
+	Source    *models.WorkspaceSource `json:"source,omitempty"`
+	Repos     []RepoStatus            `json:"repos"`
+}
+
+// Dirty returns the names of repos with uncommitted changes.
+func (r *StatusReport) Dirty() []string {
+	var names []string
+	for _, repo := range r.Repos {
+		if !repo.Clean() {
+			names = append(names, repo.Repo)
+		}
+	}
+	return names
+}
+
+// Behind reports whether any repo has commits to pull in from its base branch.
+func (r *StatusReport) Behind() bool {
+	for _, repo := range r.Repos {
+		if repo.Behind != "" && repo.Behind != "-" && repo.Behind != "0" {
+			return true
+		}
+	}
+	return false
+}
+
+func collectRepoStatus(r models.RepoWorktree) RepoStatus {
+	rs := RepoStatus{
 		Repo:   r.RepoName,
 		Branch: r.Branch,
 	}
@@ -691,29 +728,43 @@ type StatusOptions struct {
 	PR      bool
 }
 
-// Status displays git status for a workspace.
-func (s *Service) Status(wsName string, opts StatusOptions) error {
+// StatusReport collects git status for a workspace without printing anything.
+func (s *Service) StatusReport(wsName string, opts StatusOptions) (*StatusReport, error) {
 	ws, err := s.State.GetWorkspace(wsName)
+	if err != nil {
+		return nil, err
+	}
+	if ws == nil {
+		return nil, ErrWorkspaceNotFound(wsName)
+	}
+
+	return &StatusReport{
+		Workspace: ws.Name,
+		Path:      ws.Path,
+		Branch:    ws.Branch,
+		Source:    ws.Source,
+		Repos:     s.fetchStatusResults(ws.Repos, opts.PR),
+	}, nil
+}
+
+// Status displays git status for a workspace as a human-oriented table.
+func (s *Service) Status(wsName string, opts StatusOptions) error {
+	report, err := s.StatusReport(wsName, opts)
 	if err != nil {
 		return err
 	}
-	if ws == nil {
-		return fmt.Errorf("workspace %s not found", wsName)
-	}
-
-	results := s.fetchStatusResults(ws.Repos, opts.PR)
 
 	if opts.JSON {
-		return s.printStatusJSON(ws, results)
+		return s.printStatusJSON(report)
 	}
 
-	s.printStatusTable(ws, results, opts)
-	s.printVerboseStatus(results, opts)
+	s.printStatusTable(report, opts)
+	s.printVerboseStatus(report.Repos, opts)
 	return nil
 }
 
-func (s *Service) fetchStatusResults(repos []models.RepoWorktree, withPR bool) []repoStatusResult {
-	results := make([]repoStatusResult, len(repos))
+func (s *Service) fetchStatusResults(repos []models.RepoWorktree, withPR bool) []RepoStatus {
+	results := make([]RepoStatus, len(repos))
 	var wg sync.WaitGroup
 	for i, r := range repos {
 		wg.Add(1)
@@ -729,26 +780,18 @@ func (s *Service) fetchStatusResults(repos []models.RepoWorktree, withPR bool) [
 	return results
 }
 
-func (s *Service) printStatusJSON(ws *models.Workspace, results []repoStatusResult) error {
-	type wsStatus struct {
-		Workspace string                  `json:"workspace"`
-		Path      string                  `json:"path"`
-		Source    *models.WorkspaceSource `json:"source,omitempty"`
-		Repos     []repoStatusResult      `json:"repos"`
-	}
-	data, _ := json.MarshalIndent(wsStatus{
-		Workspace: ws.Name,
-		Path:      ws.Path,
-		Source:    ws.Source,
-		Repos:     results,
-	}, "", "  ")
+// printStatusJSON emits the legacy bare-object shape behind the deprecated
+// `--json` flag. New consumers should use `--format json`, which wraps the same
+// StatusReport in the versioned envelope.
+func (s *Service) printStatusJSON(report *StatusReport) error {
+	data, _ := json.MarshalIndent(report, "", "  ")
 	fmt.Println(string(data))
 	return nil
 }
 
-func (s *Service) printStatusTable(ws *models.Workspace, results []repoStatusResult, opts StatusOptions) {
-	fmt.Fprintf(os.Stdout, "Workspace: %s  (%s)\n", ws.Name, ws.Path)
-	if line := formatSourceLine(ws.Source); line != "" {
+func (s *Service) printStatusTable(report *StatusReport, opts StatusOptions) {
+	fmt.Fprintf(os.Stdout, "Workspace: %s  (%s)\n", report.Workspace, report.Path)
+	if line := formatSourceLine(report.Source); line != "" {
 		fmt.Fprintf(os.Stdout, "%s\n", line)
 	}
 	fmt.Fprintln(os.Stdout)
@@ -759,13 +802,13 @@ func (s *Service) printStatusTable(ws *models.Workspace, results []repoStatusRes
 	}
 	table := console.NewTable(os.Stdout, headers)
 
-	for _, rs := range results {
+	for _, rs := range report.Repos {
 		table.AddRow(statusRow(rs, opts.PR))
 	}
 	table.Render()
 }
 
-func statusRow(rs repoStatusResult, withPR bool) []string {
+func statusRow(rs RepoStatus, withPR bool) []string {
 	upDown := formatUpDown(rs.Ahead, rs.Behind)
 	statusStr := formatStatus(rs.Status)
 	if withPR {
@@ -793,7 +836,7 @@ func formatStatus(status string) string {
 	return fmt.Sprintf("%d changed", lines)
 }
 
-func (s *Service) printVerboseStatus(results []repoStatusResult, opts StatusOptions) {
+func (s *Service) printVerboseStatus(results []RepoStatus, opts StatusOptions) {
 	if !opts.Verbose {
 		return
 	}

@@ -1,14 +1,13 @@
 package cmd
 
 import (
-	"encoding/json"
-	"fmt"
 	"os"
 	"strings"
 
 	"github.com/nicksenap/grove/internal/config"
 	"github.com/nicksenap/grove/internal/console"
 	"github.com/nicksenap/grove/internal/discover"
+	"github.com/nicksenap/grove/internal/machine"
 	"github.com/spf13/cobra"
 )
 
@@ -30,13 +29,16 @@ var reposCmd = &cobra.Command{
 	Short: "List discovered repos with their remotes",
 	Long: "Lists git repositories found in the configured repo directories, " +
 		"including each repo's origin remote and derived owner/repo name. " +
-		"Use --json for machine-readable output.",
+		"Use --format json for machine-readable output.",
 	Args: cobra.NoArgs,
 	Run: func(cmd *cobra.Command, args []string) {
 		cfg := config.RequireConfig()
 		if len(cfg.RepoDirs) == 0 {
-			console.Error("No repo directories configured. Run: gw add-dir <path>")
-			return
+			// A missing repo dir is a precondition failure, not an empty result:
+			// an agent must not read this as "the machine has no repos".
+			fail(machine.Errorf(machine.CodeNotInitialized, "no repo directories configured").
+				WithFix("Register at least one directory containing git repos").
+				WithActions(machine.NextAction("Add a repo directory", "gw add-dir <path>")))
 		}
 
 		infos := discover.DiscoverReposWithCache(cfg.RepoDirs)
@@ -50,9 +52,13 @@ var reposCmd = &cobra.Command{
 			}
 		}
 
+		if machine.Enabled() {
+			machine.Emit(map[string]any{"repos": entries, "count": len(entries)})
+			return
+		}
+
 		if reposJSON {
-			data, _ := json.MarshalIndent(entries, "", "  ")
-			fmt.Println(string(data))
+			emitLegacyJSON(entries)
 			return
 		}
 
@@ -75,5 +81,5 @@ var reposCmd = &cobra.Command{
 }
 
 func init() {
-	reposCmd.Flags().BoolVarP(&reposJSON, "json", "j", false, "Output as JSON")
+	reposCmd.Flags().BoolVarP(&reposJSON, "json", "j", false, legacyJSONUsage)
 }
