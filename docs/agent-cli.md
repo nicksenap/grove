@@ -261,9 +261,24 @@ entry into each workspace's `.mcp.json`. Both were removed — the CLI covers th
 same ground for any client with shell access.
 
 ```bash
-gw doctor         # reports leftover .mcp.json grove entries
+gw doctor         # reports leftover .mcp.json grove entries and the old database
 gw doctor --fix   # removes only Grove's entry, preserving other MCP servers
 ```
+
+`gw doctor` only visits workspaces Grove still tracks. For directories left behind
+by workspaces removed from state, checkouts outside the configured workspace
+directory, or a machine you would rather not upgrade first, there is a standalone
+script that reports before it changes anything:
+
+```bash
+scripts/cleanup-mcp-migration.sh                    # dry run
+scripts/cleanup-mcp-migration.sh --apply            # do it
+scripts/cleanup-mcp-migration.sh --apply ~/projects # also scan another tree
+```
+
+It removes only entries that launch `gw mcp-serve`, so another tool's server —
+even one named `grove` — is left alone, and it deletes the orphaned
+`~/.grove/messages.db` (plus `-wal`/`-shm`), which no current Grove can read.
 
 The MCP server's `announce` / `get_announcements` tools live on as `gw announce`
 and `gw announcements` (see above). Coordination came from a shared store on

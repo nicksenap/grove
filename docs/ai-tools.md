@@ -92,8 +92,15 @@ Workspaces created by Grove ≤ 1.1.11 have a `grove` entry in their `.mcp.json`
 pointing at the removed `gw mcp-serve`. Clean it up with:
 
 ```bash
-gw doctor         # reports stale entries
+gw doctor         # reports stale entries and the orphaned announcements database
 gw doctor --fix   # removes only the grove entry, keeping other servers
+```
+
+For workspaces Grove no longer tracks, or trees outside the workspace directory:
+
+```bash
+scripts/cleanup-mcp-migration.sh          # dry run
+scripts/cleanup-mcp-migration.sh --apply
 ```
 
 Cross-workspace coordination survived the removal as first-class commands:

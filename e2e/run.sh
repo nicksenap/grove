@@ -1432,6 +1432,93 @@ gw delete mc-ws --force 2>&1 > /dev/null
 gw delete noisy-ws --force 2>&1 > /dev/null
 
 # ---------------------------------------------------------------------------
+# Test: MCP migration cleanup script
+# ---------------------------------------------------------------------------
+section "MCP cleanup script"
+
+CLEANUP_SCRIPT="$(cd "$(dirname "$0")" && pwd)/../scripts/cleanup-mcp-migration.sh"
+MIG_DIR="${SCRATCH}/migration"
+mkdir -p "${MIG_DIR}/workspaces/only-grove" "${MIG_DIR}/workspaces/shared" \
+         "${MIG_DIR}/workspaces/external" "${MIG_DIR}/orphaned"
+
+# A workspace where grove was the only server; one where it shares the file; one
+# where an unrelated adapter is also called "grove"; and a directory Grove no
+# longer tracks at all, which is the case `gw doctor` cannot reach.
+echo '{"mcpServers":{"grove":{"command":"gw","args":["mcp-serve","--workspace","only-grove"]}}}' \
+    > "${MIG_DIR}/workspaces/only-grove/.mcp.json"
+echo '{"mcpServers":{"grove":{"command":"gw","args":["mcp-serve","--workspace","shared"]},"keeper":{"command":"keep-me","args":[]}}}' \
+    > "${MIG_DIR}/workspaces/shared/.mcp.json"
+echo '{"mcpServers":{"grove":{"command":"grove-mcp-adapter","args":["serve"]}}}' \
+    > "${MIG_DIR}/workspaces/external/.mcp.json"
+echo '{"mcpServers":{"grove":{"command":"gw","args":["mcp-serve","--workspace","gone"]}}}' \
+    > "${MIG_DIR}/orphaned/.mcp.json"
+printf 'SQLite format 3\0' > "${MIG_DIR}/messages.db"
+printf '' > "${MIG_DIR}/messages.db-wal"
+
+# Dry run must report without touching anything.
+dry_out=$(bash "${CLEANUP_SCRIPT}" --grove-dir "${MIG_DIR}" "${MIG_DIR}/workspaces" "${MIG_DIR}/orphaned" 2>&1)
+if echo "${dry_out}" | grep -q "would remove"; then
+    pass "cleanup script dry run reports work"
+else
+    fail "dry run reported nothing: ${dry_out}"
+fi
+if [ -f "${MIG_DIR}/workspaces/only-grove/.mcp.json" ] && [ -f "${MIG_DIR}/messages.db" ]; then
+    pass "cleanup script dry run changes nothing"
+else
+    fail "dry run modified the filesystem"
+fi
+
+bash "${CLEANUP_SCRIPT}" --apply --grove-dir "${MIG_DIR}" "${MIG_DIR}/workspaces" "${MIG_DIR}/orphaned" > /dev/null 2>&1
+
+if [ ! -f "${MIG_DIR}/workspaces/only-grove/.mcp.json" ]; then
+    pass "cleanup removes a .mcp.json that held only grove"
+else
+    fail "grove-only .mcp.json should be deleted"
+fi
+if jq -e '.mcpServers | has("grove") == false and has("keeper")' "${MIG_DIR}/workspaces/shared/.mcp.json" > /dev/null 2>&1; then
+    pass "cleanup preserves other MCP servers"
+else
+    fail "shared .mcp.json lost its other server: $(cat "${MIG_DIR}/workspaces/shared/.mcp.json")"
+fi
+if jq -e '.mcpServers.grove.command == "grove-mcp-adapter"' "${MIG_DIR}/workspaces/external/.mcp.json" > /dev/null 2>&1; then
+    pass "cleanup leaves a foreign server named grove alone"
+else
+    fail "external adapter was modified"
+fi
+if [ ! -f "${MIG_DIR}/orphaned/.mcp.json" ]; then
+    pass "cleanup reaches directories Grove no longer tracks"
+else
+    fail "orphaned .mcp.json was not cleaned"
+fi
+if [ ! -f "${MIG_DIR}/messages.db" ] && [ ! -f "${MIG_DIR}/messages.db-wal" ]; then
+    pass "cleanup removes the legacy announcements database"
+else
+    fail "legacy database survived"
+fi
+
+# Idempotent: a second run finds nothing to do.
+rerun_out=$(bash "${CLEANUP_SCRIPT}" --grove-dir "${MIG_DIR}" "${MIG_DIR}/workspaces" "${MIG_DIR}/orphaned" 2>&1)
+if echo "${rerun_out}" | grep -q "Would remove 0 item"; then
+    pass "cleanup script is idempotent"
+else
+    fail "second run still reports work: ${rerun_out}"
+fi
+
+# gw doctor covers the database for anyone who just upgrades.
+printf 'SQLite format 3\0' > "${GROVE_HOME}/.grove/messages.db"
+if gw doctor --format json </dev/null 2>/dev/null | jq -e '[.result.issues[] | select(.issue | contains("messages.db"))] | length == 1' > /dev/null; then
+    pass "doctor reports the legacy announcements database"
+else
+    fail "doctor did not report messages.db"
+fi
+gw doctor --fix > /dev/null 2>&1 || true
+if [ ! -f "${GROVE_HOME}/.grove/messages.db" ]; then
+    pass "doctor --fix removes the legacy announcements database"
+else
+    fail "doctor --fix left messages.db behind"
+fi
+
+# ---------------------------------------------------------------------------
 # Test: cross-workspace agent coordination
 # ---------------------------------------------------------------------------
 section "Announcements"

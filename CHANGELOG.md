@@ -9,7 +9,11 @@
   `get_announcements` MCP tools are gone — the latter two return as the
   `gw announce` / `gw announcements` commands below. The `gw` CLI is now the only
   first-party agent interface. Run `gw doctor --fix` to strip the stale `grove` entry from
-  `.mcp.json` files in existing workspaces (other MCP servers are preserved).
+  `.mcp.json` files in existing workspaces (other MCP servers are preserved), and
+  to delete the orphaned `~/.grove/messages.db`. For workspaces Grove no longer
+  tracks, or trees outside the workspace directory, run
+  `scripts/cleanup-mcp-migration.sh` — it reports before changing anything and
+  only touches entries that launch `gw mcp-serve`.
 
 ### Features
 

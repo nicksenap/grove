@@ -1010,6 +1010,10 @@ func (s *Service) Doctor(fix bool) ([]models.DoctorIssue, int, error) {
 	var issues []models.DoctorIssue
 	fixed := 0
 
+	f, iss := s.checkLegacyAnnouncementDB(fix)
+	fixed += f
+	issues = append(issues, iss...)
+
 	for _, ws := range workspaces {
 		f, iss := s.checkWorkspaceExists(ws, fix)
 		if f > 0 {
@@ -1030,6 +1034,53 @@ func (s *Service) Doctor(fix bool) ([]models.DoctorIssue, int, error) {
 	}
 
 	return issues, fixed, nil
+}
+
+// legacyAnnouncementDBFiles are the SQLite database and its sidecars that the
+// removed MCP server used for cross-workspace announcements.
+var legacyAnnouncementDBFiles = []string{"messages.db", "messages.db-wal", "messages.db-shm", "messages.db-journal"}
+
+// checkLegacyAnnouncementDB flags the announcements database left behind by the
+// removed MCP server. Nothing can read it any more — the SQLite driver is gone —
+// so it is dead weight rather than data at risk, and `--fix` deletes it.
+//
+// Announcements now live in ~/.grove/announcements/ as one JSON file per note.
+func (s *Service) checkLegacyAnnouncementDB(fix bool) (int, []models.DoctorIssue) {
+	groveDir := filepath.Dir(s.State.Path)
+
+	var present []string
+	for _, name := range legacyAnnouncementDBFiles {
+		if _, err := os.Stat(filepath.Join(groveDir, name)); err == nil {
+			present = append(present, name)
+		}
+	}
+	if len(present) == 0 {
+		return 0, nil
+	}
+
+	issue := models.DoctorIssue{
+		Workspace:       "(global)",
+		Repo:            nil,
+		Issue:           "leftover announcements database from the removed MCP server (" + strings.Join(present, ", ") + ")",
+		SuggestedAction: "delete it; notes now live in announcements/",
+	}
+	if !fix {
+		return 0, []models.DoctorIssue{issue}
+	}
+
+	removed := 0
+	for _, name := range present {
+		path := filepath.Join(groveDir, name)
+		if err := os.Remove(path); err != nil {
+			logging.Warn("could not remove %s: %s", path, err)
+			continue
+		}
+		removed++
+	}
+	if removed == 0 {
+		return 0, []models.DoctorIssue{issue}
+	}
+	return 1, []models.DoctorIssue{issue}
 }
 
 // checkStaleMCPConfig flags the legacy `grove` entry in a workspace's

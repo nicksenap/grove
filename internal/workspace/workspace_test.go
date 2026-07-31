@@ -1754,3 +1754,48 @@ func TestDeleteForceDeletesUnmergedBranch(t *testing.T) {
 		t.Error("branch feat/unmerged should have been force-deleted from source repo")
 	}
 }
+
+// The removed MCP server's SQLite database outlives it, and nothing can read it
+// now, so doctor should offer to clean it up rather than leaving it forever.
+func TestDoctorReportsAndRemovesLegacyAnnouncementDB(t *testing.T) {
+	env := setupTestEnv(t)
+
+	dbPath := filepath.Join(env.groveDir, "messages.db")
+	os.WriteFile(dbPath, []byte("SQLite format 3\x00"), 0o644)
+	os.WriteFile(dbPath+"-wal", []byte(""), 0o644)
+	os.WriteFile(dbPath+"-shm", []byte("x"), 0o644)
+
+	issues, fixed, err := env.svc.Doctor(false)
+	if err != nil {
+		t.Fatalf("doctor: %v", err)
+	}
+	if len(issues) != 1 || fixed != 0 {
+		t.Fatalf("expected 1 unfixed issue, got %d issues / %d fixed: %+v", len(issues), fixed, issues)
+	}
+	if !strings.Contains(issues[0].Issue, "messages.db") {
+		t.Errorf("issue should name the files: %q", issues[0].Issue)
+	}
+
+	// A report is not a mutation.
+	if _, err := os.Stat(dbPath); err != nil {
+		t.Error("doctor without --fix must not delete anything")
+	}
+
+	if _, fixed, err = env.svc.Doctor(true); err != nil {
+		t.Fatalf("doctor --fix: %v", err)
+	}
+	if fixed != 1 {
+		t.Errorf("fixed = %d, want 1", fixed)
+	}
+	for _, suffix := range []string{"", "-wal", "-shm"} {
+		if _, err := os.Stat(dbPath + suffix); !os.IsNotExist(err) {
+			t.Errorf("messages.db%s should be gone", suffix)
+		}
+	}
+
+	// Idempotent: a clean machine reports nothing.
+	issues, _, _ = env.svc.Doctor(false)
+	if len(issues) != 0 {
+		t.Errorf("expected no issues after cleanup, got %+v", issues)
+	}
+}
