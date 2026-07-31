@@ -423,3 +423,97 @@ func TestApplyUsesPlanRepoSourcePaths(t *testing.T) {
 		t.Errorf("workspace dir = %q, want %q", opts.Cfg.WorkspaceDir, filepath.Dir(plan.Path))
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Unsaved-work warnings
+// ---------------------------------------------------------------------------
+
+func warningsContaining(plan *Plan, substr string) []string {
+	var out []string
+	for _, w := range plan.Warnings {
+		if strings.Contains(w, substr) {
+			out = append(out, w)
+		}
+	}
+	return out
+}
+
+// The most dangerous case: commits that were never pushed exist nowhere else, so
+// a delete plan that stayed silent about them would be actively misleading.
+func TestPlanDeleteWarnsAboutNeverPushedCommits(t *testing.T) {
+	env := setupTestEnv(t)
+	env.createRepoWithRemote("api")
+	env.svc.Create("unpushed", "feat/unpushed", []string{"api"}, env.repoMap, env.cfg)
+
+	wt := filepath.Join(env.wsDir, "unpushed", "api")
+	os.WriteFile(filepath.Join(wt, "only-here.txt"), []byte("irreplaceable"), 0o644)
+	env.run(wt, "git", "add", ".")
+	env.run(wt, "git", "commit", "-q", "-m", "work that exists nowhere else")
+
+	plan, err := env.svc.PlanDelete("unpushed", "test")
+	if err != nil {
+		t.Fatalf("plan: %v", err)
+	}
+	if got := warningsContaining(plan, "never pushed"); len(got) == 0 {
+		t.Errorf("expected a never-pushed warning, got %v", plan.Warnings)
+	}
+}
+
+// Once the branch exists on the remote, the comparison is against it.
+func TestPlanDeleteWarnsAboutUnpushedCommitsOnPushedBranch(t *testing.T) {
+	env := setupTestEnv(t)
+	env.createRepoWithRemote("api")
+	env.svc.Create("ahead", "feat/ahead", []string{"api"}, env.repoMap, env.cfg)
+
+	wt := filepath.Join(env.wsDir, "ahead", "api")
+	env.run(wt, "git", "push", "-q", "-u", "origin", "feat/ahead")
+
+	os.WriteFile(filepath.Join(wt, "later.txt"), []byte("after push"), 0o644)
+	env.run(wt, "git", "add", ".")
+	env.run(wt, "git", "commit", "-q", "-m", "committed after pushing")
+
+	plan, err := env.svc.PlanDelete("ahead", "test")
+	if err != nil {
+		t.Fatalf("plan: %v", err)
+	}
+	if got := warningsContaining(plan, "unpushed commit"); len(got) != 1 {
+		t.Errorf("expected one unpushed-commit warning, got %v", plan.Warnings)
+	}
+}
+
+// A fully pushed branch has nothing to lose, so the plan should stay quiet rather
+// than crying wolf on every delete.
+func TestPlanDeleteQuietWhenEverythingIsPushed(t *testing.T) {
+	env := setupTestEnv(t)
+	env.createRepoWithRemote("api")
+	env.svc.Create("clean", "feat/clean", []string{"api"}, env.repoMap, env.cfg)
+
+	wt := filepath.Join(env.wsDir, "clean", "api")
+	env.run(wt, "git", "push", "-q", "-u", "origin", "feat/clean")
+
+	plan, err := env.svc.PlanDelete("clean", "test")
+	if err != nil {
+		t.Fatalf("plan: %v", err)
+	}
+	if len(plan.Warnings) != 0 {
+		t.Errorf("expected no warnings for a fully pushed branch, got %v", plan.Warnings)
+	}
+}
+
+// An unreadable worktree is not evidence of a clean one.
+func TestPlanDeleteWarnsWhenStatusCannotBeChecked(t *testing.T) {
+	env := setupTestEnv(t)
+	env.createRepo("api")
+	env.svc.Create("broken", "feat/broken", []string{"api"}, env.repoMap, env.cfg)
+
+	// Remove the worktree directory out from under Grove, so git status fails.
+	os.RemoveAll(filepath.Join(env.wsDir, "broken", "api"))
+
+	plan, err := env.svc.PlanDelete("broken", "test")
+	if err != nil {
+		t.Fatalf("plan: %v", err)
+	}
+	if got := warningsContaining(plan, "could not check"); len(got) == 0 {
+		t.Errorf("expected a warning about the failed check, got %v", plan.Warnings)
+	}
+}

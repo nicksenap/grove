@@ -317,19 +317,61 @@ func planRepoDestruction(r models.RepoWorktree) ([]PlannedChange, []string) {
 	return changes, unsavedWorkWarnings(r)
 }
 
-// unsavedWorkWarnings reports work a delete would destroy: uncommitted changes
-// and commits that exist nowhere else. This is what a reviewer most needs to see.
+// unsavedWorkWarnings reports work a delete would destroy: uncommitted changes,
+// and commits that exist nowhere but this worktree. This is what a reviewer most
+// needs to see, so every branch of it errs toward warning.
 func unsavedWorkWarnings(r models.RepoWorktree) []string {
 	var warnings []string
-	if status, err := gitops.RepoStatus(r.WorktreePath); err == nil && status != "" {
+
+	status, err := gitops.RepoStatus(r.WorktreePath)
+	switch {
+	case err != nil:
+		// An unreadable worktree is not evidence of a clean one. Saying nothing
+		// here would be a plan claiming there is nothing to lose.
+		warnings = append(warnings,
+			fmt.Sprintf("%s: could not check for uncommitted changes (%s) — assume there may be work to lose", r.RepoName, err))
+	case status != "":
 		warnings = append(warnings,
 			fmt.Sprintf("%s has uncommitted changes that would be destroyed", r.RepoName))
 	}
-	if ahead, _, err := gitops.CommitsAheadBehind(r.WorktreePath, "origin/"+r.Branch); err == nil && ahead > 0 {
-		warnings = append(warnings,
-			fmt.Sprintf("%s has %d unpushed commit(s) on %s", r.RepoName, ahead, r.Branch))
+
+	return append(warnings, unpushedCommitWarnings(r)...)
+}
+
+// unpushedCommitWarnings reports commits that deleting the branch would discard.
+//
+// The remote-tracking branch is the right comparison only when it exists. A branch
+// that was never pushed has no origin/<branch> at all — which is the *most*
+// dangerous case, since its commits exist nowhere else — so falling back to the
+// base branch is what makes that case visible instead of silent.
+func unpushedCommitWarnings(r models.RepoWorktree) []string {
+	if gitops.RemoteBranchExists(r.SourceRepo, r.Branch) {
+		ahead, _, err := gitops.CommitsAheadBehind(r.WorktreePath, "origin/"+r.Branch)
+		if err != nil {
+			return []string{fmt.Sprintf(
+				"%s: could not compare %s against origin (%s) — assume there may be unpushed commits",
+				r.RepoName, r.Branch, err)}
+		}
+		if ahead > 0 {
+			return []string{fmt.Sprintf("%s has %d unpushed commit(s) on %s", r.RepoName, ahead, r.Branch)}
+		}
+		return nil
 	}
-	return warnings
+
+	base, err := gitops.ResolveBaseBranch(r.SourceRepo)
+	if err != nil {
+		return []string{fmt.Sprintf(
+			"%s: %s was never pushed and has no comparable base branch — its commits may exist only here",
+			r.RepoName, r.Branch)}
+	}
+
+	ahead, _, err := gitops.CommitsAheadBehind(r.WorktreePath, base)
+	if err != nil || ahead == 0 {
+		return nil
+	}
+	return []string{fmt.Sprintf(
+		"%s: %s was never pushed — %d commit(s) exist only in this worktree and would be lost",
+		r.RepoName, r.Branch, ahead)}
 }
 
 // validateCreate holds the pre-flight checks shared by planning and execution.
