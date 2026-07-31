@@ -91,29 +91,21 @@ func printContext(ctx *workspace.Context) {
 		return
 	}
 
-	home, _ := os.UserHomeDir()
-	short := func(p string) string {
-		if home != "" && p != "" {
-			return strings.Replace(p, home, "~", 1)
-		}
-		return p
-	}
-
 	fmt.Fprintf(os.Stdout, "Grove:      %s\n", ctx.GroveVersion)
-	fmt.Fprintf(os.Stdout, "Config:     %s\n", short(ctx.ConfigPath))
-	fmt.Fprintf(os.Stdout, "Repo dirs:  %s\n", strings.Join(shortAll(ctx.RepoDirs, short), ", "))
+	fmt.Fprintf(os.Stdout, "Config:     %s\n", shortenPath(ctx.ConfigPath))
+	fmt.Fprintf(os.Stdout, "Repo dirs:  %s\n", strings.Join(shortenPaths(ctx.RepoDirs), ", "))
 	if len(ctx.Presets) > 0 {
 		fmt.Fprintf(os.Stdout, "Presets:    %s\n", strings.Join(ctx.Presets, ", "))
 	}
 	fmt.Fprintf(os.Stdout, "Workspaces: %d\n", ctx.WorkspaceCount)
 
 	if ctx.Workspace == nil {
-		fmt.Fprintf(os.Stdout, "\nNot inside a workspace (%s)\n", short(ctx.Cwd))
+		fmt.Fprintf(os.Stdout, "\nNot inside a workspace (%s)\n", shortenPath(ctx.Cwd))
 		return
 	}
 
 	ws := ctx.Workspace
-	fmt.Fprintf(os.Stdout, "\nWorkspace:  %s  (%s)\n", ws.Name, short(ws.Path))
+	fmt.Fprintf(os.Stdout, "\nWorkspace:  %s  (%s)\n", ws.Name, shortenPath(ws.Path))
 	fmt.Fprintf(os.Stdout, "Branch:     %s\n", ws.Branch)
 	if ws.Source != nil && ws.Source.URL != "" {
 		fmt.Fprintf(os.Stdout, "Source:     %s\n", ws.Source.URL)
@@ -131,10 +123,10 @@ func printContext(ctx *workspace.Context) {
 	table.Render()
 }
 
-func shortAll(paths []string, short func(string) string) []string {
+func shortenPaths(paths []string) []string {
 	out := make([]string, len(paths))
 	for i, p := range paths {
-		out[i] = short(p)
+		out[i] = shortenPath(p)
 	}
 	return out
 }

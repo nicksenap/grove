@@ -181,6 +181,17 @@ func pluginArgs(name string) []string {
 	return nil
 }
 
+// shortenPath abbreviates the user's home directory to "~" for human output.
+// Machine output always carries absolute paths — an agent must not have to expand
+// them.
+func shortenPath(path string) string {
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" || path == "" {
+		return path
+	}
+	return strings.Replace(path, home, "~", 1)
+}
+
 // legacyJSONUsage documents the pre-envelope `--json` flag. It still emits the
 // old bare shapes so existing scripts and plugins keep working; `--format json`
 // is the versioned contract described in docs/agent-cli.md.

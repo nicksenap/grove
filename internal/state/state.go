@@ -159,20 +159,46 @@ func (s *Store) FindWorkspaceByPath(path string) (*models.Workspace, error) {
 	if err != nil {
 		return nil, err
 	}
-	resolved, err := filepath.EvalSymlinks(path)
-	if err != nil {
-		resolved = path
-	}
 	for i := range workspaces {
-		wsResolved, err := filepath.EvalSymlinks(workspaces[i].Path)
-		if err != nil {
-			wsResolved = workspaces[i].Path
-		}
-		if resolved == wsResolved || strings.HasPrefix(resolved, wsResolved+string(filepath.Separator)) {
+		if PathContains(workspaces[i].Path, path) {
 			return &workspaces[i], nil
 		}
 	}
 	return nil, nil
+}
+
+// PathContains reports whether path is wsPath itself or lies inside it.
+//
+// This is the one definition of "am I in this workspace?", shared by state lookups
+// and `gw context`, so the two can never disagree about where the caller is. Both
+// sides are made absolute and symlink-resolved first (macOS /var vs /private/var
+// would otherwise hide a match), and the containment test rejects "../" results so
+// a sibling like ".../feat-other" never counts as inside ".../feat".
+func PathContains(wsPath, path string) bool {
+	resolved := resolvePath(path)
+	wsResolved := resolvePath(wsPath)
+	if resolved == wsResolved {
+		return true
+	}
+
+	rel, err := filepath.Rel(wsResolved, resolved)
+	if err != nil || filepath.IsAbs(rel) || rel == ".." {
+		return false
+	}
+	return !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+}
+
+// resolvePath makes a path absolute and resolves symlinks, falling back to the
+// closest form available when either step fails (e.g. the path does not exist).
+func resolvePath(path string) string {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		abs = path
+	}
+	if resolved, err := filepath.EvalSymlinks(abs); err == nil {
+		return resolved
+	}
+	return abs
 }
 
 // --- Package-level convenience functions using config.GroveDir ---

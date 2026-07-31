@@ -1,9 +1,7 @@
 package workspace
 
 import (
-	"path/filepath"
 	"sort"
-	"strings"
 	"sync"
 	"time"
 
@@ -12,6 +10,7 @@ import (
 	"github.com/nicksenap/grove/internal/gitops"
 	"github.com/nicksenap/grove/internal/logging"
 	"github.com/nicksenap/grove/internal/models"
+	"github.com/nicksenap/grove/internal/state"
 )
 
 // Context is the answer to "where am I and what can I do?" — the single
@@ -193,42 +192,20 @@ func (s *Service) repoContexts(repos []models.RepoWorktree) []RepoContext {
 }
 
 // findWorkspaceByPath resolves the innermost workspace containing path. It works
-// on an already-loaded slice so Context does a single state read.
+// on an already-loaded slice so Context does a single state read, and it defers
+// the containment test to state.PathContains so context and workspace resolution
+// agree on where the caller is.
 func findWorkspaceByPath(all []models.Workspace, path string) *models.Workspace {
-	abs, err := filepath.Abs(path)
-	if err != nil {
-		abs = path
-	}
-	if resolved, err := filepath.EvalSymlinks(abs); err == nil {
-		abs = resolved
-	}
-
 	var best *models.Workspace
 	for i := range all {
-		wsPath := all[i].Path
-		if resolved, err := filepath.EvalSymlinks(wsPath); err == nil {
-			wsPath = resolved
+		if !state.PathContains(all[i].Path, path) {
+			continue
 		}
-		if abs == wsPath || isSubPath(wsPath, abs) {
-			// Prefer the deepest match, so a workspace nested inside another
-			// workspace's directory still resolves to itself.
-			if best == nil || len(wsPath) > len(best.Path) {
-				best = &all[i]
-			}
+		// Prefer the deepest match, so a workspace nested inside another
+		// workspace's directory still resolves to itself.
+		if best == nil || len(all[i].Path) > len(best.Path) {
+			best = &all[i]
 		}
 	}
 	return best
-}
-
-// isSubPath reports whether child is inside parent. It rejects ".." results so a
-// sibling directory sharing a name prefix is never mistaken for a child.
-func isSubPath(parent, child string) bool {
-	rel, err := filepath.Rel(parent, child)
-	if err != nil {
-		return false
-	}
-	if filepath.IsAbs(rel) || rel == ".." {
-		return false
-	}
-	return !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }

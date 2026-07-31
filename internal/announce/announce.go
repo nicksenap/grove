@@ -139,39 +139,44 @@ func (s *Store) Publish(workspace, repo, category, message string) (*Announcemen
 		CreatedAt: created,
 	}
 
-	data, err := json.Marshal(a)
-	if err != nil {
-		return nil, err
-	}
-
-	// O_EXCL makes the publish atomic and collision-proof: if two agents somehow
-	// generate the same ID, the loser retries with a fresh one instead of
-	// overwriting the winner's note.
+	// Retry on the astronomically unlikely ID collision rather than overwriting
+	// another agent's note. See writeNew for why creation is exclusive.
 	for attempt := 0; ; attempt++ {
-		path := filepath.Join(s.Dir, a.ID+".json")
-		f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+		err := s.writeNew(a)
 		if err == nil {
-			_, werr := f.Write(data)
-			cerr := f.Close()
-			if werr != nil {
-				return nil, werr
-			}
-			if cerr != nil {
-				return nil, cerr
-			}
 			break
 		}
 		if !os.IsExist(err) || attempt >= 5 {
 			return nil, fmt.Errorf("writing announcement: %w", err)
 		}
 		a.ID = newID(created)
-		if data, err = json.Marshal(a); err != nil {
-			return nil, err
-		}
 	}
 
 	s.Prune()
 	return &a, nil
+}
+
+// writeNew writes one announcement to a file that must not already exist.
+//
+// O_EXCL is what makes publishing safe for concurrent agents: creation either
+// wins outright or fails, so there is no read-modify-write window and no lock to
+// take. It is also why an ID collision surfaces as os.IsExist rather than
+// silently replacing someone else's note.
+func (s *Store) writeNew(a Announcement) error {
+	data, err := json.Marshal(a)
+	if err != nil {
+		return err
+	}
+
+	f, err := os.OpenFile(filepath.Join(s.Dir, a.ID+".json"), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+	if err != nil {
+		return err
+	}
+	if _, err := f.Write(data); err != nil {
+		f.Close()
+		return err
+	}
+	return f.Close()
 }
 
 // ListOptions filters a read. A zero value returns everything unexpired.
@@ -191,47 +196,16 @@ type ListOptions struct {
 // file is skipped rather than failing the read: coordination data is advisory,
 // and one bad file must not blind an agent to the rest.
 func (s *Store) List(opts ListOptions) ([]Announcement, error) {
-	entries, err := os.ReadDir(s.Dir)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return []Announcement{}, nil
-		}
-		return nil, err
-	}
-
-	wanted := make(map[string]bool, len(opts.Repos))
-	for _, r := range opts.Repos {
-		wanted[NormalizeRepo(r)] = true
-	}
-
-	cutoff := s.now().UTC().Add(-s.maxAge())
+	filter := s.newFilter(opts)
 
 	results := []Announcement{}
-	for _, entry := range entries {
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
-			continue
+	err := s.each(func(a Announcement, path string) {
+		if filter.matches(a) {
+			results = append(results, a)
 		}
-		data, err := os.ReadFile(filepath.Join(s.Dir, entry.Name()))
-		if err != nil {
-			continue
-		}
-		var a Announcement
-		if err := json.Unmarshal(data, &a); err != nil {
-			continue
-		}
-		if a.CreatedAt.Before(cutoff) {
-			continue
-		}
-		if len(wanted) > 0 && !wanted[a.Repo] {
-			continue
-		}
-		if opts.ExcludeWorkspace != "" && a.Workspace == opts.ExcludeWorkspace {
-			continue
-		}
-		if !opts.Since.IsZero() && a.CreatedAt.Before(opts.Since) {
-			continue
-		}
-		results = append(results, a)
+	})
+	if err != nil {
+		return nil, err
 	}
 
 	sort.Slice(results, func(i, j int) bool {
@@ -249,14 +223,34 @@ func (s *Store) List(opts ListOptions) ([]Announcement, error) {
 
 // Prune deletes expired announcements and reports how many were removed.
 // Unlinking is safe while other processes read or publish.
+//
+// Unparseable files are left alone: they might belong to another tool, and
+// deleting data we cannot read is not ours to decide.
 func (s *Store) Prune() int {
-	entries, err := os.ReadDir(s.Dir)
-	if err != nil {
-		return 0
-	}
-	cutoff := s.now().UTC().Add(-s.maxAge())
+	cutoff := s.cutoff()
 
 	removed := 0
+	s.each(func(a Announcement, path string) {
+		if a.CreatedAt.Before(cutoff) && os.Remove(path) == nil {
+			removed++
+		}
+	})
+	return removed
+}
+
+// each visits every readable announcement in the store. Unreadable and
+// unparseable files are skipped, so both reading and pruning share one
+// definition of "an announcement we can act on". A missing store directory is
+// normal on a fresh machine and yields no visits.
+func (s *Store) each(visit func(a Announcement, path string)) error {
+	entries, err := os.ReadDir(s.Dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+
 	for _, entry := range entries {
 		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
 			continue
@@ -268,15 +262,54 @@ func (s *Store) Prune() int {
 		}
 		var a Announcement
 		if err := json.Unmarshal(data, &a); err != nil {
-			// Unparseable files are left alone: they might be another tool's, and
-			// deleting data we cannot read is not ours to decide.
 			continue
 		}
-		if a.CreatedAt.Before(cutoff) && os.Remove(path) == nil {
-			removed++
-		}
+		visit(a, path)
 	}
-	return removed
+	return nil
+}
+
+// filter decides whether one announcement belongs in a List result. Naming the
+// criteria separately keeps List about assembling results.
+type filter struct {
+	repos            map[string]bool
+	excludeWorkspace string
+	since            time.Time
+	cutoff           time.Time
+}
+
+func (s *Store) newFilter(opts ListOptions) filter {
+	repos := make(map[string]bool, len(opts.Repos))
+	for _, r := range opts.Repos {
+		repos[NormalizeRepo(r)] = true
+	}
+	return filter{
+		repos:            repos,
+		excludeWorkspace: opts.ExcludeWorkspace,
+		since:            opts.Since,
+		cutoff:           s.cutoff(),
+	}
+}
+
+func (f filter) matches(a Announcement) bool {
+	if a.CreatedAt.Before(f.cutoff) {
+		return false
+	}
+	if len(f.repos) > 0 && !f.repos[a.Repo] {
+		return false
+	}
+	if f.excludeWorkspace != "" && a.Workspace == f.excludeWorkspace {
+		return false
+	}
+	if !f.since.IsZero() && a.CreatedAt.Before(f.since) {
+		return false
+	}
+	return true
+}
+
+// cutoff is the age at which an announcement stops being visible.
+func (s *Store) cutoff() time.Time {
+	return s.now().UTC().Add(-s.maxAge())
 }
 
 // newID builds a lexically sortable, collision-resistant id. The timestamp uses

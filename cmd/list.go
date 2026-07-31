@@ -154,14 +154,9 @@ func listWithStatus() {
 		return
 	}
 
-	home, _ := os.UserHomeDir()
 	table := console.NewTable(os.Stdout, []string{"Name", "Branch", "Repos", "Status", "Path"})
 	for _, s := range summaries {
-		path := s.Path
-		if home != "" {
-			path = strings.Replace(path, home, "~", 1)
-		}
-		table.AddRow([]string{s.Name, s.Branch, fmt.Sprintf("%d", s.Repos), s.Status, path})
+		table.AddRow([]string{s.Name, s.Branch, fmt.Sprintf("%d", s.Repos), s.Status, shortenPath(s.Path)})
 	}
 	table.Render()
 }
@@ -191,32 +186,20 @@ func doShowOne(name string) {
 		created = created[:19]
 	}
 
-	home, _ := os.UserHomeDir()
-	wsPath := ws.Path
-	if home != "" {
-		wsPath = strings.Replace(wsPath, home, "~", 1)
-	}
-
 	fmt.Fprintf(os.Stderr, "Name:      %s\n", ws.Name)
 	fmt.Fprintf(os.Stderr, "Branch:    %s\n", ws.Branch)
-	fmt.Fprintf(os.Stderr, "Path:      %s\n", wsPath)
+	fmt.Fprintf(os.Stderr, "Path:      %s\n", shortenPath(ws.Path))
 	fmt.Fprintf(os.Stderr, "Created:   %s\n", created)
 	fmt.Fprintf(os.Stderr, "Repos:     %d\n\n", len(ws.Repos))
 
 	wsPrefix := ws.Path + "/"
 	table := console.NewTable(os.Stderr, []string{"Repo", "Branch", "Worktree", "Source"})
 	for _, r := range ws.Repos {
-		wt := r.WorktreePath
-		if after, ok := strings.CutPrefix(wt, wsPrefix); ok {
-			wt = after
-		} else if home != "" {
-			wt = strings.Replace(wt, home, "~", 1)
+		wt, relative := strings.CutPrefix(r.WorktreePath, wsPrefix)
+		if !relative {
+			wt = shortenPath(r.WorktreePath)
 		}
-		src := r.SourceRepo
-		if home != "" {
-			src = strings.Replace(src, home, "~", 1)
-		}
-		table.AddRow([]string{r.RepoName, r.Branch, wt, src})
+		table.AddRow([]string{r.RepoName, r.Branch, wt, shortenPath(r.SourceRepo)})
 	}
 	table.Render()
 }

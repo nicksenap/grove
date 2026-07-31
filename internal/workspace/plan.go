@@ -138,75 +138,121 @@ func (s *Service) PlanCreate(name string, opts CreateOpts, version string) (*Pla
 	})
 
 	for _, repoName := range opts.Repos {
-		sourcePath := opts.RepoMap[repoName]
-		wtPath := filepath.Join(wsPath, repoName)
-
-		// Report the branch action the executor would actually take, resolved the
-		// same way provisionWorktreeNoFetch resolves it.
-		mode := opts.BranchMode
-		if opts.TrackBranchRepo != "" && repoName != opts.TrackBranchRepo {
-			mode = BranchModeCreate
-		}
-		switch {
-		case gitops.BranchExists(sourcePath, opts.Branch):
-			plan.Changes = append(plan.Changes, PlannedChange{
-				Action:     ActionCreateWorktree,
-				Repo:       repoName,
-				Path:       wtPath,
-				Branch:     opts.Branch,
-				SourceRepo: sourcePath,
-				Detail:     "branch already exists locally; it will be checked out, not created",
-			})
-		case mode == BranchModeTrack && gitops.RemoteBranchExists(sourcePath, opts.Branch):
-			plan.Changes = append(plan.Changes,
-				PlannedChange{
-					Action:     ActionTrackBranch,
-					Repo:       repoName,
-					Branch:     opts.Branch,
-					SourceRepo: sourcePath,
-					Detail:     "tracking existing remote branch",
-				},
-				PlannedChange{
-					Action: ActionCreateWorktree, Repo: repoName, Path: wtPath,
-					Branch: opts.Branch, SourceRepo: sourcePath,
-				})
-		default:
-			base, err := gitops.ResolveBaseBranch(sourcePath)
-			if err != nil {
-				base = "HEAD"
-				plan.Warnings = append(plan.Warnings,
-					fmt.Sprintf("%s: could not resolve a base branch; the new branch would start from HEAD", repoName))
-			}
-			if mode == BranchModeTrack {
-				plan.Warnings = append(plan.Warnings,
-					fmt.Sprintf("%s: remote branch %s not found; a new branch would be created from %s instead",
-						repoName, opts.Branch, base))
-			}
-			plan.Changes = append(plan.Changes,
-				PlannedChange{
-					Action: ActionCreateBranch, Repo: repoName, Branch: opts.Branch,
-					SourceRepo: sourcePath, Detail: "from " + base,
-				},
-				PlannedChange{
-					Action: ActionCreateWorktree, Repo: repoName, Path: wtPath,
-					Branch: opts.Branch, SourceRepo: sourcePath,
-				})
-		}
-
-		if cfg, _ := gitops.ReadGroveConfig(sourcePath); cfg != nil && len(cfg.Setup) > 0 {
-			for _, cmdStr := range cfg.Setup {
-				plan.Changes = append(plan.Changes, PlannedChange{
-					Action: ActionRunSetupHook,
-					Repo:   repoName,
-					Path:   wtPath,
-					Detail: cmdStr,
-				})
-			}
-		}
+		changes, warnings := planRepoProvisioning(repoName, wsPath, opts)
+		plan.Changes = append(plan.Changes, changes...)
+		plan.Warnings = append(plan.Warnings, warnings...)
 	}
 
 	plan.Fingerprint = s.createFingerprint(name, opts)
 	return plan, nil
+}
+
+// planRepoProvisioning describes what provisioning one repo would do. It mirrors
+// provisionWorktreeNoFetch's branch resolution, so a plan reports the action the
+// executor would actually take rather than a guess.
+func planRepoProvisioning(repoName, wsPath string, opts CreateOpts) ([]PlannedChange, []string) {
+	sourcePath := opts.RepoMap[repoName]
+	wtPath := filepath.Join(wsPath, repoName)
+
+	// Resolved once and threaded through: each of these queries is a git
+	// subprocess, and planning should not pay for the same answer twice.
+	branchExists := gitops.BranchExists(sourcePath, opts.Branch)
+
+	changes, warnings := planBranchProvisioning(repoName, sourcePath, branchExists, opts)
+
+	worktree := PlannedChange{
+		Action:     ActionCreateWorktree,
+		Repo:       repoName,
+		Path:       wtPath,
+		Branch:     opts.Branch,
+		SourceRepo: sourcePath,
+	}
+	if branchExists {
+		// Otherwise a reused branch is indistinguishable from a created one.
+		worktree.Detail = "branch already exists locally; it will be checked out, not created"
+	}
+
+	changes = append(changes, worktree)
+	return append(changes, planSetupHooks(repoName, wtPath, sourcePath)...), warnings
+}
+
+// planBranchProvisioning covers the branch half of provisioning: nothing when the
+// branch already exists locally, a tracking checkout when track mode finds it on
+// the remote, or a new branch from the resolved base.
+func planBranchProvisioning(repoName, sourcePath string, branchExists bool, opts CreateOpts) ([]PlannedChange, []string) {
+	if branchExists {
+		return nil, nil
+	}
+
+	if effectiveBranchMode(repoName, opts) == BranchModeTrack {
+		if gitops.RemoteBranchExists(sourcePath, opts.Branch) {
+			return []PlannedChange{{
+				Action:     ActionTrackBranch,
+				Repo:       repoName,
+				Branch:     opts.Branch,
+				SourceRepo: sourcePath,
+				Detail:     "tracking existing remote branch",
+			}}, nil
+		}
+		// Track mode falls back to creating a branch, which is a surprise worth
+		// surfacing before the plan is applied.
+		base, warnings := resolveBaseForPlan(repoName, sourcePath)
+		warnings = append(warnings, fmt.Sprintf(
+			"%s: remote branch %s not found; a new branch would be created from %s instead",
+			repoName, opts.Branch, base))
+		return []PlannedChange{newBranchChange(repoName, sourcePath, opts.Branch, base)}, warnings
+	}
+
+	base, warnings := resolveBaseForPlan(repoName, sourcePath)
+	return []PlannedChange{newBranchChange(repoName, sourcePath, opts.Branch, base)}, warnings
+}
+
+// effectiveBranchMode resolves opts.BranchMode for one repo: with TrackBranchRepo
+// set, only that repo tracks and the rest get fresh branches.
+func effectiveBranchMode(repoName string, opts CreateOpts) BranchMode {
+	if opts.TrackBranchRepo != "" && repoName != opts.TrackBranchRepo {
+		return BranchModeCreate
+	}
+	return opts.BranchMode
+}
+
+// resolveBaseForPlan reports the base branch a new branch would start from,
+// warning when it had to fall back to HEAD.
+func resolveBaseForPlan(repoName, sourcePath string) (string, []string) {
+	base, err := gitops.ResolveBaseBranch(sourcePath)
+	if err != nil {
+		return "HEAD", []string{fmt.Sprintf(
+			"%s: could not resolve a base branch; the new branch would start from HEAD", repoName)}
+	}
+	return base, nil
+}
+
+func newBranchChange(repoName, sourcePath, branch, base string) PlannedChange {
+	return PlannedChange{
+		Action:     ActionCreateBranch,
+		Repo:       repoName,
+		Branch:     branch,
+		SourceRepo: sourcePath,
+		Detail:     "from " + base,
+	}
+}
+
+// planSetupHooks lists the .grove.toml setup commands provisioning would run.
+func planSetupHooks(repoName, wtPath, sourcePath string) []PlannedChange {
+	cfg, _ := gitops.ReadGroveConfig(sourcePath)
+	if cfg == nil {
+		return nil
+	}
+	changes := make([]PlannedChange, 0, len(cfg.Setup))
+	for _, cmdStr := range cfg.Setup {
+		changes = append(changes, PlannedChange{
+			Action: ActionRunSetupHook,
+			Repo:   repoName,
+			Path:   wtPath,
+			Detail: cmdStr,
+		})
+	}
+	return changes
 }
 
 // PlanDelete describes everything deleting a workspace would destroy.
@@ -232,31 +278,9 @@ func (s *Service) PlanDelete(name, version string) (*Plan, error) {
 	}
 
 	for _, r := range ws.Repos {
-		if cfg, _ := gitops.ReadGroveConfig(r.SourceRepo); cfg != nil && cfg.Teardown != "" {
-			plan.Changes = append(plan.Changes, PlannedChange{
-				Action: ActionRunTeardownHook, Repo: r.RepoName, Path: r.WorktreePath, Detail: cfg.Teardown,
-			})
-		}
-		plan.Changes = append(plan.Changes,
-			PlannedChange{
-				Action: ActionRemoveWorktree, Repo: r.RepoName, Path: r.WorktreePath,
-				Branch: r.Branch, SourceRepo: r.SourceRepo, Destructive: true,
-			},
-			PlannedChange{
-				Action: ActionDeleteBranch, Repo: r.RepoName, Branch: r.Branch,
-				SourceRepo: r.SourceRepo, Destructive: true,
-				Detail: "force-deleted, including unmerged commits",
-			})
-
-		// Uncommitted work is the thing a reviewer most needs to know about.
-		if status, err := gitops.RepoStatus(r.WorktreePath); err == nil && status != "" {
-			plan.Warnings = append(plan.Warnings,
-				fmt.Sprintf("%s has uncommitted changes that would be destroyed", r.RepoName))
-		}
-		if ahead, _, err := gitops.CommitsAheadBehind(r.WorktreePath, "origin/"+r.Branch); err == nil && ahead > 0 {
-			plan.Warnings = append(plan.Warnings,
-				fmt.Sprintf("%s has %d unpushed commit(s) on %s", r.RepoName, ahead, r.Branch))
-		}
+		changes, warnings := planRepoDestruction(r)
+		plan.Changes = append(plan.Changes, changes...)
+		plan.Warnings = append(plan.Warnings, warnings...)
 	}
 
 	plan.Changes = append(plan.Changes,
@@ -266,6 +290,46 @@ func (s *Service) PlanDelete(name, version string) (*Plan, error) {
 
 	plan.Fingerprint = s.deleteFingerprint(ws)
 	return plan, nil
+}
+
+// planRepoDestruction describes what deleting one repo's worktree would do, and
+// warns about the work that would be lost with it.
+func planRepoDestruction(r models.RepoWorktree) ([]PlannedChange, []string) {
+	var changes []PlannedChange
+
+	if cfg, _ := gitops.ReadGroveConfig(r.SourceRepo); cfg != nil && cfg.Teardown != "" {
+		changes = append(changes, PlannedChange{
+			Action: ActionRunTeardownHook, Repo: r.RepoName, Path: r.WorktreePath, Detail: cfg.Teardown,
+		})
+	}
+
+	changes = append(changes,
+		PlannedChange{
+			Action: ActionRemoveWorktree, Repo: r.RepoName, Path: r.WorktreePath,
+			Branch: r.Branch, SourceRepo: r.SourceRepo, Destructive: true,
+		},
+		PlannedChange{
+			Action: ActionDeleteBranch, Repo: r.RepoName, Branch: r.Branch,
+			SourceRepo: r.SourceRepo, Destructive: true,
+			Detail: "force-deleted, including unmerged commits",
+		})
+
+	return changes, unsavedWorkWarnings(r)
+}
+
+// unsavedWorkWarnings reports work a delete would destroy: uncommitted changes
+// and commits that exist nowhere else. This is what a reviewer most needs to see.
+func unsavedWorkWarnings(r models.RepoWorktree) []string {
+	var warnings []string
+	if status, err := gitops.RepoStatus(r.WorktreePath); err == nil && status != "" {
+		warnings = append(warnings,
+			fmt.Sprintf("%s has uncommitted changes that would be destroyed", r.RepoName))
+	}
+	if ahead, _, err := gitops.CommitsAheadBehind(r.WorktreePath, "origin/"+r.Branch); err == nil && ahead > 0 {
+		warnings = append(warnings,
+			fmt.Sprintf("%s has %d unpushed commit(s) on %s", r.RepoName, ahead, r.Branch))
+	}
+	return warnings
 }
 
 // validateCreate holds the pre-flight checks shared by planning and execution.

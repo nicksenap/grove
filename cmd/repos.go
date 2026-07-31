@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"os"
-	"strings"
 
 	"github.com/nicksenap/grove/internal/config"
 	"github.com/nicksenap/grove/internal/console"
@@ -67,14 +66,9 @@ var reposCmd = &cobra.Command{
 			return
 		}
 
-		home, _ := os.UserHomeDir()
 		table := console.NewTable(os.Stdout, []string{"Name", "Owner/Repo", "Path"})
 		for _, e := range entries {
-			path := e.Path
-			if home != "" {
-				path = strings.Replace(path, home, "~", 1)
-			}
-			table.AddRow([]string{e.Name, e.DisplayName, path})
+			table.AddRow([]string{e.Name, e.DisplayName, shortenPath(e.Path)})
 		}
 		table.Render()
 	},

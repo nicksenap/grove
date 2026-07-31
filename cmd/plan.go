@@ -235,13 +235,6 @@ func printPlan(plan *workspace.Plan) {
 	console.Infof("fingerprint %s", plan.Fingerprint[:min(12, len(plan.Fingerprint))])
 }
 
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}
-
 func init() {
 	planCreateCmd.Flags().StringVarP(&planBranch, "branch", "b", "", "Branch name")
 	planCreateCmd.Flags().StringVarP(&planRepos, "repos", "r", "", "Comma-separated repo names")

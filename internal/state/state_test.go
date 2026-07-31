@@ -281,3 +281,36 @@ func TestAtomicWrite(t *testing.T) {
 		t.Error("temp file should be cleaned up")
 	}
 }
+
+// PathContains is the single definition of "am I in this workspace?", shared by
+// state lookups and gw context, so its edge cases are pinned here.
+func TestPathContains(t *testing.T) {
+	dir := t.TempDir()
+	ws := filepath.Join(dir, "feat")
+	sibling := filepath.Join(dir, "feat-other")
+	os.MkdirAll(filepath.Join(ws, "api", "src"), 0o755)
+	os.MkdirAll(sibling, 0o755)
+
+	tests := []struct {
+		name       string
+		wsPath     string
+		path       string
+		wantInside bool
+	}{
+		{"the workspace itself", ws, ws, true},
+		{"a repo inside it", ws, filepath.Join(ws, "api"), true},
+		{"a nested directory", ws, filepath.Join(ws, "api", "src"), true},
+		{"the parent directory", ws, dir, false},
+		{"a sibling sharing a name prefix", ws, sibling, false},
+		{"an unrelated path", ws, filepath.Join(dir, "elsewhere"), false},
+		{"a non-normalized path that resolves inside", ws, filepath.Join(ws, "api", "..", "api"), true},
+		{"a non-normalized path that escapes", ws, filepath.Join(ws, "..", "feat-other"), false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := PathContains(tt.wsPath, tt.path); got != tt.wantInside {
+				t.Errorf("PathContains(%q, %q) = %v, want %v", tt.wsPath, tt.path, got, tt.wantInside)
+			}
+		})
+	}
+}
