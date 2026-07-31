@@ -16,9 +16,9 @@
 - `gw plan create` / `gw plan delete` and `gw apply`: preview a mutation, review
   every repository, path, and branch it would touch, then execute exactly what
   was reviewed. Plans carry a fingerprint of the state they assume (including
-  per-repo dirtiness), and `gw apply` refuses with `STATE_CHANGED` if anything
-  relevant moved — so work created after a plan was reviewed is never destroyed
-  by it.
+  each repo's exact uncommitted changes and current commit), and `gw apply`
+  refuses with `STATE_CHANGED` if anything relevant moved — so work created after
+  a plan was reviewed is never destroyed by it.
 - `gw context`: one read-only call reporting the current workspace, each repo's
   live git state, configuration, announcements, and safe next actions.
 - Global `--format json` (`-o json`) on every command: a versioned response
@@ -32,10 +32,34 @@
   them while orienting. Backed by a lock-free directory of JSON files under
   `~/.grove/announcements/` — no SQLite.
 
+### Fixes
+
+- `gw create -r ssh://git@host/org/repo.git` now clones the URL. `IsGitURL` did
+  not recognize `ssh://`, so the URL was treated as a repo name and failed with
+  "repo not found". `git://`, `git+ssh://`, and `ssh://` with a port are
+  recognized too.
+- `gw plan delete` now warns about commits that were never pushed. It compared
+  against `origin/<branch>` and ignored the error when that ref did not exist, so
+  the only truly unrecoverable case — commits that exist nowhere else — produced
+  no warning at all. An unreadable worktree now warns instead of appearing clean.
+- "No workspaces exist" reports one error code across commands. `gw rename`
+  returned `INTERNAL` (exit 1) where `gw add-repo` and `gw remove-repo` returned
+  `NO_WORKSPACES` (exit 3).
+- `--repos "api,"` no longer produces a repo named "" and the error
+  `repo  not found`; blank entries are dropped.
+- `gw status --format json` reports `base_branch`, so `ahead`/`behind` say what
+  they are relative to.
+
 ### Maintenance
 
 - Dropped the `modernc.org/sqlite` dependency tree; the release binary shrank
-  from 13.0 MB to 9.0 MB (-31%).
+  from 13,030,674 to 9,102,482 bytes (-30%) on darwin/arm64 with `-s -w`.
+- `gw context` makes 14 git invocations for a two-repo workspace instead of 20;
+  the base branch was resolved twice per repo.
+- e2e suite: added machine-contract coverage (221 assertions), sandboxed the
+  suite properly (it pinned `HOME` but not `GIT_CONFIG_GLOBAL`, so a host with
+  `XDG_CONFIG_HOME` set could have had its real git config modified), and added a
+  container mode plus a macOS CI job.
 
 ## v1.1.11
 
