@@ -1,7 +1,9 @@
 package workspace
 
 import (
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -13,6 +15,7 @@ import (
 
 	"github.com/nicksenap/grove/internal/console"
 	"github.com/nicksenap/grove/internal/gitops"
+	"github.com/nicksenap/grove/internal/machine"
 	"github.com/nicksenap/grove/internal/models"
 	"github.com/nicksenap/grove/internal/streamio"
 )
@@ -47,17 +50,36 @@ func GetRunnable(ws *models.Workspace) []RunnableRepo {
 	return result
 }
 
-// Run executes run hooks for a workspace, printing output directly.
-func Run(wsName string) error {
+// Run executes run hooks for a workspace, streaming each repo's output with a
+// [repo] prefix, and reports how every process ended.
+//
+// In machine mode the children's stdout is redirected to stderr: their output is
+// arbitrary text and would otherwise corrupt the single JSON envelope stdout is
+// reserved for.
+func Run(wsName string) (*RunResult, error) {
 	ws, err := ResolveWorkspace(wsName)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	runnable := GetRunnable(ws)
+	result := &RunResult{Workspace: ws.Name}
 	if len(runnable) == 0 {
 		console.Info("No repos have a run hook configured in .grove.toml")
-		return nil
+		return result, nil
+	}
+
+	// Children inherit this writer for stdout; machine mode keeps stdout clean.
+	childOut := io.Writer(os.Stdout)
+	if machine.Enabled() {
+		childOut = os.Stderr
+	}
+
+	var resultMu sync.Mutex
+	record := func(r RunRepoResult) {
+		resultMu.Lock()
+		defer resultMu.Unlock()
+		result.Repos = append(result.Repos, r)
 	}
 
 	// Pre-run hooks (parallel)
@@ -83,13 +105,19 @@ func Run(wsName string) error {
 		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 
 		// Prefix output with repo name
-		outW := &streamio.PrefixWriter{Prefix: fmt.Sprintf("[%s] ", r.RepoName), W: os.Stdout}
+		outW := &streamio.PrefixWriter{Prefix: fmt.Sprintf("[%s] ", r.RepoName), W: childOut}
 		errW := &streamio.PrefixWriter{Prefix: fmt.Sprintf("[%s] ", r.RepoName), W: os.Stderr}
 		cmd.Stdout = outW
 		cmd.Stderr = errW
 
 		if err := cmd.Start(); err != nil {
 			console.Warningf("%s: failed to start: %s", r.RepoName, err)
+			record(RunRepoResult{
+				Repo:     r.RepoName,
+				Outcome:  OutcomeFailed,
+				ExitCode: -1,
+				Detail:   "failed to start: " + err.Error(),
+			})
 			continue
 		}
 
@@ -105,13 +133,22 @@ func Run(wsName string) error {
 			// Emit any trailing line the process printed without a newline.
 			outW.Flush()
 			errW.Flush()
+			res := RunRepoResult{Repo: name, Outcome: OutcomeExited}
 			if err != nil {
-				if !shuttingDown.Load() {
+				res.ExitCode = exitCodeOf(c, err)
+				res.Detail = err.Error()
+				// A process we shut down ourselves did not fail on its own terms.
+				if shuttingDown.Load() {
+					res.Outcome = OutcomeExited
+					res.Detail = "terminated during shutdown"
+				} else {
+					res.Outcome = OutcomeFailed
 					console.Warningf("%s: exited with error: %s", name, err)
 				}
 			} else {
 				console.Infof("%s: exited (0)", name)
 			}
+			record(res)
 		}(r.RepoName, cmd, outW, errW)
 	}
 
@@ -165,7 +202,20 @@ func Run(wsName string) error {
 	// Post-run hooks (parallel)
 	runHooks(runnable, "post_run", func(r RunnableRepo) string { return r.PostRun })
 
-	return nil
+	return result, nil
+}
+
+// exitCodeOf extracts a child's exit status, falling back to -1 when the process
+// state is unavailable (killed before reporting, or a non-exit error).
+func exitCodeOf(c *exec.Cmd, err error) int {
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) {
+		return exitErr.ExitCode()
+	}
+	if c.ProcessState != nil {
+		return c.ProcessState.ExitCode()
+	}
+	return -1
 }
 
 func runHooks(runnable []RunnableRepo, hookName string, getCmd func(RunnableRepo) string) {

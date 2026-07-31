@@ -11,6 +11,7 @@ import (
 	"github.com/nicksenap/grove/internal/console"
 	"github.com/nicksenap/grove/internal/gitops"
 	"github.com/nicksenap/grove/internal/logging"
+	"github.com/nicksenap/grove/internal/machine"
 	"github.com/nicksenap/grove/internal/models"
 )
 
@@ -56,18 +57,24 @@ type CreateOpts struct {
 // repoMap is name→source_path. It preserves the historical positional signature
 // by delegating to CreateWithOpts.
 func (s *Service) Create(name, branch string, repoNames []string, repoMap map[string]string, cfg *models.Config) error {
-	return s.CreateWithOpts(name, CreateOpts{
+	_, err := s.CreateWithOpts(name, CreateOpts{
 		Branch:  branch,
 		Repos:   repoNames,
 		RepoMap: repoMap,
 		Cfg:     cfg,
 	})
+	return err
 }
 
 // CreateWithOpts creates a new workspace from the given options. It is the full
 // implementation behind Create, additionally supporting per-repo branch tracking
 // (BranchMode/TrackBranchRepo) and a persisted Source link.
-func (s *Service) CreateWithOpts(name string, opts CreateOpts) error {
+//
+// Creation is all-or-nothing: any repo that fails to provision rolls the whole
+// workspace back, so the returned result only ever describes a complete
+// workspace. Per-repo entries are still reported so a caller can see exactly
+// which worktrees and branches now exist.
+func (s *Service) CreateWithOpts(name string, opts CreateOpts) (*CreateResult, error) {
 	branch := opts.Branch
 	repoNames := opts.Repos
 	repoMap := opts.RepoMap
@@ -76,17 +83,17 @@ func (s *Service) CreateWithOpts(name string, opts CreateOpts) error {
 	// Check duplicate
 	existing, err := s.State.GetWorkspace(name)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if existing != nil {
-		return ErrWorkspaceExists(name)
+		return nil, ErrWorkspaceExists(name)
 	}
 
 	logging.Info("creating workspace %q (branch=%s, repos=%v)", name, branch, repoNames)
 
 	wsPath := filepath.Join(cfg.WorkspaceDir, name)
 	if err := os.MkdirAll(wsPath, 0o755); err != nil {
-		return fmt.Errorf("creating workspace dir: %w", err)
+		return nil, machine.Wrap(machine.CodePermission, err, "creating workspace dir %s: %s", wsPath, err)
 	}
 
 	ws := models.NewWorkspace(name, wsPath, branch)
@@ -98,7 +105,7 @@ func (s *Service) CreateWithOpts(name string, opts CreateOpts) error {
 		sourcePath, ok := repoMap[repoName]
 		if !ok {
 			os.RemoveAll(wsPath)
-			return ErrRepoNotFound(repoName)
+			return nil, ErrRepoNotFound(repoName)
 		}
 		sourcePaths[i] = sourcePath
 	}
@@ -132,7 +139,7 @@ func (s *Service) CreateWithOpts(name string, opts CreateOpts) error {
 			logging.Error("workspace creation failed for %q — rolled back", name)
 			rollback(created)
 			os.RemoveAll(wsPath)
-			return fmt.Errorf("provisioning %s: %w", repoName, err)
+			return nil, machine.Wrap(machine.CodeFor(err), err, "provisioning %s: %s", repoName, err)
 		}
 		created = append(created, *rw)
 	}
@@ -149,7 +156,7 @@ func (s *Service) CreateWithOpts(name string, opts CreateOpts) error {
 	if err := s.State.AddWorkspace(ws); err != nil {
 		rollback(created)
 		os.RemoveAll(wsPath)
-		return err
+		return nil, err
 	}
 
 	// Record stats
@@ -163,7 +170,23 @@ func (s *Service) CreateWithOpts(name string, opts CreateOpts) error {
 		os.WriteFile(cdFile, []byte(wsPath), 0o644)
 	}
 
-	return nil
+	repos := make([]RepoResult, len(created))
+	for i, r := range created {
+		repos[i] = RepoResult{
+			Repo:    r.RepoName,
+			Outcome: OutcomeCreated,
+			Branch:  r.Branch,
+			Path:    r.WorktreePath,
+		}
+	}
+
+	return &CreateResult{
+		Name:   name,
+		Path:   wsPath,
+		Branch: branch,
+		Source: ws.Source,
+		Repos:  repos,
+	}, nil
 }
 
 func provisionWorktree(sourcePath, repoName, wsPath, branch string) (*models.RepoWorktree, error) {
@@ -268,74 +291,96 @@ func (s *Service) runSetupHooks(ws models.Workspace) {
 	wg.Wait()
 }
 
-// Delete removes a workspace and its worktrees.
-func (s *Service) Delete(name string) error {
+// Delete removes a workspace, its worktrees, and its branches. It reports one
+// result per repo: removal is parallel and independently failable, and a repo
+// whose worktree could not be removed keeps the workspace's state entry alive so
+// the leftover is discoverable via `gw doctor` instead of vanishing from state.
+func (s *Service) Delete(name string) (*DeleteResult, error) {
 	ws, err := s.State.GetWorkspace(name)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if ws == nil {
-		return ErrWorkspaceNotFound(name)
+		return nil, ErrWorkspaceNotFound(name)
 	}
 
 	logging.Info("deleting workspace %q", name)
 
 	// Parallel teardown+remove for all repos
-	succeeded := make([]bool, len(ws.Repos))
+	results := make([]RepoResult, len(ws.Repos))
 	var wg sync.WaitGroup
 	for i, r := range ws.Repos {
 		wg.Add(1)
 		go func(idx int, repo models.RepoWorktree) {
 			defer wg.Done()
-			groveCfg, _ := gitops.ReadGroveConfig(repo.SourceRepo)
-			if groveCfg != nil && groveCfg.Teardown != "" {
-				s.RunCmdSilent(repo.WorktreePath, groveCfg.Teardown)
-			}
-
-			if err := gitops.WorktreeRemove(repo.SourceRepo, repo.WorktreePath); err != nil {
-				if err := os.RemoveAll(repo.WorktreePath); err != nil {
-					logging.Warn("failed to remove worktree for %s: %s", repo.RepoName, err)
-					console.Warningf("%s: failed to remove worktree: %s", repo.RepoName, err)
-					return
-				}
-			}
-
-			if err := gitops.DeleteBranch(repo.SourceRepo, repo.Branch, true); err != nil {
-				logging.Warn("failed to delete branch %q in %s: %s", repo.Branch, repo.RepoName, err)
-				console.Warningf("%s: failed to delete branch %s: %s", repo.RepoName, repo.Branch, err)
-			} else {
-				logging.Info("deleted branch %q in %s", repo.Branch, repo.RepoName)
-			}
-
-			succeeded[idx] = true
+			results[idx] = s.deleteRepo(repo, true)
 		}(i, r)
 	}
 	wg.Wait()
 
-	failCount := 0
-	for _, ok := range succeeded {
-		if !ok {
-			failCount++
-		}
-	}
-	if failCount > 0 {
-		logging.Warn("workspace %q: %d worktree(s) failed to remove", name, failCount)
+	failed := FailedRepos(results)
+	if len(failed) > 0 {
+		logging.Warn("workspace %q: %d worktree(s) failed to remove", name, len(failed))
 	}
 
 	os.RemoveAll(ws.Path)
 
 	s.Stats.RecordDeleted(*ws)
 
+	stateRemoved := false
 	_, dirErr := os.Stat(ws.Path)
-	if failCount == 0 || os.IsNotExist(dirErr) {
+	if len(failed) == 0 || os.IsNotExist(dirErr) {
 		if err := s.State.RemoveWorkspace(name); err != nil {
-			return err
+			return nil, err
 		}
+		stateRemoved = true
 	}
 
 	logging.Info("workspace %q deleted", name)
 	console.Successf("Workspace %s deleted", name)
-	return nil
+
+	return &DeleteResult{
+		Name:         ws.Name,
+		Path:         ws.Path,
+		Repos:        results,
+		StateRemoved: stateRemoved,
+	}, nil
+}
+
+// deleteRepo tears down one repo's worktree and branch. A failed branch deletion
+// is not fatal — the worktree is what makes the workspace exist — but it is
+// reported in Detail so the leftover branch is not silently lost.
+//
+// forceBranch mirrors the historical difference between the two callers: deleting
+// a whole workspace force-deletes its branches, while removing a single repo from
+// a workspace does not, so unmerged work is preserved.
+func (s *Service) deleteRepo(repo models.RepoWorktree, forceBranch bool) RepoResult {
+	res := RepoResult{Repo: repo.RepoName, Branch: repo.Branch, Path: repo.WorktreePath}
+
+	groveCfg, _ := gitops.ReadGroveConfig(repo.SourceRepo)
+	if groveCfg != nil && groveCfg.Teardown != "" {
+		s.RunCmdSilent(repo.WorktreePath, groveCfg.Teardown)
+	}
+
+	if err := gitops.WorktreeRemove(repo.SourceRepo, repo.WorktreePath); err != nil {
+		if err := os.RemoveAll(repo.WorktreePath); err != nil {
+			logging.Warn("failed to remove worktree for %s: %s", repo.RepoName, err)
+			console.Warningf("%s: failed to remove worktree: %s", repo.RepoName, err)
+			res.Outcome = OutcomeFailed
+			res.Detail = "could not remove worktree: " + err.Error()
+			return res
+		}
+	}
+
+	res.Outcome = OutcomeRemoved
+	if err := gitops.DeleteBranch(repo.SourceRepo, repo.Branch, forceBranch); err != nil {
+		logging.Warn("failed to delete branch %q in %s: %s", repo.Branch, repo.RepoName, err)
+		console.Warningf("%s: failed to delete branch %s: %s", repo.RepoName, repo.Branch, err)
+		res.Detail = "worktree removed, but branch " + repo.Branch + " remains: " + err.Error()
+		return res
+	}
+	logging.Info("deleted branch %q in %s", repo.Branch, repo.RepoName)
+	return res
 }
 
 // Rename renames a workspace using a state-first pattern with rollback.
@@ -399,14 +444,16 @@ func (s *Service) Rename(oldName, newName string) error {
 	return nil
 }
 
-// AddRepos adds repos to an existing workspace.
-func (s *Service) AddRepos(wsName string, repoNames []string, repoMap map[string]string) error {
+// AddRepos adds repos to an existing workspace. Repos already present are
+// reported as already_present rather than treated as an error, so the operation
+// is idempotent for a caller retrying after a partial failure.
+func (s *Service) AddRepos(wsName string, repoNames []string, repoMap map[string]string) (*ReposChangeResult, error) {
 	ws, err := s.State.GetWorkspace(wsName)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if ws == nil {
-		return ErrWorkspaceNotFound(wsName)
+		return nil, ErrWorkspaceNotFound(wsName)
 	}
 
 	existing := make(map[string]bool)
@@ -414,54 +461,73 @@ func (s *Service) AddRepos(wsName string, repoNames []string, repoMap map[string
 		existing[r.RepoName] = true
 	}
 
+	result := &ReposChangeResult{Workspace: wsName}
 	var toAdd []string
 	for _, name := range repoNames {
-		if !existing[name] {
-			toAdd = append(toAdd, name)
+		if existing[name] {
+			result.Repos = append(result.Repos, RepoResult{Repo: name, Outcome: OutcomeAlreadyExists})
+			continue
 		}
+		toAdd = append(toAdd, name)
 	}
 
 	if len(toAdd) == 0 {
 		console.Info("All repos already in workspace")
-		return nil
+		return result, nil
 	}
 
 	beforeLen := len(ws.Repos)
 	for _, repoName := range toAdd {
 		sourcePath, ok := repoMap[repoName]
 		if !ok {
-			return ErrRepoNotFound(repoName)
+			return nil, ErrRepoNotFound(repoName)
 		}
 
 		rw, err := provisionWorktree(sourcePath, repoName, ws.Path, ws.Branch)
 		if err != nil {
-			return fmt.Errorf("adding %s: %w", repoName, err)
+			// Persist what already succeeded before surfacing the failure:
+			// abandoning it would leave worktrees on disk that state does not know
+			// about, which is worse than a partially populated workspace.
+			if len(ws.Repos) > beforeLen {
+				s.State.UpdateWorkspace(*ws)
+			}
+			return nil, machine.Wrap(machine.CodeFor(err), err, "adding %s: %s", repoName, err)
 		}
 
 		ws.Repos = append(ws.Repos, *rw)
+		result.Repos = append(result.Repos, RepoResult{
+			Repo:    repoName,
+			Outcome: OutcomeAdded,
+			Branch:  rw.Branch,
+			Path:    rw.WorktreePath,
+		})
 	}
 
 	newWS := models.Workspace{Repos: ws.Repos[beforeLen:]}
 	s.runSetupHooks(newWS)
 
 	if err := s.State.UpdateWorkspace(*ws); err != nil {
-		return err
+		return nil, err
 	}
 
 	logging.Info("added %d repo(s) to workspace %q", len(toAdd), wsName)
 	console.Successf("Added %d repo(s) to %s", len(toAdd), wsName)
-	return nil
+	return result, nil
 }
 
-// RemoveRepos removes repos from a workspace.
-func (s *Service) RemoveRepos(wsName string, repoNames []string) error {
+// RemoveRepos removes repos from a workspace. A name that is not in the
+// workspace is reported as not_found instead of failing the whole call, so
+// removing an already-removed repo is idempotent.
+func (s *Service) RemoveRepos(wsName string, repoNames []string) (*ReposChangeResult, error) {
 	ws, err := s.State.GetWorkspace(wsName)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if ws == nil {
-		return ErrWorkspaceNotFound(wsName)
+		return nil, ErrWorkspaceNotFound(wsName)
 	}
+
+	result := &ReposChangeResult{Workspace: wsName}
 
 	type removeItem struct {
 		name string
@@ -470,49 +536,47 @@ func (s *Service) RemoveRepos(wsName string, repoNames []string) error {
 	var items []removeItem
 	for _, repoName := range repoNames {
 		r := ws.FindRepo(repoName)
-		if r != nil {
-			items = append(items, removeItem{name: repoName, repo: r})
+		if r == nil {
+			result.Repos = append(result.Repos, RepoResult{Repo: repoName, Outcome: OutcomeNotFound})
+			continue
 		}
+		items = append(items, removeItem{name: repoName, repo: r})
 	}
 
-	succeeded := make([]bool, len(items))
+	removed := make([]RepoResult, len(items))
 	var wg sync.WaitGroup
 	for i, item := range items {
 		wg.Add(1)
 		go func(idx int, r models.RepoWorktree) {
 			defer wg.Done()
-			groveCfg, _ := gitops.ReadGroveConfig(r.SourceRepo)
-			if groveCfg != nil && groveCfg.Teardown != "" {
-				s.RunCmdSilent(r.WorktreePath, groveCfg.Teardown)
-			}
-
-			if err := gitops.WorktreeRemove(r.SourceRepo, r.WorktreePath); err != nil {
-				os.RemoveAll(r.WorktreePath)
-			}
-
-			gitops.DeleteBranch(r.SourceRepo, r.Branch, false)
-			succeeded[idx] = true
+			removed[idx] = s.deleteRepo(r, false)
 		}(i, *item.repo)
 	}
 	wg.Wait()
 
 	for i, item := range items {
-		if succeeded[i] {
+		if !removed[i].Failed() {
 			ws.RemoveRepo(item.name)
 		}
+		result.Repos = append(result.Repos, removed[i])
 	}
 
 	if err := s.State.UpdateWorkspace(*ws); err != nil {
-		return err
+		return nil, err
 	}
 
-	logging.Info("removed %d repo(s) from workspace %q", len(repoNames), wsName)
-	console.Successf("Removed %d repo(s) from %s", len(repoNames), wsName)
-	return nil
+	logging.Info("removed %d repo(s) from workspace %q", len(items), wsName)
+	console.Successf("Removed %d repo(s) from %s", len(items), wsName)
+	return result, nil
 }
 
-// syncOneRepo syncs a single repo.
-func (s *Service) syncOneRepo(r models.RepoWorktree) {
+// syncOneRepo rebases a single repo onto its base branch and reports the
+// outcome. Non-fatal problems (fetch failure, undeterminable upstream) become a
+// skipped result with a reason rather than aborting the whole sync — one
+// unreachable remote should not stop the other repos from advancing.
+func (s *Service) syncOneRepo(r models.RepoWorktree) RepoResult {
+	res := RepoResult{Repo: r.RepoName, Branch: r.Branch, Path: r.WorktreePath}
+
 	if err := gitops.Fetch(r.SourceRepo); err != nil {
 		console.Warningf("%s: fetch failed, using local state: %s", r.RepoName, err)
 	}
@@ -522,28 +586,37 @@ func (s *Service) syncOneRepo(r models.RepoWorktree) {
 	status, err := gitops.RepoStatus(r.WorktreePath)
 	if err != nil {
 		console.Warningf("%s: status check failed: %s", r.RepoName, err)
-		return
+		res.Outcome = OutcomeFailed
+		res.Detail = "status check failed: " + err.Error()
+		return res
 	}
 	if status != "" {
 		console.Warningf("%s: skipping (dirty working tree)", r.RepoName)
-		return
+		res.Outcome = OutcomeSkipped
+		res.Detail = "dirty working tree"
+		return res
 	}
 
 	upstream, err := gitops.ResolveBaseBranch(r.SourceRepo)
 	if err != nil {
 		console.Warningf("%s: could not determine base branch: %s", r.RepoName, err)
-		return
+		res.Outcome = OutcomeSkipped
+		res.Detail = "could not determine base branch: " + err.Error()
+		return res
 	}
 
 	_, behind, err := gitops.CommitsAheadBehind(r.WorktreePath, upstream)
 	if err != nil {
 		console.Warningf("%s: cannot determine ahead/behind: %s", r.RepoName, err)
-		return
+		res.Outcome = OutcomeSkipped
+		res.Detail = "cannot determine ahead/behind: " + err.Error()
+		return res
 	}
 
 	if behind == 0 {
 		console.Infof("%s: ✓ up to date", r.RepoName)
-		return
+		res.Outcome = OutcomeUpToDate
+		return res
 	}
 
 	if groveCfg != nil && groveCfg.PreSync != "" {
@@ -553,39 +626,48 @@ func (s *Service) syncOneRepo(r models.RepoWorktree) {
 	if err := gitops.RebaseOnto(r.WorktreePath, upstream); err != nil {
 		console.Errorf("%s: rebase failed: %s", r.RepoName, err)
 		gitops.RebaseAbort(r.WorktreePath)
-		return
+		res.Outcome = OutcomeFailed
+		res.Detail = "rebase onto " + upstream + " failed and was aborted: " + err.Error()
+		return res
 	}
 
 	console.Successf("%s: rebased (%d commits)", r.RepoName, behind)
+	res.Outcome = OutcomeRebased
+	res.Detail = fmt.Sprintf("rebased onto %s (%d commits)", upstream, behind)
 
 	if groveCfg != nil && groveCfg.PostSync != "" {
 		s.RunCmdSilent(r.WorktreePath, groveCfg.PostSync)
 	}
+	return res
 }
 
-// Sync rebases workspace repos onto their base branches.
-func (s *Service) Sync(wsName string) error {
+// Sync rebases workspace repos onto their base branches. It returns per-repo
+// outcomes and only errors when the workspace itself cannot be read — an
+// individual repo's failure is data, not a command failure, because the other
+// repos may well have advanced.
+func (s *Service) Sync(wsName string) (*SyncResult, error) {
 	ws, err := s.State.GetWorkspace(wsName)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if ws == nil {
-		return ErrWorkspaceNotFound(wsName)
+		return nil, ErrWorkspaceNotFound(wsName)
 	}
 
 	logging.Info("syncing workspace %q", wsName)
 
+	results := make([]RepoResult, len(ws.Repos))
 	var wg sync.WaitGroup
-	for _, r := range ws.Repos {
+	for i, r := range ws.Repos {
 		wg.Add(1)
-		go func(repo models.RepoWorktree) {
+		go func(idx int, repo models.RepoWorktree) {
 			defer wg.Done()
-			s.syncOneRepo(repo)
-		}(r)
+			results[idx] = s.syncOneRepo(repo)
+		}(i, r)
 	}
 	wg.Wait()
 
-	return nil
+	return &SyncResult{Workspace: wsName, Repos: results}, nil
 }
 
 // RepoStatus is one repo's git state within a workspace. Ahead/Behind are

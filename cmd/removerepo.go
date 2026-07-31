@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/nicksenap/grove/internal/console"
+	"github.com/nicksenap/grove/internal/machine"
 	"github.com/nicksenap/grove/internal/picker"
 	"github.com/nicksenap/grove/internal/state"
 	"github.com/nicksenap/grove/internal/workspace"
@@ -30,7 +31,7 @@ var removeRepoCmd = &cobra.Command{
 				exitError(err.Error())
 			}
 			if len(workspaces) == 0 {
-				exitError("No workspaces")
+				fail(machine.Errorf(machine.CodeNoWorkspaces, "no workspaces exist"))
 			}
 			choices := make([]string, len(workspaces))
 			for i, ws := range workspaces {
@@ -53,13 +54,13 @@ var removeRepoCmd = &cobra.Command{
 			// Interactive: pick from repos in workspace
 			ws, err := state.GetWorkspace(wsName)
 			if err != nil {
-				exitError(err.Error())
+				fail(err)
 			}
 			if ws == nil {
-				exitError("Workspace not found: " + wsName)
+				fail(workspace.ErrWorkspaceNotFound(wsName))
 			}
 			if len(ws.Repos) == 0 {
-				exitError("No repos in workspace")
+				fail(machine.Errorf(machine.CodeRepoNotFound, "workspace %s has no repos", wsName))
 			}
 			choices := ws.RepoNames()
 			selected, err := picker.PickMany("Select repos to remove:", choices)
@@ -70,14 +71,21 @@ var removeRepoCmd = &cobra.Command{
 		}
 
 		if !removeRepoForce {
+			// Removing a repo deletes its worktree, so machine mode requires the
+			// destructive intent to be explicit instead of assumed from a prompt
+			// it is not allowed to show.
+			requireArgs("--force", "gw remove-repo "+wsName+" -r <repos> --force --format json")
 			if !console.Confirm(fmt.Sprintf("Remove %s from %s?", strings.Join(repoNames, ", "), wsName), false) {
 				return
 			}
 		}
 
-		if err := workspace.NewService().RemoveRepos(wsName, repoNames); err != nil {
-			exitError(err.Error())
+		result, err := workspace.NewService().RemoveRepos(wsName, repoNames)
+		if err != nil {
+			fail(err)
 		}
+		machine.Emit(result,
+			machine.NextAction("Inspect repo state", "gw status "+wsName+" --format json"))
 	},
 }
 

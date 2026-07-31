@@ -5,6 +5,7 @@ import (
 	"os/exec"
 
 	"github.com/nicksenap/grove/internal/config"
+	"github.com/nicksenap/grove/internal/machine"
 	"github.com/nicksenap/grove/internal/state"
 	"github.com/nicksenap/grove/internal/stats"
 )
@@ -27,10 +28,16 @@ func NewService() *Service {
 	}
 }
 
+// prodRunCmd runs a per-repo hook with its output visible. In machine mode its
+// stdout goes to stderr: hook output is arbitrary text, and stdout is reserved
+// for the single response envelope.
 func prodRunCmd(dir, cmdStr string) error {
 	cmd := exec.Command("sh", "-c", cmdStr)
 	cmd.Dir = dir
 	cmd.Stdout = os.Stdout
+	if machine.Enabled() {
+		cmd.Stdout = os.Stderr
+	}
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
 }

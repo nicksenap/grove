@@ -11,6 +11,7 @@ import (
 	"github.com/nicksenap/grove/internal/discover"
 	"github.com/nicksenap/grove/internal/gitops"
 	"github.com/nicksenap/grove/internal/lifecycle"
+	"github.com/nicksenap/grove/internal/machine"
 	"github.com/nicksenap/grove/internal/models"
 	"github.com/nicksenap/grove/internal/picker"
 	"github.com/nicksenap/grove/internal/state"
@@ -47,7 +48,8 @@ var createCmd = &cobra.Command{
 		if createPreset != "" {
 			preset, ok := cfg.Presets[createPreset]
 			if !ok {
-				exitError("Preset not found: " + createPreset)
+				fail(machine.Errorf(machine.CodeUsage, "preset %s not found", createPreset).
+					WithActions(machine.NextAction("List presets", "gw preset list --format json")))
 			}
 			repoNames = preset.Repos
 		} else if createAll {
@@ -66,15 +68,18 @@ var createCmd = &cobra.Command{
 					continue
 				}
 				if len(cfg.RepoDirs) == 0 {
-					exitError("No repo_dirs configured — cannot clone remote repo")
+					fail(machine.Errorf(machine.CodeNotInitialized, "no repo_dirs configured — cannot clone %s", name).
+						WithActions(machine.NextAction("Add a repo directory", "gw add-dir <path>")))
 				}
 				console.Infof("Cloning %s ...", name)
 				clonedPath, repoName, err := gitops.Clone(name, cfg.RepoDirs[0])
 				if err != nil {
-					exitError(err.Error())
+					fail(machine.Wrap(machine.CodeTransient, err, "cloning %s: %s", name, err).
+						WithFix("Check network access and repository permissions, then retry"))
 				}
 				if existing, ok := repoMap[repoName]; ok && existing != clonedPath {
-					exitError("repo name conflict: " + repoName + " already exists locally at " + existing)
+					fail(machine.Errorf(machine.CodeBranchConflict,
+						"repo name conflict: %s already exists locally at %s", repoName, existing))
 				}
 				repoMap[repoName] = clonedPath
 				repoNames[i] = repoName
@@ -147,7 +152,8 @@ var createCmd = &cobra.Command{
 		// Validate repos exist
 		for _, name := range repoNames {
 			if _, ok := repoMap[name]; !ok {
-				exitError("Unknown repo: " + name + ". Available: " + strings.Join(repoNamesList(repos), ", "))
+				fail(workspace.ErrRepoNotFound(name).
+					WithDetails(map[string]any{"available": repoNamesList(repos)}))
 			}
 		}
 
@@ -160,11 +166,13 @@ var createCmd = &cobra.Command{
 		// Branch — prompt if omitted and in a terminal.
 		branch := createBranch
 		if branch == "" {
+			requireArgs("--branch", "gw create "+name+" -b feat/x --format json")
 			if console.IsTerminal(os.Stdin) {
 				branch = console.PromptDefault("Branch name", name)
 			}
 			if branch == "" {
-				exitError("Branch is required: --branch / -b")
+				fail(machine.Errorf(machine.CodeUsage, "branch is required").
+					WithFix("Pass --branch / -b"))
 			}
 		}
 		if name == "" {
@@ -176,16 +184,24 @@ var createCmd = &cobra.Command{
 		if createReplace {
 			cwd, err := os.Getwd()
 			if err != nil {
-				exitError("cannot determine working directory: " + err.Error())
+				fail(machine.Wrap(machine.CodeInternal, err, "cannot determine working directory: %s", err))
 			}
 			currentWs, _ := state.FindWorkspaceByPath(cwd)
 			if currentWs == nil {
-				exitError("--replace requires running from inside an existing workspace")
+				fail(machine.Errorf(machine.CodeUsage,
+					"--replace requires running from inside an existing workspace").
+					WithActions(machine.NextAction("Discover current context", "gw context --format json")))
 			}
 			if currentWs.Name == name {
-				exitError("--replace would collide: new workspace name matches the current one (" + name + "). Pass a different NAME.")
+				fail(machine.Errorf(machine.CodeWorkspaceExists,
+					"--replace would collide: new workspace name matches the current one (%s)", name).
+					WithFix("Pass a different NAME"))
 			}
+			// --replace deletes an existing workspace, so machine mode demands the
+			// destructive intent be explicit rather than inferred from a skipped
+			// prompt.
 			if !createForce {
+				requireArgs("--force (with --replace)", "gw create "+name+" -b <branch> --replace --force --format json")
 				if !console.Confirm("Delete workspace "+currentWs.Name+" and replace with "+name+"?", false) {
 					return
 				}
@@ -194,12 +210,12 @@ var createCmd = &cobra.Command{
 			vars := lifecycle.Vars{Name: currentWs.Name, Path: currentWs.Path, Branch: currentWs.Branch}
 			if err := lifecycle.Run("pre_delete", vars); err != nil && !errors.Is(err, lifecycle.ErrNoHook) {
 				if lifecycle.ShouldAbort(err) {
-					exitError(err.Error())
+					fail(machine.Wrap(machine.CodeHookFailed, err, "%s", err))
 				}
 				console.Warning(err.Error())
 			}
-			if err := workspace.NewService().Delete(currentWs.Name); err != nil {
-				exitError("failed to delete current workspace: " + err.Error())
+			if _, err := workspace.NewService().Delete(currentWs.Name); err != nil {
+				fail(machine.Wrap(machine.CodeFor(err), err, "failed to delete current workspace: %s", err))
 			}
 			replacedName = currentWs.Name
 		}
@@ -227,12 +243,19 @@ var createCmd = &cobra.Command{
 			opts.BranchMode = workspace.BranchModeTrack
 		}
 
-		if err := workspace.NewService().CreateWithOpts(name, opts); err != nil {
+		result, err := workspace.NewService().CreateWithOpts(name, opts)
+		if err != nil {
 			if replacedName != "" {
-				exitError("failed to create new workspace (old workspace " + replacedName + " was already deleted): " + err.Error())
+				// The replaced workspace is already gone, so this is not a no-op
+				// failure — say so explicitly instead of leaving the caller to
+				// assume nothing changed.
+				fail(machine.Wrap(machine.CodeFor(err), err,
+					"failed to create new workspace (old workspace %s was already deleted): %s", replacedName, err).
+					WithDetails(map[string]any{"deleted_workspace": replacedName}))
 			}
-			exitError(err.Error())
+			fail(err)
 		}
+		result.Replaced = replacedName
 
 		// Fire post_create hook if configured
 		wsPath := filepath.Join(cfg.WorkspaceDir, name)
@@ -244,10 +267,19 @@ var createCmd = &cobra.Command{
 		}
 		if err := lifecycle.Run("post_create", vars); err != nil && !errors.Is(err, lifecycle.ErrNoHook) {
 			if lifecycle.ShouldAbort(err) {
-				exitError(err.Error())
+				// The workspace exists; the hook is what failed. Report the
+				// workspace in details so the caller does not retry create.
+				fail(machine.Wrap(machine.CodeHookFailed, err, "%s", err).
+					WithDetails(map[string]any{"workspace": name, "path": wsPath}).
+					WithFix("Fix the post_create hook, or re-run with --no-hooks"))
 			}
 			console.Warning(err.Error())
 		}
+
+		machine.Emit(result,
+			machine.NextAction("Inspect repo state", "gw status "+name+" --format json"),
+			machine.NextAction("Run configured processes", "gw run "+name+" --format json"),
+		)
 	},
 }
 

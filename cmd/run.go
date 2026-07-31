@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"github.com/nicksenap/grove/internal/machine"
 	"github.com/nicksenap/grove/internal/workspace"
 	"github.com/spf13/cobra"
 )
@@ -16,8 +17,13 @@ var runCmd = &cobra.Command{
 			name = args[0]
 		}
 
-		if err := workspace.Run(name); err != nil {
-			exitError(err.Error())
+		result, err := workspace.Run(name)
+		if err != nil {
+			fail(err)
 		}
+
+		// Child output already went to stderr in machine mode, so stdout still
+		// holds exactly one envelope describing how each process ended.
+		machine.Emit(result)
 	},
 }

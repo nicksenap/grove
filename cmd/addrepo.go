@@ -8,6 +8,7 @@ import (
 	"github.com/nicksenap/grove/internal/console"
 	"github.com/nicksenap/grove/internal/discover"
 	"github.com/nicksenap/grove/internal/gitops"
+	"github.com/nicksenap/grove/internal/machine"
 	"github.com/nicksenap/grove/internal/picker"
 	"github.com/nicksenap/grove/internal/state"
 	"github.com/nicksenap/grove/internal/workspace"
@@ -39,7 +40,9 @@ var addRepoCmd = &cobra.Command{
 					exitError(err.Error())
 				}
 				if len(workspaces) == 0 {
-					exitError("No workspaces")
+					fail(machine.Errorf(machine.CodeNoWorkspaces, "no workspaces exist").
+						WithActions(machine.NextAction("Create one",
+							"gw create <name> -r <repos> -b <branch> --format json")))
 				}
 				choices := make([]string, len(workspaces))
 				for i, ws := range workspaces {
@@ -102,7 +105,9 @@ var addRepoCmd = &cobra.Command{
 				}
 			}
 			if len(choices) == 0 {
-				exitError("All discovered repos are already in the workspace")
+				fail(machine.Errorf(machine.CodeUsage,
+					"all discovered repos are already in the workspace — nothing to add").
+					WithActions(machine.NextAction("Discover more repo directories", "gw add-dir <path>")))
 			}
 			selected, err := picker.PickMany("Select repos to add:", choices)
 			if err != nil {
@@ -111,9 +116,12 @@ var addRepoCmd = &cobra.Command{
 			repoNames = selected
 		}
 
-		if err := workspace.NewService().AddRepos(wsName, repoNames, repoMap); err != nil {
-			exitError(err.Error())
+		result, err := workspace.NewService().AddRepos(wsName, repoNames, repoMap)
+		if err != nil {
+			fail(err)
 		}
+		machine.Emit(result,
+			machine.NextAction("Inspect repo state", "gw status "+wsName+" --format json"))
 	},
 }
 

@@ -244,7 +244,7 @@ func TestCreateTrackModeChecksOutExistingBranch(t *testing.T) {
 	env.createRepoWithRemote("api")
 	env.pushRemoteBranch(env.repoMap["api"], "feat/pr-head", "pr-marker.txt")
 
-	err := env.svc.CreateWithOpts("pr-ws", CreateOpts{
+	_, err := env.svc.CreateWithOpts("pr-ws", CreateOpts{
 		Branch:          "feat/pr-head",
 		Repos:           []string{"api"},
 		RepoMap:         env.repoMap,
@@ -274,7 +274,7 @@ func TestCreateTrackModeFallsBackWhenRemoteMissing(t *testing.T) {
 
 	// Track mode requested but no such remote branch exists → fall back to
 	// creating a new branch from base (no error).
-	err := env.svc.CreateWithOpts("fallback-ws", CreateOpts{
+	_, err := env.svc.CreateWithOpts("fallback-ws", CreateOpts{
 		Branch:          "feat/ghost-pr",
 		Repos:           []string{"api"},
 		RepoMap:         env.repoMap,
@@ -301,7 +301,7 @@ func TestCreateTrackModeOnlyAppliesToDesignatedRepo(t *testing.T) {
 
 	// Both repos share the branch name, but only "api" is the track repo;
 	// "web" should create a fresh branch from base (no api-pr.txt leakage).
-	err := env.svc.CreateWithOpts("mixed-ws", CreateOpts{
+	_, err := env.svc.CreateWithOpts("mixed-ws", CreateOpts{
 		Branch:          "feat/shared",
 		Repos:           []string{"api", "web"},
 		RepoMap:         env.repoMap,
@@ -333,7 +333,7 @@ func TestCreateWithOptsPersistsSource(t *testing.T) {
 		Ref:      "1172",
 		Title:    "Surface data source status",
 	}
-	err := env.svc.CreateWithOpts("src-ws", CreateOpts{
+	_, err := env.svc.CreateWithOpts("src-ws", CreateOpts{
 		Branch:  "feat/src",
 		Repos:   []string{"api"},
 		RepoMap: env.repoMap,
@@ -457,7 +457,7 @@ func TestDeleteSuccess(t *testing.T) {
 	env.createRepo("api")
 	env.svc.Create("del-ws", "feat/del", []string{"api"}, env.repoMap, env.cfg)
 
-	err := env.svc.Delete("del-ws")
+	_, err := env.svc.Delete("del-ws")
 	if err != nil {
 		t.Fatalf("delete: %v", err)
 	}
@@ -478,7 +478,7 @@ func TestDeleteNotFound(t *testing.T) {
 	env := setupTestEnv(t)
 	_ = env // setup env for state path
 
-	err := env.svc.Delete("nonexistent")
+	_, err := env.svc.Delete("nonexistent")
 	if err == nil {
 		t.Error("expected error for nonexistent workspace")
 	}
@@ -599,7 +599,7 @@ func TestReplaceSequence(t *testing.T) {
 	}
 
 	// Delete old (simulates --replace first half).
-	if err := env.svc.Delete("old-ws"); err != nil {
+	if _, err := env.svc.Delete("old-ws"); err != nil {
 		t.Fatalf("delete old: %v", err)
 	}
 
@@ -640,7 +640,7 @@ func TestSyncUpToDate(t *testing.T) {
 	env.svc.Create("sync-ws", "feat/sync", []string{"api"}, env.repoMap, env.cfg)
 
 	// No upstream changes — should be up to date
-	err := env.svc.Sync("sync-ws")
+	_, err := env.svc.Sync("sync-ws")
 	if err != nil {
 		t.Fatalf("sync: %v", err)
 	}
@@ -650,7 +650,7 @@ func TestSyncNotFound(t *testing.T) {
 	env := setupTestEnv(t)
 	_ = env
 
-	err := env.svc.Sync("nonexistent")
+	_, err := env.svc.Sync("nonexistent")
 	if err == nil {
 		t.Error("expected error")
 	}
@@ -667,7 +667,7 @@ func TestAddReposSuccess(t *testing.T) {
 
 	env.svc.Create("add-ws", "feat/add", []string{"api"}, env.repoMap, env.cfg)
 
-	err := env.svc.AddRepos("add-ws", []string{"web"}, env.repoMap)
+	_, err := env.svc.AddRepos("add-ws", []string{"web"}, env.repoMap)
 	if err != nil {
 		t.Fatalf("add: %v", err)
 	}
@@ -689,7 +689,7 @@ func TestAddReposAlreadyPresent(t *testing.T) {
 	env.svc.Create("dup-ws", "feat/dup", []string{"api"}, env.repoMap, env.cfg)
 
 	// Adding same repo again should be a no-op
-	err := env.svc.AddRepos("dup-ws", []string{"api"}, env.repoMap)
+	_, err := env.svc.AddRepos("dup-ws", []string{"api"}, env.repoMap)
 	if err != nil {
 		t.Fatalf("add duplicate: %v", err)
 	}
@@ -704,7 +704,7 @@ func TestAddReposNotFound(t *testing.T) {
 	env := setupTestEnv(t)
 	_ = env
 
-	err := env.svc.AddRepos("nonexistent", []string{"api"}, env.repoMap)
+	_, err := env.svc.AddRepos("nonexistent", []string{"api"}, env.repoMap)
 	if err == nil {
 		t.Error("expected error")
 	}
@@ -720,7 +720,7 @@ func TestRemoveReposSuccess(t *testing.T) {
 	env.createRepo("web")
 	env.svc.Create("rm-ws", "feat/rm", []string{"api", "web"}, env.repoMap, env.cfg)
 
-	err := env.svc.RemoveRepos("rm-ws", []string{"web"})
+	_, err := env.svc.RemoveRepos("rm-ws", []string{"web"})
 	if err != nil {
 		t.Fatalf("remove: %v", err)
 	}
@@ -746,7 +746,7 @@ func TestRemoveReposMultiple(t *testing.T) {
 	env.createRepo("worker")
 	env.svc.Create("rm-multi", "feat/rm-multi", []string{"api", "web", "worker"}, env.repoMap, env.cfg)
 
-	err := env.svc.RemoveRepos("rm-multi", []string{"web", "worker"})
+	_, err := env.svc.RemoveRepos("rm-multi", []string{"web", "worker"})
 	if err != nil {
 		t.Fatalf("remove: %v", err)
 	}
@@ -774,7 +774,7 @@ func TestRemoveReposNonexistent(t *testing.T) {
 	env.svc.Create("rm-ne", "feat/rm-ne", []string{"api"}, env.repoMap, env.cfg)
 
 	// Removing a repo not in workspace should be a no-op
-	err := env.svc.RemoveRepos("rm-ne", []string{"nonexistent"})
+	_, err := env.svc.RemoveRepos("rm-ne", []string{"nonexistent"})
 	if err != nil {
 		t.Fatalf("remove nonexistent: %v", err)
 	}
@@ -1027,7 +1027,7 @@ func TestDeleteMultiRepoAllCleaned(t *testing.T) {
 	env.createRepo("web")
 	env.svc.Create("multi-del", "feat/md", []string{"api", "web"}, env.repoMap, env.cfg)
 
-	err := env.svc.Delete("multi-del")
+	_, err := env.svc.Delete("multi-del")
 	if err != nil {
 		t.Fatalf("delete: %v", err)
 	}
@@ -1053,7 +1053,7 @@ func TestSyncMultiRepo(t *testing.T) {
 	env.createRepoWithRemote("web")
 	env.svc.Create("sync-multi", "feat/sm", []string{"api", "web"}, env.repoMap, env.cfg)
 
-	err := env.svc.Sync("sync-multi")
+	_, err := env.svc.Sync("sync-multi")
 	if err != nil {
 		t.Fatalf("sync: %v", err)
 	}
@@ -1076,7 +1076,7 @@ func TestSyncRebases(t *testing.T) {
 	env.run(repo, "git", "push", "-q", "origin", "HEAD")
 
 	// Sync should rebase
-	err := env.svc.Sync("rebase-ws")
+	_, err := env.svc.Sync("rebase-ws")
 	if err != nil {
 		t.Fatalf("sync: %v", err)
 	}
@@ -1245,7 +1245,7 @@ func TestSyncSkipsDirty(t *testing.T) {
 	wt := filepath.Join(env.wsDir, "dirty-ws", "api")
 	os.WriteFile(filepath.Join(wt, "dirt.txt"), []byte("uncommitted"), 0o644)
 
-	err := env.svc.Sync("dirty-ws")
+	_, err := env.svc.Sync("dirty-ws")
 	if err != nil {
 		t.Fatalf("sync: %v", err)
 	}
@@ -1455,7 +1455,7 @@ func TestAddReposBranchConflict(t *testing.T) {
 	// feat/conflict. This should work because it's a different branch.
 	// But adding web with a branch that already has a worktree should fail.
 	// The branch "feat/conflict" already has a worktree, so adding it again should error.
-	err := env.svc.AddRepos("ws2", []string{"web"}, env.repoMap)
+	_, err := env.svc.AddRepos("ws2", []string{"web"}, env.repoMap)
 	// This will try to create branch "feat/other" on "web" — should work (different branch)
 	if err != nil {
 		t.Fatalf("adding web with different branch should succeed: %v", err)
@@ -1503,7 +1503,7 @@ func TestRemoveReposWorkspaceNotFound(t *testing.T) {
 	env := setupTestEnv(t)
 	_ = env
 
-	err := env.svc.RemoveRepos("nonexistent", []string{"api"})
+	_, err := env.svc.RemoveRepos("nonexistent", []string{"api"})
 	if err == nil {
 		t.Error("expected error for nonexistent workspace")
 	}
@@ -1567,7 +1567,7 @@ func TestSyncConflictAbortsRebase(t *testing.T) {
 	env.run(repo, "git", "push", "-q", "origin", "HEAD")
 
 	// Sync should handle the conflict gracefully (abort rebase, no error)
-	err := env.svc.Sync("conflict-ws")
+	_, err := env.svc.Sync("conflict-ws")
 	if err != nil {
 		t.Fatalf("sync should not return error on conflict: %v", err)
 	}
@@ -1641,7 +1641,7 @@ func TestLoggingCreateAndDelete(t *testing.T) {
 	}
 
 	// Delete workspace
-	err = env.svc.Delete("log-ws")
+	_, err = env.svc.Delete("log-ws")
 	if err != nil {
 		t.Fatalf("delete: %v", err)
 	}
@@ -1670,7 +1670,7 @@ func TestLoggingSync(t *testing.T) {
 		t.Fatalf("create: %v", err)
 	}
 
-	err = env.svc.Sync("sync-log-ws")
+	_, err = env.svc.Sync("sync-log-ws")
 	if err != nil {
 		t.Fatalf("sync: %v", err)
 	}
@@ -1689,7 +1689,7 @@ func TestLoggingAddAndRemoveRepos(t *testing.T) {
 
 	env.svc.Create("addrem-ws", "feat/addrem", []string{"api"}, env.repoMap, env.cfg)
 
-	err := env.svc.AddRepos("addrem-ws", []string{"web"}, env.repoMap)
+	_, err := env.svc.AddRepos("addrem-ws", []string{"web"}, env.repoMap)
 	if err != nil {
 		t.Fatalf("add-repo: %v", err)
 	}
@@ -1699,7 +1699,7 @@ func TestLoggingAddAndRemoveRepos(t *testing.T) {
 		t.Errorf("log should contain add-repo, got:\n%s", log)
 	}
 
-	err = env.svc.RemoveRepos("addrem-ws", []string{"web"})
+	_, err = env.svc.RemoveRepos("addrem-ws", []string{"web"})
 	if err != nil {
 		t.Fatalf("remove-repo: %v", err)
 	}

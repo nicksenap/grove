@@ -7,6 +7,7 @@ import (
 
 	"github.com/nicksenap/grove/internal/console"
 	"github.com/nicksenap/grove/internal/lifecycle"
+	"github.com/nicksenap/grove/internal/machine"
 	"github.com/nicksenap/grove/internal/picker"
 	"github.com/nicksenap/grove/internal/state"
 	"github.com/nicksenap/grove/internal/workspace"
@@ -44,13 +45,14 @@ func doDelete(args []string, force bool) {
 	if len(args) > 0 {
 		names = []string{args[0]}
 	} else {
+		requireArgs("NAME", "gw delete <name> --force --format json")
 		// Interactive multi-select
 		workspaces, err := state.Load()
 		if err != nil {
-			exitError(err.Error())
+			fail(err)
 		}
 		if len(workspaces) == 0 {
-			exitError("No workspaces to delete")
+			fail(machine.Errorf(machine.CodeNoWorkspaces, "no workspaces to delete"))
 		}
 		choices := make([]string, len(workspaces))
 		for i, ws := range workspaces {
@@ -64,11 +66,15 @@ func doDelete(args []string, force bool) {
 	}
 
 	if !force {
+		// Deletion destroys worktrees and branches. In machine mode a skipped
+		// prompt must never be read as consent, so --force is mandatory.
+		requireArgs("--force", "gw delete "+names[0]+" --force --format json")
 		if !console.Confirm(fmt.Sprintf("Delete %s?", strings.Join(names, ", ")), false) {
 			return
 		}
 	}
 
+	results := make([]*workspace.DeleteResult, 0, len(names))
 	for _, name := range names {
 		// Fire pre_delete hook before teardown (e.g. harvest Claude memory)
 		ws, _ := state.GetWorkspace(name)
@@ -76,16 +82,23 @@ func doDelete(args []string, force bool) {
 			vars := lifecycle.Vars{Name: name, Path: ws.Path, Branch: ws.Branch}
 			if err := lifecycle.Run("pre_delete", vars); err != nil && !errors.Is(err, lifecycle.ErrNoHook) {
 				if lifecycle.ShouldAbort(err) {
-					exitError(err.Error())
+					fail(machine.Wrap(machine.CodeHookFailed, err, "%s", err).
+						WithDetails(map[string]any{"workspace": name}).
+						WithFix("Fix the pre_delete hook, or re-run with --no-hooks"))
 				}
 				console.Warning(err.Error())
 			}
 		}
 
-		if err := workspace.NewService().Delete(name); err != nil {
-			exitError(err.Error())
+		result, err := workspace.NewService().Delete(name)
+		if err != nil {
+			fail(err)
 		}
+		results = append(results, result)
 	}
+
+	machine.Emit(map[string]any{"deleted": results, "count": len(results)},
+		machine.NextAction("List remaining workspaces", "gw list --format json"))
 }
 
 func init() {
