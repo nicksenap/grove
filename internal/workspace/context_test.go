@@ -4,7 +4,9 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
+	"github.com/nicksenap/grove/internal/announce"
 	"github.com/nicksenap/grove/internal/models"
 )
 
@@ -178,5 +180,119 @@ func TestContextGitStateMatchesStatus(t *testing.T) {
 	if ctx.Workspace.Repos[0].Status != report.Repos[0].Status {
 		t.Errorf("context status %q != status command %q",
 			ctx.Workspace.Repos[0].Status, report.Repos[0].Status)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Announcements surfaced in context
+// ---------------------------------------------------------------------------
+
+// Coordination only works if an agent actually receives it. Notes published by
+// another workspace about a shared repo must appear in context without the agent
+// having to know a separate command exists.
+func TestContextSurfacesOtherWorkspaceAnnouncements(t *testing.T) {
+	env := setupTestEnv(t)
+	env.createRepo("api")
+	env.svc.Announce = &announce.Store{Dir: filepath.Join(env.groveDir, "announcements"), NowFn: time.Now}
+	env.svc.Create("mine", "feat/mine", []string{"api"}, env.repoMap, env.cfg)
+
+	if _, err := env.svc.Announce.Publish("theirs", "api", announce.CategoryBreakingChange,
+		"token format changed"); err != nil {
+		t.Fatalf("publish: %v", err)
+	}
+
+	ctx, err := env.svc.Context(filepath.Join(env.wsDir, "mine"), "test", env.cfg)
+	if err != nil {
+		t.Fatalf("context: %v", err)
+	}
+	if len(ctx.Announcements) != 1 {
+		t.Fatalf("announcements = %+v, want 1", ctx.Announcements)
+	}
+	if ctx.Announcements[0].Message != "token format changed" {
+		t.Errorf("message = %q", ctx.Announcements[0].Message)
+	}
+}
+
+// An agent must not be shown its own notes: that is noise, not coordination.
+func TestContextExcludesOwnAnnouncements(t *testing.T) {
+	env := setupTestEnv(t)
+	env.createRepo("api")
+	env.svc.Announce = &announce.Store{Dir: filepath.Join(env.groveDir, "announcements"), NowFn: time.Now}
+	env.svc.Create("mine", "feat/mine", []string{"api"}, env.repoMap, env.cfg)
+
+	env.svc.Announce.Publish("mine", "api", announce.CategoryInfo, "my own note")
+
+	ctx, err := env.svc.Context(filepath.Join(env.wsDir, "mine"), "test", env.cfg)
+	if err != nil {
+		t.Fatalf("context: %v", err)
+	}
+	if len(ctx.Announcements) != 0 {
+		t.Errorf("expected no announcements, got %+v", ctx.Announcements)
+	}
+}
+
+// Notes about repos this workspace does not hold are somebody else's business.
+func TestContextIgnoresUnrelatedRepoAnnouncements(t *testing.T) {
+	env := setupTestEnv(t)
+	env.createRepo("api")
+	env.svc.Announce = &announce.Store{Dir: filepath.Join(env.groveDir, "announcements"), NowFn: time.Now}
+	env.svc.Create("mine", "feat/mine", []string{"api"}, env.repoMap, env.cfg)
+
+	env.svc.Announce.Publish("theirs", "some-other-repo", announce.CategoryWarning, "unrelated")
+
+	ctx, err := env.svc.Context(filepath.Join(env.wsDir, "mine"), "test", env.cfg)
+	if err != nil {
+		t.Fatalf("context: %v", err)
+	}
+	if len(ctx.Announcements) != 0 {
+		t.Errorf("expected no announcements, got %+v", ctx.Announcements)
+	}
+}
+
+// Context looks back a week, not the store's full retention: an old note is
+// history, not something to act on while orienting.
+func TestContextAnnouncementWindow(t *testing.T) {
+	env := setupTestEnv(t)
+	env.createRepo("api")
+	store := &announce.Store{Dir: filepath.Join(env.groveDir, "announcements")}
+	env.svc.Announce = store
+	env.svc.Create("mine", "feat/mine", []string{"api"}, env.repoMap, env.cfg)
+
+	// Published well inside the store's retention but outside context's window.
+	store.NowFn = func() time.Time { return time.Now().Add(-10 * 24 * time.Hour) }
+	store.Publish("theirs", "api", announce.CategoryInfo, "ancient news")
+	store.NowFn = time.Now
+
+	ctx, err := env.svc.Context(filepath.Join(env.wsDir, "mine"), "test", env.cfg)
+	if err != nil {
+		t.Fatalf("context: %v", err)
+	}
+	if len(ctx.Announcements) != 0 {
+		t.Errorf("context should not carry notes older than its window, got %+v", ctx.Announcements)
+	}
+
+	// Still readable through the dedicated command's longer horizon.
+	all, err := store.List(announce.ListOptions{})
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(all) != 1 {
+		t.Errorf("the store should still hold the note, got %+v", all)
+	}
+}
+
+// A missing store is normal on a fresh machine and must not fail context.
+func TestContextWithoutAnnounceStore(t *testing.T) {
+	env := setupTestEnv(t)
+	env.createRepo("api")
+	env.svc.Announce = nil
+	env.svc.Create("mine", "feat/mine", []string{"api"}, env.repoMap, env.cfg)
+
+	ctx, err := env.svc.Context(filepath.Join(env.wsDir, "mine"), "test", env.cfg)
+	if err != nil {
+		t.Fatalf("context: %v", err)
+	}
+	if ctx.Announcements == nil {
+		t.Error("announcements must be an empty array, never null")
 	}
 }

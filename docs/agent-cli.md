@@ -174,6 +174,30 @@ gw apply plan.json --format json
 Every step returns one envelope; a non-zero exit tells the caller which class of
 recovery to attempt.
 
+## Cross-agent coordination
+
+When several agents work in parallel workspaces on the same repos, they can leave
+each other notes:
+
+```bash
+# In workspace "alpha": tell everyone touching these repos what changed.
+gw announce -c breaking_change -m "auth tokens are now opaque strings" --format json
+
+# In workspace "beta": notes about your repos arrive with your normal orientation.
+gw context --format json      # result.announcements
+gw announcements --format json # dedicated read, 30-day horizon
+```
+
+Notes are keyed by each repo's normalized remote (`git@github.com:org/api.git`
+and `https://github.com/org/api` both key on `org/api`), so different worktrees
+of the same upstream match. A workspace never sees its own notes. Notes expire
+after 30 days; `gw context` shows the last 7 days, capped at 20.
+
+Categories: `breaking_change`, `warning`, `status`, `info`.
+
+Coordination is advisory. An unreadable store degrades to zero announcements
+rather than failing the command an agent was actually running.
+
 ## Migrating from the MCP server
 
 Grove ≤ 1.1.11 shipped a built-in MCP server (`gw mcp-serve`) and wrote a `grove`
@@ -185,6 +209,12 @@ gw doctor         # reports leftover .mcp.json grove entries
 gw doctor --fix   # removes only Grove's entry, preserving other MCP servers
 ```
 
-The `announce` / `get_announcements` cross-workspace coordination tools were
-removed with no replacement. If you need an MCP surface, an external adapter can
-wrap this CLI contract without changes to Grove core.
+The MCP server's `announce` / `get_announcements` tools live on as `gw announce`
+and `gw announcements` (see above). Coordination came from a shared store on
+disk, not from the protocol, so the CLI provides it to any agent with a shell —
+and `gw context` now delivers notes during orientation instead of hoping an agent
+notices a tool in a list. The SQLite database is gone; the store is a directory of
+small JSON files under `~/.grove/announcements/`.
+
+If you need an MCP surface, an external adapter can wrap this CLI contract
+without changes to Grove core.

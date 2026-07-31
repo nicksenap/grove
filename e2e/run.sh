@@ -1038,6 +1038,57 @@ fi
 gw delete mcp-ws --force 2>&1
 
 # ---------------------------------------------------------------------------
+# Test: cross-workspace agent coordination
+# ---------------------------------------------------------------------------
+section "Announcements"
+
+# Two workspaces over the same repo stand in for two concurrent agents.
+gw create ann-alpha --branch feat/ann-alpha --repos svc-auth 2>&1
+gw create ann-beta --branch feat/ann-beta --repos svc-auth 2>&1
+
+(cd "${GROVE_HOME}/.grove/workspaces/ann-alpha" && gw announce -c breaking_change -m "auth tokens are opaque now" --format json > /tmp/ann-publish.json 2>/dev/null)
+
+if jq -e '.ok == true and .result.count == 1' /tmp/ann-publish.json > /dev/null 2>&1; then
+    pass "gw announce publishes an envelope"
+else
+    fail "gw announce failed: $(cat /tmp/ann-publish.json)"
+fi
+
+# The other agent receives the note while simply orienting.
+(cd "${GROVE_HOME}/.grove/workspaces/ann-beta" && gw context --format json > /tmp/ann-context.json 2>/dev/null)
+if jq -e '[.result.announcements[] | select(.workspace == "ann-alpha")] | length == 1' /tmp/ann-context.json > /dev/null 2>&1; then
+    pass "gw context surfaces another workspace's announcement"
+else
+    fail "context missing announcement: $(jq -c .result.announcements /tmp/ann-context.json)"
+fi
+
+(cd "${GROVE_HOME}/.grove/workspaces/ann-beta" && gw announcements --format json > /tmp/ann-read.json 2>/dev/null)
+if jq -e '.result.count == 1 and .result.announcements[0].category == "breaking_change"' /tmp/ann-read.json > /dev/null 2>&1; then
+    pass "gw announcements reads the note"
+else
+    fail "gw announcements failed: $(cat /tmp/ann-read.json)"
+fi
+
+# A workspace never sees its own notes — that is noise, not coordination.
+(cd "${GROVE_HOME}/.grove/workspaces/ann-alpha" && gw announcements --format json > /tmp/ann-own.json 2>/dev/null)
+if jq -e '.result.count == 0' /tmp/ann-own.json > /dev/null 2>&1; then
+    pass "announcements exclude the publishing workspace"
+else
+    fail "publisher should not see its own note: $(cat /tmp/ann-own.json)"
+fi
+
+# Invalid category is a structured USAGE failure, not a stored note.
+(cd "${GROVE_HOME}/.grove/workspaces/ann-alpha" && gw announce -c gossip -m "nope" --format json > /tmp/ann-bad.json 2>/dev/null) || true
+if jq -e '.ok == false and .error.code == "USAGE"' /tmp/ann-bad.json > /dev/null 2>&1; then
+    pass "invalid announcement category returns USAGE"
+else
+    fail "expected USAGE for a bad category: $(cat /tmp/ann-bad.json)"
+fi
+
+gw delete ann-alpha --force 2>&1
+gw delete ann-beta --force 2>&1
+
+# ---------------------------------------------------------------------------
 # Test: plugin system
 # ---------------------------------------------------------------------------
 section "Plugins"

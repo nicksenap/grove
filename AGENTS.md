@@ -17,6 +17,29 @@ When working in this repository, read the OpenWiki quickstart first, then follow
 
 Git Worktree Workspace Orchestrator — CLI tool invoked as `gw`. Manages multi-repo worktree-based workspaces so developers can spin up isolated branches across several repos at once.
 
+## Agent interface
+
+The `gw` CLI is Grove's only agent interface — there is no MCP server. Add
+`--format json` to any command for a versioned response envelope with stable
+error codes; see [docs/agent-cli.md](docs/agent-cli.md).
+
+```bash
+gw context --format json     # where am I, repo git state, announcements, next actions
+gw status --format json
+gw create feat-x -r repo1,repo2 -b feat/x --format json
+```
+
+When several agents work in parallel workspaces on the same repos, coordinate
+through announcements:
+
+```bash
+gw announce -c breaking_change -m "auth tokens are now opaque strings"
+gw announcements --format json
+```
+
+Notes from other workspaces about your repos also appear in `gw context` under
+`result.announcements`.
+
 ## Development
 
 - Go 1.25+
@@ -56,6 +79,8 @@ Tool-specific integrations (Codex memory sync, Zellij, archive, dashboard) live 
 - **internal/gitops/** — Thin wrappers around `git` subprocess calls. Includes `ReadGroveConfig()`.
 - **internal/lifecycle/** — Runs global lifecycle hooks (`post_create`, `pre_delete`, `on_close`) defined in `[hooks]`. Hooks may be bare command strings or tables with metadata (`stream`, `timeout`, `on_failure`); the global `--no-hooks`/`-n` flag skips them all. Plugins register here.
 - **internal/logging/** — Structured logging.
+- **internal/machine/** — Machine-readable CLI contract: response envelope, stable error codes, exit-code classes.
+- **internal/announce/** — Cross-workspace agent coordination. Directory of JSON files under `~/.grove/announcements/`; one file per note, so concurrent agents need no locking.
 - **internal/models/** — Data structs with JSON serialization.
 - **internal/picker/** — Interactive terminal menus.
 - **internal/plugin/** — Plugin install/upgrade/remove from GitHub releases.

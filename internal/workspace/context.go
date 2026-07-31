@@ -5,9 +5,12 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
+	"github.com/nicksenap/grove/internal/announce"
 	"github.com/nicksenap/grove/internal/config"
 	"github.com/nicksenap/grove/internal/gitops"
+	"github.com/nicksenap/grove/internal/logging"
 	"github.com/nicksenap/grove/internal/models"
 )
 
@@ -36,6 +39,12 @@ type Context struct {
 	// Current position. Workspace is null when the cwd is not inside one, which
 	// is the signal that a name must be passed explicitly to other commands.
 	Workspace *WorkspaceContext `json:"workspace"`
+
+	// Announcements published by *other* workspaces about repos in this one.
+	// Surfacing them here is deliberate: an agent calls context to orient itself,
+	// so coordination notes arrive exactly when it is deciding what to do, rather
+	// than waiting for it to remember a separate command exists.
+	Announcements []announce.Announcement `json:"announcements"`
 
 	// Everything else that exists.
 	WorkspaceCount int      `json:"workspace_count"`
@@ -71,13 +80,14 @@ type RepoContext struct {
 // cheap enough to call before every decision.
 func (s *Service) Context(cwd, version string, cfg *models.Config) (*Context, error) {
 	ctx := &Context{
-		GroveVersion: version,
-		Initialized:  cfg != nil,
-		ConfigPath:   config.ConfigPath,
-		Cwd:          cwd,
-		RepoDirs:     []string{},
-		Presets:      []string{},
-		Workspaces:   []string{},
+		GroveVersion:  version,
+		Initialized:   cfg != nil,
+		ConfigPath:    config.ConfigPath,
+		Cwd:           cwd,
+		RepoDirs:      []string{},
+		Presets:       []string{},
+		Workspaces:    []string{},
+		Announcements: []announce.Announcement{},
 	}
 
 	if cfg != nil {
@@ -112,7 +122,46 @@ func (s *Service) Context(cwd, version string, cfg *models.Config) (*Context, er
 		Source: current.Source,
 		Repos:  s.repoContexts(current.Repos),
 	}
+	ctx.Announcements = s.announcementsFor(ctx.Workspace)
 	return ctx, nil
+}
+
+// ContextAnnouncementWindow bounds how far back context looks for coordination
+// notes. The store keeps a month, but a note older than a week is history rather
+// than something an agent should act on while orienting.
+const ContextAnnouncementWindow = 7 * 24 * time.Hour
+
+// ContextAnnouncementLimit caps how many notes context carries, so one chatty
+// workspace cannot crowd out the rest of the snapshot.
+const ContextAnnouncementLimit = 20
+
+// announcementsFor collects recent notes from other workspaces about the repos in
+// this one. Coordination is advisory, so a store failure degrades to no
+// announcements rather than failing the whole context call.
+func (s *Service) announcementsFor(ws *WorkspaceContext) []announce.Announcement {
+	if s.Announce == nil || ws == nil {
+		return []announce.Announcement{}
+	}
+
+	keys := make([]string, 0, len(ws.Repos))
+	for _, r := range ws.Repos {
+		keys = append(keys, announce.RepoKey(r.Remote, r.Repo))
+	}
+	if len(keys) == 0 {
+		return []announce.Announcement{}
+	}
+
+	found, err := s.Announce.List(announce.ListOptions{
+		Repos:            keys,
+		ExcludeWorkspace: ws.Name,
+		Since:            time.Now().UTC().Add(-ContextAnnouncementWindow),
+		Limit:            ContextAnnouncementLimit,
+	})
+	if err != nil {
+		logging.Warn("could not read announcements: %s", err)
+		return []announce.Announcement{}
+	}
+	return found
 }
 
 // repoContexts collects live git state for each repo in parallel — the same

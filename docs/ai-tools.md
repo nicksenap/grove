@@ -96,5 +96,12 @@ gw doctor         # reports stale entries
 gw doctor --fix   # removes only the grove entry, keeping other servers
 ```
 
-The `announce` / `get_announcements` cross-workspace coordination tools were
-removed with the server and have no CLI replacement.
+Cross-workspace coordination survived the removal as first-class commands:
+
+```bash
+gw announce -c breaking_change -m "auth tokens are now opaque strings"
+gw announcements --format json
+```
+
+Recent notes about your repos also appear in `gw context`, so a parallel agent
+receives them while orienting rather than having to remember to ask.

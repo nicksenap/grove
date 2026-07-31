@@ -203,12 +203,17 @@ Grove has no built-in MCP server. Coding agents with shell access drive Grove
 through `gw` directly, using machine-readable output:
 
 ```bash
-gw context --format json    # workspace, repos, git state, safe next actions
+gw context --format json    # workspace, repos, git state, announcements, next actions
 gw list --format json
 gw status --format json
 gw create feat-x -r svc-a,svc-b -b feat/x --format json
 gw delete feat-x --force --format json
 ```
+
+Agents running in parallel workspaces coordinate through `gw announce` /
+`gw announcements`, backed by a directory of JSON files under
+`~/.grove/announcements/`. Notes are keyed by normalized repo remote, expire after
+30 days, and recent ones surface in `gw context`.
 
 Every machine-mode response uses one versioned envelope with stable error codes
 and semantic exit codes — see [Agent CLI contract](../docs/agent-cli.md).
@@ -219,8 +224,9 @@ Grove ≤ 1.1.11 ran `gw mcp-serve` and wrote a `grove` entry into each
 workspace's `.mcp.json`. Both are gone. `gw doctor` reports leftover entries and
 `gw doctor --fix` removes only Grove's entry, preserving other servers.
 
-The `announce` / `get_announcements` cross-workspace coordination tools and their
-SQLite database were removed with no replacement.
+The `announce` / `get_announcements` tools became `gw announce` /
+`gw announcements`; their SQLite database was replaced by a lock-free directory of
+JSON files.
 
 ---
 

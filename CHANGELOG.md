@@ -6,9 +6,19 @@
 
 - Removed Grove's built-in MCP server. `gw mcp-serve`, the generated `.mcp.json`
   `grove` entry, the announcements SQLite database, and the `announce` /
-  `get_announcements` tools are gone. The `gw` CLI is now the only first-party
-  agent interface. Run `gw doctor --fix` to strip the stale `grove` entry from
+  `get_announcements` MCP tools are gone — the latter two return as the
+  `gw announce` / `gw announcements` commands below. The `gw` CLI is now the only
+  first-party agent interface. Run `gw doctor --fix` to strip the stale `grove` entry from
   `.mcp.json` files in existing workspaces (other MCP servers are preserved).
+
+### Features
+
+- `gw announce` / `gw announcements`: cross-workspace coordination for agents
+  working in parallel, replacing the MCP server's `announce` /
+  `get_announcements` tools. Notes are keyed by normalized repo remote, expire
+  after 30 days, and recent ones surface in `gw context` so an agent receives
+  them while orienting. Backed by a lock-free directory of JSON files under
+  `~/.grove/announcements/` — no SQLite.
 
 ### Maintenance
 

@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 
+	"github.com/nicksenap/grove/internal/announce"
 	"github.com/nicksenap/grove/internal/config"
 	"github.com/nicksenap/grove/internal/machine"
 	"github.com/nicksenap/grove/internal/state"
@@ -14,6 +15,7 @@ import (
 type Service struct {
 	State        *state.Store
 	Stats        *stats.Tracker
+	Announce     *announce.Store
 	RunCmd       func(dir, cmd string) error
 	RunCmdSilent func(dir, cmd string) error
 }
@@ -23,6 +25,7 @@ func NewService() *Service {
 	return &Service{
 		State:        state.NewStore(config.GroveDir),
 		Stats:        stats.NewTracker(config.GroveDir),
+		Announce:     announce.NewStore(config.GroveDir),
 		RunCmd:       prodRunCmd,
 		RunCmdSilent: prodRunCmdSilent,
 	}

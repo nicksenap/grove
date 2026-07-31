@@ -65,6 +65,8 @@ func init() {
 	rootCmd.AddCommand(
 		initCmd,
 		contextCmd,
+		announceCmd,
+		announcementsCmd,
 		createCmd,
 		listCmd,
 		wsCmd,
