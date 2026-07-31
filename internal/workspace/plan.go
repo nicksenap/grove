@@ -406,6 +406,11 @@ func (s *Service) validateCreate(name string, opts CreateOpts) error {
 		if !ok {
 			return ErrRepoNotFound(repoName)
 		}
+		// provisionWorktreeNoFetch checks this again immediately before mutating.
+		// The duplicate `git worktree list` is deliberate: this one fails fast
+		// before any directory or fetch happens (and lets a plan report
+		// WORKTREE_EXISTS), while that one guards the mutation itself against a
+		// concurrent gw creating the same worktree in between.
 		if hasWT, _ := gitops.WorktreeHasBranch(sourcePath, opts.Branch); hasWT {
 			return ErrWorktreeExists(opts.Branch, repoName)
 		}

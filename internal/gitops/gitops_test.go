@@ -539,6 +539,18 @@ func TestIsGitURL(t *testing.T) {
 		{"", false},
 		{"file:///tmp/repos/my-repo.git", true},
 		{"https://", true}, // degenerate but still a URL
+		// Explicit-scheme forms. ssh:// used to be unrecognized, so
+		// `gw create -r ssh://git@host/org/repo.git` failed as "repo not found"
+		// instead of cloning.
+		{"ssh://git@github.com/org/api.git", true},
+		{"ssh://git@github.com:2222/org/api.git", true},
+		{"git://github.com/org/api.git", true},
+		{"git+ssh://git@github.com/org/api", true},
+		{"unknownscheme://github.com/org/api", false},
+		// A Windows path has a colon but is not a URL.
+		{"C:/repos/api", false},
+		{"/absolute/local/path", false},
+		{"org/api", false},
 	}
 	for _, tt := range tests {
 		got := IsGitURL(tt.input)
@@ -666,4 +678,42 @@ func TestCloneRetryCleanup(t *testing.T) {
 func currentBranch(t *testing.T, repo string) string {
 	t.Helper()
 	return run(t, repo, "git", "branch", "--show-current")
+}
+
+// ---------------------------------------------------------------------------
+// URL recognition and repo identity
+// ---------------------------------------------------------------------------
+
+// Every URL form of one upstream must reduce to the same identity, because this
+// value is used as a coordination key across workspaces.
+func TestParseRemoteNameAgreesAcrossURLForms(t *testing.T) {
+	for _, url := range []string{
+		"git@github.com:org/api.git",
+		"git@github.com:org/api",
+		"ssh://git@github.com/org/api.git",
+		"https://github.com/org/api.git",
+		"https://github.com/org/api",
+		"https://user@github.com/org/api.git",
+		"git://github.com/org/api.git",
+	} {
+		if got := ParseRemoteName(url); got != "org/api" {
+			t.Errorf("ParseRemoteName(%q) = %q, want org/api", url, got)
+		}
+	}
+}
+
+func TestParseRemoteNameKeepsNestedGroups(t *testing.T) {
+	if got := ParseRemoteName("git@gitlab.com:group/sub/api.git"); got != "group/sub/api" {
+		t.Errorf("got %q, want group/sub/api", got)
+	}
+}
+
+// Non-URLs return "" rather than a mangled guess. This used to turn a Windows
+// path into "repos/api" by treating the drive colon as scp-like syntax.
+func TestParseRemoteNameRejectsNonURLs(t *testing.T) {
+	for _, input := range []string{"org/api", "api", "C:/repos/api", "/srv/git/api", ""} {
+		if got := ParseRemoteName(input); got != "" {
+			t.Errorf("ParseRemoteName(%q) = %q, want empty", input, got)
+		}
+	}
 }

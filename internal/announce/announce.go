@@ -27,10 +27,11 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"regexp"
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/nicksenap/grove/internal/gitops"
 )
 
 // DefaultMaxAge is how long an announcement stays visible. Coordination notes
@@ -320,25 +321,22 @@ func newID(t time.Time) string {
 	return t.Format("20060102T150405.000000000") + "-" + hex.EncodeToString(buf[:])
 }
 
-var (
-	sshPattern   = regexp.MustCompile(`^(?:ssh://)?git@[^:/]+[:/](.+?)(?:\.git)?$`)
-	httpsPattern = regexp.MustCompile(`^https?://(?:[^@/]+@)?[^/]+/(.+?)(?:\.git)?$`)
-)
-
 // NormalizeRepo reduces a git remote URL to "owner/repo" so that SSH and HTTPS
-// remotes for the same upstream produce the same coordination key. A value that
-// is not a URL (e.g. a bare repo name) is returned lowercased and trimmed, which
-// keeps the store usable for repos with no remote.
+// remotes for the same upstream produce the same coordination key. A value that is
+// not a URL (e.g. a bare repo name) is returned lowercased and trimmed, which keeps
+// the store usable for repos with no remote.
+//
+// The URL parsing itself is gitops.ParseRemoteName. Announcements only add policy
+// on top — lowercasing, so a case-different remote still matches, and the bare-name
+// fallback. A second URL parser here would be one more thing to keep in agreement
+// with the one Grove already had.
 func NormalizeRepo(repo string) string {
 	repo = strings.TrimSpace(repo)
 	if repo == "" {
 		return ""
 	}
-	if m := sshPattern.FindStringSubmatch(repo); len(m) == 2 {
-		return strings.ToLower(strings.Trim(m[1], "/"))
-	}
-	if m := httpsPattern.FindStringSubmatch(repo); len(m) == 2 {
-		return strings.ToLower(strings.Trim(m[1], "/"))
+	if parsed := gitops.ParseRemoteName(repo); parsed != "" {
+		return strings.ToLower(parsed)
 	}
 	return strings.ToLower(strings.TrimSuffix(repo, ".git"))
 }

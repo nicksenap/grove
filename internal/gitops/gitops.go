@@ -300,56 +300,60 @@ func RemoteURL(path, remote string) string {
 	return out
 }
 
-// ParseRemoteName extracts "owner/repo" from an SSH or HTTPS git URL.
-// Returns "" if the URL cannot be parsed.
+// ParseRemoteName extracts "owner/repo" (or "group/sub/repo") from a git URL.
+// Returns "" if s is not a URL it can parse.
+//
+// This is the one place that turns a remote into a repo identity. It is also used
+// as the coordination key for cross-workspace announcements, so ssh:// and https://
+// forms of the same upstream must reduce to the same string.
 func ParseRemoteName(url string) string {
 	url = strings.TrimSpace(url)
-	if url == "" {
+	if !IsGitURL(url) {
 		return ""
 	}
 
-	// SSH: git@github.com:owner/repo.git
-	if strings.Contains(url, ":") && !strings.Contains(url, "://") {
-		parts := strings.SplitN(url, ":", 2)
-		if len(parts) == 2 {
-			path := strings.TrimSuffix(parts[1], ".git")
-			path = strings.TrimPrefix(path, "/")
-			return path
+	path := url
+	if _, after, found := strings.Cut(url, "://"); found {
+		// Strip scheme, then optional user@host — everything up to the first "/".
+		_, path, found = strings.Cut(after, "/")
+		if !found {
+			return ""
 		}
+	} else if _, after, found := strings.Cut(url, ":"); found {
+		// scp-like shorthand: git@host:owner/repo.git
+		path = after
 	}
 
-	// HTTPS: https://github.com/owner/repo.git
-	if strings.Contains(url, "://") {
-		// Remove scheme + host
-		idx := strings.Index(url, "://")
-		rest := url[idx+3:]
-		slashIdx := strings.Index(rest, "/")
-		if slashIdx >= 0 {
-			path := rest[slashIdx+1:]
-			path = strings.TrimSuffix(path, ".git")
-			path = strings.TrimPrefix(path, "/")
-			return path
-		}
-	}
-
-	return ""
+	path = strings.TrimPrefix(path, "/")
+	path = strings.TrimSuffix(path, "/")
+	return strings.TrimSuffix(path, ".git")
 }
 
-// IsGitURL returns true if s looks like a remote git URL (HTTPS, SSH, or file://).
+// IsGitURL returns true if s looks like a remote git URL.
+//
+// Two forms exist: an explicit scheme (https://, ssh://, git://, file://…) and
+// git's scp-like shorthand (git@github.com:owner/repo.git), which has a colon but
+// no scheme. Requiring "@" for the shorthand keeps a Windows path like
+// C:/repos/api from being mistaken for a URL.
 func IsGitURL(s string) bool {
-	// HTTPS/HTTP: https://github.com/owner/repo.git
-	if strings.HasPrefix(s, "https://") || strings.HasPrefix(s, "http://") {
-		return true
+	if scheme, _, found := strings.Cut(s, "://"); found {
+		return gitURLSchemes[strings.ToLower(scheme)]
 	}
-	// file:// protocol (local bare repos, testing)
-	if strings.HasPrefix(s, "file://") {
-		return true
-	}
-	// SSH: git@github.com:owner/repo.git
-	if strings.Contains(s, ":") && !strings.Contains(s, "://") && strings.Contains(s, "@") {
-		return true
-	}
-	return false
+	// scp-like shorthand: user@host:path
+	return strings.Contains(s, ":") && strings.Contains(s, "@")
+}
+
+// gitURLSchemes are the transports git understands in URL form. ssh:// belongs
+// here: it was previously missing, so `gw create -r ssh://git@host/org/repo.git`
+// treated the URL as a repo name and failed with "repo not found" instead of
+// cloning it.
+var gitURLSchemes = map[string]bool{
+	"https":   true,
+	"http":    true,
+	"ssh":     true,
+	"git":     true,
+	"git+ssh": true,
+	"file":    true,
 }
 
 // RepoNameFromURL extracts the repository name from a git URL.
