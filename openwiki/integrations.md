@@ -1,3 +1,10 @@
+---
+type: "Reference"
+title: "Integrations"
+description: "Grove integration points, including external plugins, lifecycle hooks, Claude Code support, Zellij workflows, and the MCP server."
+tags: [grove, integrations, plugins, hooks, mcp]
+---
+
 # Integrations
 
 This page covers external integrations: plugins, AI tools, and the MCP server.

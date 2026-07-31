@@ -1,3 +1,10 @@
+---
+type: "Reference"
+title: "Architecture"
+description: "Architecture of Grove's CLI, workspace orchestration, Git operation wrappers, persisted state, repository discovery, lifecycle hooks, plugins, and MCP integration."
+tags: [grove, architecture, cli, workspaces, git]
+---
+
 # Architecture
 
 Grove is designed as a thin orchestrator around git worktrees. All state is persisted to disk and can be safely reconstructed; the tool is stateless except for its local configuration.

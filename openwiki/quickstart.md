@@ -1,3 +1,10 @@
+---
+type: "Reference"
+title: "Grove Documentation"
+description: "Entry point for Grove, a CLI that creates and manages multi-repository Git worktree workspaces, with setup commands, configuration, architecture pointers, workflows, operations, integrations, and testing guidance."
+tags: [grove, cli, git, worktrees, quickstart]
+---
+
 # Grove Documentation
 
 **Grove** (`gw`) is a Git Worktree Workspace Orchestrator — a CLI tool that manages multi-repo worktree-based workspaces. It solves the problem of spinning up isolated feature branches across multiple repositories at once, with one command.

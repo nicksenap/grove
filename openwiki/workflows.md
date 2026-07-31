@@ -1,3 +1,10 @@
+---
+type: "Reference"
+title: "Workflows"
+description: "Main Grove user workflows, from repository discovery and workspace creation through navigation, synchronization, execution, cleanup, and recovery."
+tags: [grove, workflows, workspaces, git, cli]
+---
+
 # Workflows
 
 This page explains the main user workflows and how they map to code.

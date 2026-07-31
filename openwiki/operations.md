@@ -1,3 +1,10 @@
+---
+type: "Reference"
+title: "Operations"
+description: "Operational guidance for installing, configuring, maintaining, troubleshooting, and validating Grove workspaces and its local runtime state."
+tags: [grove, operations, configuration, troubleshooting, maintenance]
+---
+
 # Operations
 
 This page covers configuration, maintenance, troubleshooting, and runtime operations.

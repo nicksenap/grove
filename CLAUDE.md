@@ -65,3 +65,13 @@ Tool-specific integrations (Claude Code memory sync, Zellij, archive, dashboard)
 - **internal/streamio/** — Per-line prefixing writer (e.g. `[post_create] ...`). Shared by `gw run` and the lifecycle hook paths for live/streamed output.
 - **internal/update/** — Non-blocking version check.
 - **internal/workspace/** — Core worktree orchestration (create, delete, status, sync). Uses goroutines for concurrent multi-repo operations.
+
+<!-- OPENWIKI:START -->
+
+## OpenWiki
+
+This repository uses OpenWiki for recurring code documentation. Start with `openwiki/quickstart.md`, then follow its links to architecture, workflows, domain concepts, operations, integrations, testing guidance, and source maps.
+
+The scheduled OpenWiki GitHub Actions workflow refreshes the repository wiki. Do not hand-edit generated OpenWiki pages unless explicitly asked; prefer updating source code/docs and letting OpenWiki regenerate.
+
+<!-- OPENWIKI:END -->
