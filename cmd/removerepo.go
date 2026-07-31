@@ -26,30 +26,12 @@ var removeRepoCmd = &cobra.Command{
 		if len(args) > 0 {
 			wsName = args[0]
 		} else {
-			workspaces, err := state.Load()
-			if err != nil {
-				exitError(err.Error())
-			}
-			if len(workspaces) == 0 {
-				fail(machine.Errorf(machine.CodeNoWorkspaces, "no workspaces exist"))
-			}
-			choices := make([]string, len(workspaces))
-			for i, ws := range workspaces {
-				choices[i] = ws.Name
-			}
-			selected, err := picker.PickOne("Select workspace:", choices)
-			if err != nil {
-				exitOnPickerErr(err)
-			}
-			wsName = selected
+			wsName = pickWorkspaceName("Select workspace:")
 		}
 
 		var repoNames []string
 		if removeRepoRepos != "" {
-			repoNames = strings.Split(removeRepoRepos, ",")
-			for i := range repoNames {
-				repoNames[i] = strings.TrimSpace(repoNames[i])
-			}
+			repoNames = parseRepoList(removeRepoRepos)
 		} else {
 			// Interactive: pick from repos in workspace
 			ws, err := state.GetWorkspace(wsName)

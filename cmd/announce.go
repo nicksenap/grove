@@ -153,11 +153,7 @@ func resolveAnnounceTargets(reposFlag string) (wsName string, keys []string) {
 	// Explicit repos: accept names (resolved against the workspace for their
 	// remote) or full remote URLs, so a caller outside any workspace still works.
 	if reposFlag != "" {
-		for _, raw := range strings.Split(reposFlag, ",") {
-			name := strings.TrimSpace(raw)
-			if name == "" {
-				continue
-			}
+		for _, name := range parseRepoList(reposFlag) {
 			keys = append(keys, keyForRepo(ws, name))
 		}
 		if len(keys) == 0 {

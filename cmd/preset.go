@@ -49,10 +49,7 @@ var presetAddCmd = &cobra.Command{
 
 		var repoNames []string
 		if presetAddRepos != "" {
-			repoNames = strings.Split(presetAddRepos, ",")
-			for i := range repoNames {
-				repoNames[i] = strings.TrimSpace(repoNames[i])
-			}
+			repoNames = parseRepoList(presetAddRepos)
 		} else {
 			// Interactive: pick repos
 			available := discover.FindAllRepos(cfg.RepoDirs)

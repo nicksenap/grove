@@ -57,10 +57,7 @@ var createCmd = &cobra.Command{
 				repoNames = append(repoNames, r.Name)
 			}
 		} else if createRepos != "" {
-			repoNames = strings.Split(createRepos, ",")
-			for i := range repoNames {
-				repoNames[i] = strings.TrimSpace(repoNames[i])
-			}
+			repoNames = parseRepoList(createRepos)
 			// Clone any remote git URLs into the first repo_dir (mirrors add-repo).
 			// This lets a resolver pass an unmatched repo as a clone URL.
 			for i, name := range repoNames {

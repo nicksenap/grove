@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"os"
-	"strings"
 
 	"github.com/nicksenap/grove/internal/config"
 	"github.com/nicksenap/grove/internal/console"
@@ -35,24 +34,7 @@ var addRepoCmd = &cobra.Command{
 			}
 
 			if wsName == "" {
-				workspaces, err := state.Load()
-				if err != nil {
-					exitError(err.Error())
-				}
-				if len(workspaces) == 0 {
-					fail(machine.Errorf(machine.CodeNoWorkspaces, "no workspaces exist").
-						WithActions(machine.NextAction("Create one",
-							"gw create <name> -r <repos> -b <branch> --format json")))
-				}
-				choices := make([]string, len(workspaces))
-				for i, ws := range workspaces {
-					choices[i] = ws.Name
-				}
-				selected, err := picker.PickOne("Select workspace:", choices)
-				if err != nil {
-					exitOnPickerErr(err)
-				}
-				wsName = selected
+				wsName = pickWorkspaceName("Select workspace:")
 			}
 		}
 
@@ -62,10 +44,7 @@ var addRepoCmd = &cobra.Command{
 
 		var repoNames []string
 		if addRepoRepos != "" {
-			repoNames = strings.Split(addRepoRepos, ",")
-			for i := range repoNames {
-				repoNames[i] = strings.TrimSpace(repoNames[i])
-			}
+			repoNames = parseRepoList(addRepoRepos)
 			// Clone any remote URLs into the first repo_dir
 			for i, name := range repoNames {
 				if gitops.IsGitURL(name) {

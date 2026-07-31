@@ -3,7 +3,6 @@ package cmd
 import (
 	"fmt"
 	"os"
-	"strings"
 
 	"github.com/nicksenap/grove/internal/config"
 	"github.com/nicksenap/grove/internal/console"
@@ -151,11 +150,7 @@ func planRepoNames(cfg *models.Config, repos []discover.Repo) []string {
 		}
 		return names
 	case planRepos != "":
-		names := strings.Split(planRepos, ",")
-		for i := range names {
-			names[i] = strings.TrimSpace(names[i])
-		}
-		return names
+		return parseRepoList(planRepos)
 	default:
 		fail(machine.Errorf(machine.CodeUsage, "repos are required when planning").
 			WithFix("Pass --repos / -r, --preset / -p, or --all").

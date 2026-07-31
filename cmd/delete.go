@@ -8,7 +8,6 @@ import (
 	"github.com/nicksenap/grove/internal/console"
 	"github.com/nicksenap/grove/internal/lifecycle"
 	"github.com/nicksenap/grove/internal/machine"
-	"github.com/nicksenap/grove/internal/picker"
 	"github.com/nicksenap/grove/internal/state"
 	"github.com/nicksenap/grove/internal/workspace"
 	"github.com/spf13/cobra"
@@ -46,23 +45,7 @@ func doDelete(args []string, force bool) {
 		names = []string{args[0]}
 	} else {
 		requireArgs("NAME", "gw delete <name> --force --format json")
-		// Interactive multi-select
-		workspaces, err := state.Load()
-		if err != nil {
-			fail(err)
-		}
-		if len(workspaces) == 0 {
-			fail(machine.Errorf(machine.CodeNoWorkspaces, "no workspaces to delete"))
-		}
-		choices := make([]string, len(workspaces))
-		for i, ws := range workspaces {
-			choices[i] = ws.Name
-		}
-		selected, err := picker.PickMany("Select workspaces to delete:", choices)
-		if err != nil {
-			exitOnPickerErr(err)
-		}
-		names = selected
+		names = pickWorkspaceNames("Select workspaces to delete:")
 	}
 
 	if !force {
