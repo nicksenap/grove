@@ -13,7 +13,6 @@ import (
 	"github.com/nicksenap/grove/internal/lifecycle"
 	"github.com/nicksenap/grove/internal/machine"
 	"github.com/nicksenap/grove/internal/models"
-	"github.com/nicksenap/grove/internal/picker"
 	"github.com/nicksenap/grove/internal/state"
 	"github.com/nicksenap/grove/internal/workspace"
 	"github.com/spf13/cobra"
@@ -171,7 +170,7 @@ func reposInteractively(cfg *models.Config, repos []discover.Repo) []string {
 }
 
 func pickRepos(repoChoices []string) []string {
-	selected, err := picker.PickMany("Select repos for workspace:", repoChoices)
+	selected, err := prompter.PickMany("Select repos for workspace:", repoChoices)
 	if err != nil {
 		exitOnPickerErr(err)
 	}
@@ -189,7 +188,7 @@ func pickPreset(cfg *models.Config) ([]string, bool) {
 	}
 	choices = append(choices, pickManuallyChoice)
 
-	choice, err := picker.PickOne("Select repos from:", choices)
+	choice, err := prompter.PickOne("Select repos from:", choices)
 	if err != nil {
 		exitOnPickerErr(err)
 	}
@@ -209,14 +208,14 @@ func pickPreset(cfg *models.Config) ([]string, bool) {
 // create can skip the picker. Only worth asking for a real subset, and only when
 // there is a human to ask.
 func offerPresetSave(cfg *models.Config, selected []string, totalRepos int) {
-	if !console.IsTerminal(os.Stdin) || len(selected) >= totalRepos {
+	if !prompter.Interactive() || len(selected) >= totalRepos {
 		return
 	}
-	if !console.Confirm("Save this selection as a preset?", false) {
+	if !prompter.Confirm("Save this selection as a preset?", false) {
 		return
 	}
 
-	presetName := console.Prompt("Preset name")
+	presetName := prompter.Prompt("Preset name", "")
 	if presetName == "" {
 		return
 	}
@@ -258,8 +257,8 @@ func resolveCreateBranch(name string) string {
 	requireArgs("--branch", "gw create "+name+" -b feat/x --format json")
 
 	branch := ""
-	if console.IsTerminal(os.Stdin) {
-		branch = console.PromptDefault("Branch name", name)
+	if prompter.Interactive() {
+		branch = prompter.Prompt("Branch name", name)
 	}
 	if branch == "" {
 		fail(machine.Errorf(machine.CodeUsage, "branch is required").
@@ -334,7 +333,7 @@ func replaceCurrentWorkspace(name string) string {
 	// destructive intent be explicit rather than inferred from a skipped prompt.
 	if !createForce {
 		requireArgs("--force (with --replace)", "gw create "+name+" -b <branch> --replace --force --format json")
-		if !console.Confirm("Delete workspace "+currentWs.Name+" and replace with "+name+"?", false) {
+		if !prompter.Confirm("Delete workspace "+currentWs.Name+" and replace with "+name+"?", false) {
 			os.Exit(0)
 		}
 	}

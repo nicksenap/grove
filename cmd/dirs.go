@@ -6,7 +6,6 @@ import (
 	"github.com/nicksenap/grove/internal/config"
 	"github.com/nicksenap/grove/internal/console"
 	"github.com/nicksenap/grove/internal/discover"
-	"github.com/nicksenap/grove/internal/picker"
 	"github.com/spf13/cobra"
 )
 
@@ -52,7 +51,7 @@ var removeDirCmd = &cobra.Command{
 		if len(args) > 0 {
 			absPath, _ = filepath.Abs(args[0])
 		} else {
-			selected, err := picker.PickOne("Select directory to remove:", cfg.RepoDirs)
+			selected, err := prompter.PickOne("Select directory to remove:", cfg.RepoDirs)
 			if err != nil {
 				exitOnPickerErr(err)
 			}

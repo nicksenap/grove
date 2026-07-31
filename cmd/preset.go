@@ -10,7 +10,6 @@ import (
 	"github.com/nicksenap/grove/internal/discover"
 	"github.com/nicksenap/grove/internal/machine"
 	"github.com/nicksenap/grove/internal/models"
-	"github.com/nicksenap/grove/internal/picker"
 	"github.com/spf13/cobra"
 )
 
@@ -36,8 +35,8 @@ var presetAddCmd = &cobra.Command{
 		name := ""
 		if len(args) > 0 {
 			name = args[0]
-		} else if console.IsTerminal(os.Stdin) {
-			name = console.Prompt("Preset name")
+		} else if prompter.Interactive() {
+			name = prompter.Prompt("Preset name", "")
 		}
 		if name == "" {
 			exitError("preset name required")
@@ -60,7 +59,7 @@ var presetAddCmd = &cobra.Command{
 			for i, r := range available {
 				choices[i] = r.Name
 			}
-			selected, err := picker.PickMany("Select repos for preset:", choices)
+			selected, err := prompter.PickMany("Select repos for preset:", choices)
 			if err != nil {
 				exitOnPickerErr(err)
 			}
@@ -164,7 +163,7 @@ var presetRemoveCmd = &cobra.Command{
 			for n := range cfg.Presets {
 				names = append(names, n)
 			}
-			selected, err := picker.PickOne("Select preset to remove:", names)
+			selected, err := prompter.PickOne("Select preset to remove:", names)
 			if err != nil {
 				exitOnPickerErr(err)
 			}

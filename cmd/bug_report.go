@@ -31,7 +31,7 @@ Use --print to output the report to stdout instead of opening a browser.`,
 	Run: func(cmd *cobra.Command, args []string) {
 		report := collectReport()
 
-		if bugReportPrint || !console.IsTerminal(os.Stdin) {
+		if bugReportPrint || !prompter.Interactive() {
 			fmt.Println(report)
 			return
 		}

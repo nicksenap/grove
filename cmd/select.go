@@ -4,7 +4,6 @@ import (
 	"strings"
 
 	"github.com/nicksenap/grove/internal/machine"
-	"github.com/nicksenap/grove/internal/picker"
 	"github.com/nicksenap/grove/internal/state"
 )
 
@@ -32,7 +31,7 @@ func pickWorkspaceName(prompt string) string {
 		choices[i] = ws.Name
 	}
 
-	selected, err := picker.PickOne(prompt, choices)
+	selected, err := prompter.PickOne(prompt, choices)
 	if err != nil {
 		exitOnPickerErr(err)
 	}
@@ -54,7 +53,7 @@ func pickWorkspaceNames(prompt string) []string {
 		choices[i] = ws.Name
 	}
 
-	selected, err := picker.PickMany(prompt, choices)
+	selected, err := prompter.PickMany(prompt, choices)
 	if err != nil {
 		exitOnPickerErr(err)
 	}

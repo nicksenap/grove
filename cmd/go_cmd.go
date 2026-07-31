@@ -13,7 +13,6 @@ import (
 	"github.com/nicksenap/grove/internal/console"
 	"github.com/nicksenap/grove/internal/lifecycle"
 	"github.com/nicksenap/grove/internal/logging"
-	"github.com/nicksenap/grove/internal/picker"
 	"github.com/nicksenap/grove/internal/state"
 	"github.com/spf13/cobra"
 )
@@ -134,7 +133,7 @@ func resolveGoBack() string {
 	}
 
 	// Multiple parent dirs — let user pick
-	picked, err := picker.PickOne("Select repo directory:", parentList)
+	picked, err := prompter.PickOne("Select repo directory:", parentList)
 	if err != nil {
 		exitOnPickerErr(err)
 	}
@@ -165,7 +164,7 @@ func pickWorkspaceForGo() string {
 		choices = append(choices, backToRepos)
 	}
 
-	picked, err := picker.PickOne("Select workspace", choices)
+	picked, err := prompter.PickOne("Select workspace", choices)
 	if err != nil {
 		exitOnPickerErr(err)
 	}
@@ -175,7 +174,7 @@ func pickWorkspaceForGo() string {
 		if len(cfg.RepoDirs) == 1 {
 			return cfg.RepoDirs[0]
 		} else if len(cfg.RepoDirs) > 1 {
-			dir, err := picker.PickOne("Select repo directory", cfg.RepoDirs)
+			dir, err := prompter.PickOne("Select repo directory", cfg.RepoDirs)
 			if err != nil {
 				exitOnPickerErr(err)
 			}

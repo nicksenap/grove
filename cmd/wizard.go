@@ -39,7 +39,7 @@ var wizardCmd = &cobra.Command{
 			claudeInstalled := claudeErr == nil
 
 			if !claudeInstalled {
-				if console.Confirm("Claude Code detected. Install gw-claude plugin?", true) {
+				if prompter.Confirm("Claude Code detected. Install gw-claude plugin?", true) {
 					if err := plugin.Install("nicksenap/gw-claude"); err != nil {
 						console.Warningf("install failed: %s", err)
 					} else {
@@ -53,7 +53,7 @@ var wizardCmd = &cobra.Command{
 			if claudeInstalled {
 				// Offer to configure hooks
 				if _, ok := cfg.Hooks["post_create"]; !ok {
-					if console.Confirm("Configure Claude memory sync hooks?", true) {
+					if prompter.Confirm("Configure Claude memory sync hooks?", true) {
 						if cfg.Hooks == nil {
 							cfg.Hooks = make(map[string]models.Hook)
 						}
@@ -67,7 +67,7 @@ var wizardCmd = &cobra.Command{
 				}
 
 				// Offer to register Claude Code event hooks
-				if console.Confirm("Register Claude Code session tracking hooks?", true) {
+				if prompter.Confirm("Register Claude Code session tracking hooks?", true) {
 					pluginPath, findErr := plugin.Find("claude")
 					if findErr != nil {
 						console.Warningf("cannot find gw-claude: %s", findErr)
@@ -93,7 +93,7 @@ var wizardCmd = &cobra.Command{
 			zellijInstalled := zellijErr == nil
 
 			if !zellijInstalled {
-				if console.Confirm("Zellij detected. Install gw-zellij plugin?", true) {
+				if prompter.Confirm("Zellij detected. Install gw-zellij plugin?", true) {
 					if err := plugin.Install("nicksenap/gw-zellij"); err != nil {
 						console.Warningf("install failed: %s", err)
 					} else {
@@ -106,7 +106,7 @@ var wizardCmd = &cobra.Command{
 
 			if zellijInstalled {
 				if _, ok := cfg.Hooks["on_close"]; !ok {
-					if console.Confirm("Configure on_close hook for Zellij?", true) {
+					if prompter.Confirm("Configure on_close hook for Zellij?", true) {
 						if cfg.Hooks == nil {
 							cfg.Hooks = make(map[string]models.Hook)
 						}

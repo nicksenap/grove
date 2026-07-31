@@ -4,9 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/nicksenap/grove/internal/console"
 	"github.com/nicksenap/grove/internal/machine"
-	"github.com/nicksenap/grove/internal/picker"
 	"github.com/nicksenap/grove/internal/state"
 	"github.com/nicksenap/grove/internal/workspace"
 	"github.com/spf13/cobra"
@@ -45,7 +43,7 @@ var removeRepoCmd = &cobra.Command{
 				fail(machine.Errorf(machine.CodeRepoNotFound, "workspace %s has no repos", wsName))
 			}
 			choices := ws.RepoNames()
-			selected, err := picker.PickMany("Select repos to remove:", choices)
+			selected, err := prompter.PickMany("Select repos to remove:", choices)
 			if err != nil {
 				exitOnPickerErr(err)
 			}
@@ -57,7 +55,7 @@ var removeRepoCmd = &cobra.Command{
 			// destructive intent to be explicit instead of assumed from a prompt
 			// it is not allowed to show.
 			requireArgs("--force", "gw remove-repo "+wsName+" -r <repos> --force --format json")
-			if !console.Confirm(fmt.Sprintf("Remove %s from %s?", strings.Join(repoNames, ", "), wsName), false) {
+			if !prompter.Confirm(fmt.Sprintf("Remove %s from %s?", strings.Join(repoNames, ", "), wsName), false) {
 				return
 			}
 		}

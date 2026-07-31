@@ -8,7 +8,6 @@ import (
 	"github.com/nicksenap/grove/internal/discover"
 	"github.com/nicksenap/grove/internal/gitops"
 	"github.com/nicksenap/grove/internal/machine"
-	"github.com/nicksenap/grove/internal/picker"
 	"github.com/nicksenap/grove/internal/state"
 	"github.com/nicksenap/grove/internal/workspace"
 	"github.com/spf13/cobra"
@@ -88,7 +87,7 @@ var addRepoCmd = &cobra.Command{
 					"all discovered repos are already in the workspace — nothing to add").
 					WithActions(machine.NextAction("Discover more repo directories", "gw add-dir <path>")))
 			}
-			selected, err := picker.PickMany("Select repos to add:", choices)
+			selected, err := prompter.PickMany("Select repos to add:", choices)
 			if err != nil {
 				exitOnPickerErr(err)
 			}

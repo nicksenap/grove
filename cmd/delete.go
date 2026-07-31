@@ -52,7 +52,7 @@ func doDelete(args []string, force bool) {
 		// Deletion destroys worktrees and branches. In machine mode a skipped
 		// prompt must never be read as consent, so --force is mandatory.
 		requireArgs("--force", "gw delete "+names[0]+" --force --format json")
-		if !console.Confirm(fmt.Sprintf("Delete %s?", strings.Join(names, ", ")), false) {
+		if !prompter.Confirm(fmt.Sprintf("Delete %s?", strings.Join(names, ", ")), false) {
 			return
 		}
 	}
