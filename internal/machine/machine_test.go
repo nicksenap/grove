@@ -269,3 +269,30 @@ func TestEnvelopeKeySet(t *testing.T) {
 		}
 	}
 }
+
+// A client that passed --format asked for a parseable answer, so the rejection of
+// an unknown format must be parseable too.
+func TestDetectEarlyEnablesMachineModeForInvalidFormat(t *testing.T) {
+	t.Cleanup(Reset)
+	for _, args := range [][]string{
+		{"list", "--format", "yaml"},
+		{"list", "--format=tabel"},
+		{"list", "-o", "xml"},
+	} {
+		Reset()
+		DetectEarly(args)
+		if !Enabled() {
+			t.Errorf("DetectEarly(%v): an invalid format must still yield a machine-readable error", args)
+		}
+	}
+}
+
+// --format text is valid and must stay on the human path.
+func TestDetectEarlyKeepsTextMode(t *testing.T) {
+	t.Cleanup(Reset)
+	Reset()
+	DetectEarly([]string{"list", "--format", "text"})
+	if Enabled() {
+		t.Error("--format text must not enable machine mode")
+	}
+}

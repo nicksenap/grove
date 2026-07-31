@@ -11,6 +11,65 @@ pass() { PASS=$((PASS + 1)); echo "  ✓ $1"; }
 fail() { FAIL=$((FAIL + 1)); ERRORS+=("$1"); echo "  ✗ $1"; }
 section() { echo; echo "── $1 ──"; }
 
+# --- machine-contract helpers ------------------------------------------------
+# run_json runs a command with stdin closed (machine mode must never need a TTY),
+# capturing stdout, stderr, and the exit code separately. Keeping the streams apart
+# is the point: the contract says stdout carries exactly one JSON envelope and
+# everything else goes to stderr.
+run_json() {
+    JSON_ERR_FILE="${SCRATCH:-${TMPDIR:-/tmp}}/stderr.txt"
+    JSON_CODE=0
+    JSON_OUT=$("$@" 2>"${JSON_ERR_FILE}" </dev/null) || JSON_CODE=$?
+}
+
+# assert_envelope checks the invariants every machine response must satisfy,
+# whatever the command: exactly one JSON document on stdout, carrying ok,
+# schemaVersion, and a next_actions array.
+assert_envelope() {
+    local label="$1"
+    if ! printf '%s' "${JSON_OUT}" | jq -e 'has("ok") and .schemaVersion == 1 and (.next_actions | type == "array")' > /dev/null 2>&1; then
+        fail "${label}: stdout is not a valid envelope: $(printf '%s' "${JSON_OUT}" | head -c 160)"
+        return 1
+    fi
+    if [ "$(printf '%s' "${JSON_OUT}" | jq -s 'length' 2>/dev/null)" != "1" ]; then
+        fail "${label}: stdout carried more than one JSON document"
+        return 1
+    fi
+    pass "${label}: single valid envelope"
+}
+
+# assert_ok asserts a successful envelope and a zero exit.
+assert_ok() {
+    local label="$1"
+    assert_envelope "${label}" || return 1
+    if [ "${JSON_CODE}" != "0" ]; then
+        fail "${label}: exit ${JSON_CODE}, want 0"
+        return 1
+    fi
+    if [ "$(printf '%s' "${JSON_OUT}" | jq -r '.ok')" != "true" ]; then
+        fail "${label}: ok=false — $(printf '%s' "${JSON_OUT}" | jq -c '.error')"
+        return 1
+    fi
+    pass "${label}: ok"
+}
+
+# assert_failure asserts a structured failure with a specific code and exit class.
+assert_failure() {
+    local label="$1" want_code="$2" want_exit="$3"
+    assert_envelope "${label}" || return 1
+    local got_code
+    got_code=$(printf '%s' "${JSON_OUT}" | jq -r '.error.code // "<none>"')
+    if [ "${got_code}" != "${want_code}" ]; then
+        fail "${label}: error.code=${got_code}, want ${want_code}"
+        return 1
+    fi
+    if [ "${JSON_CODE}" != "${want_exit}" ]; then
+        fail "${label}: exit ${JSON_CODE}, want ${want_exit} for ${want_code}"
+        return 1
+    fi
+    pass "${label}: ${want_code} → exit ${want_exit}"
+}
+
 # Path to the Go binary — override with GW_BIN env var
 GW_BIN="${GW_BIN:-$(cd "$(dirname "$0")/.." && pwd)/gw}"
 if [ ! -x "${GW_BIN}" ]; then
@@ -37,10 +96,43 @@ fi
 # ---------------------------------------------------------------------------
 section "Setup"
 
-export GROVE_HOME=$(mktemp -d /tmp/grove-e2e.XXXXXX)
+# Everything the suite touches lives in one sandbox directory.
+#
+# Overriding HOME is not sufficient isolation on its own. git prefers
+# $XDG_CONFIG_HOME/git/config over $HOME/.gitconfig when that variable is set, so
+# on a developer machine with XDG configured, `git config --global` below would
+# edit their real config. GIT_CONFIG_GLOBAL/GIT_CONFIG_SYSTEM (git 2.32+) pin
+# config resolution to the sandbox regardless of the host's environment.
+E2E_TMP="${TMPDIR:-/tmp}"
+E2E_TMP="${E2E_TMP%/}"  # macOS TMPDIR has a trailing slash; doubled separators break path comparisons
+export GROVE_HOME=$(mktemp -d "${E2E_TMP}/grove-e2e.XXXXXX")
 export HOME="${GROVE_HOME}"
+export TMPDIR="${GROVE_HOME}/tmp"
+export GIT_CONFIG_GLOBAL="${GROVE_HOME}/.gitconfig"
+export GIT_CONFIG_SYSTEM=/dev/null
+export GIT_TERMINAL_PROMPT=0
+# Scratch space for test artifacts, so nothing is written to a predictable path
+# in the shared /tmp.
+SCRATCH="${GROVE_HOME}/scratch"
+mkdir -p "${TMPDIR}" "${SCRATCH}"
+touch "${GIT_CONFIG_GLOBAL}"
+
+# Host environment that would otherwise leak into the run.
+unset XDG_CONFIG_HOME XDG_DATA_HOME XDG_CACHE_HOME
+unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE
 unset ZELLIJ_SESSION_NAME  # prevent host env from leaking into doctor checks
-trap 'rm -rf "${GROVE_HOME}"' EXIT
+
+cleanup() {
+    # Reap anything `gw run` spawned, so a failed suite cannot leave background
+    # processes on the host.
+    pkill -P $$ > /dev/null 2>&1 || true
+    # Only ever remove a path we created.
+    case "${GROVE_HOME}" in
+        */grove-e2e.*) rm -rf "${GROVE_HOME}" ;;
+        *) echo "refusing to remove unexpected sandbox path: ${GROVE_HOME}" ;;
+    esac
+}
+trap cleanup EXIT
 
 REPOS_DIR="${GROVE_HOME}/repos"
 mkdir -p "${REPOS_DIR}"
@@ -49,6 +141,17 @@ mkdir -p "${REPOS_DIR}"
 git config --global user.email "e2e@grove.test"
 git config --global user.name "Grove E2E"
 git config --global init.defaultBranch main
+
+# Fail fast if the host leaked in: every later assertion trusts this boundary.
+if [ "${HOME}" != "${GROVE_HOME}" ]; then
+    echo "ERROR: HOME is not sandboxed (${HOME})"
+    exit 1
+fi
+config_origin=$(git config --global --show-origin user.email 2>/dev/null | awk '{print $1}')
+case "${config_origin}" in
+    *"${GROVE_HOME}"*) pass "git config writes are sandboxed" ;;
+    *) echo "ERROR: git --global resolved outside the sandbox: ${config_origin}"; exit 1 ;;
+esac
 
 # Simple repos with minimal history
 for repo in svc-auth svc-api svc-gateway; do
@@ -1038,6 +1141,268 @@ fi
 gw delete mcp-ws --force 2>&1
 
 # ---------------------------------------------------------------------------
+# Test: machine-readable CLI contract (docs/agent-cli.md)
+# ---------------------------------------------------------------------------
+section "Machine contract: envelope invariants"
+
+gw create mc-ws --branch feat/machine --repos svc-auth,svc-api 2>&1 > /dev/null
+
+# Every read command must satisfy the same envelope invariants. Looping is the
+# point: a new command added without machine support shows up here rather than
+# needing its own hand-written test.
+while IFS='|' read -r label cmd; do
+    [ -z "${label}" ] && continue
+    # shellcheck disable=SC2086
+    run_json gw ${cmd} --format json
+    assert_ok "${label}"
+done <<'MATRIX'
+context|context
+list|list
+list --status|list --status
+ws show|ws show mc-ws
+status|status mc-ws
+repos|repos
+doctor|doctor
+preset list|preset list
+plugin list|plugin list
+announcements --global|announcements --global
+plan delete|plan delete mc-ws
+MATRIX
+
+# Reading notes "about my repos" is undefined outside a workspace, so it is a
+# structured failure that names the fix rather than a silent empty list.
+run_json gw announcements --format json
+assert_failure "announcements outside a workspace" "WORKSPACE_NOT_FOUND" 3
+if printf '%s' "${JSON_OUT}" | jq -e '.fix | contains("--repos")' > /dev/null 2>&1; then
+    pass "announcements failure names the fix"
+else
+    fail "announcements failure should suggest --repos: $(printf '%s' "${JSON_OUT}" | jq -c '.fix')"
+fi
+
+section "Machine contract: stdout purity"
+
+# A repo whose setup hook writes to stdout would corrupt the envelope if hook
+# output were not redirected to stderr.
+cat > "${REPOS_DIR}/svc-gateway/.grove.toml" <<'TOML'
+setup = "echo NOISE_FROM_SETUP_HOOK_ON_STDOUT"
+TOML
+(cd "${REPOS_DIR}/svc-gateway" && git add .grove.toml && git commit -q -m "add noisy setup hook")
+
+run_json gw create noisy-ws --branch feat/noisy --repos svc-gateway --format json
+assert_ok "create with a stdout-writing setup hook"
+if printf '%s' "${JSON_OUT}" | grep -q "NOISE_FROM_SETUP_HOOK_ON_STDOUT"; then
+    fail "hook output leaked into the envelope on stdout"
+else
+    pass "hook output kept off stdout"
+fi
+if grep -q "NOISE_FROM_SETUP_HOOK_ON_STDOUT" "${JSON_ERR_FILE}"; then
+    pass "hook output visible on stderr"
+else
+    fail "hook output disappeared entirely (should be on stderr)"
+fi
+
+# Warnings must ride along in the envelope while ok stays true.
+echo "dirt" > "${GROVE_HOME}/.grove/workspaces/mc-ws/svc-auth/dirty.txt"
+run_json gw sync mc-ws --format json
+assert_ok "sync with a dirty repo still succeeds"
+if printf '%s' "${JSON_OUT}" | jq -e '.warnings | length > 0' > /dev/null 2>&1; then
+    pass "degraded run reports warnings in the envelope"
+else
+    fail "expected warnings for a dirty repo: $(printf '%s' "${JSON_OUT}" | jq -c '.warnings')"
+fi
+if printf '%s' "${JSON_OUT}" | jq -e '[.result.repos[] | select(.outcome == "skipped" and .detail == "dirty working tree")] | length == 1' > /dev/null 2>&1; then
+    pass "per-repo outcome names the dirty repo and why it was skipped"
+else
+    fail "expected one repo skipped as dirty: $(printf '%s' "${JSON_OUT}" | jq -c '.result.repos')"
+fi
+rm -f "${GROVE_HOME}/.grove/workspaces/mc-ws/svc-auth/dirty.txt"
+
+section "Machine contract: error codes and exit classes"
+
+run_json gw status no-such-workspace --format json
+assert_failure "unknown workspace" "WORKSPACE_NOT_FOUND" 3
+
+run_json gw create mc-ws --branch feat/dupe --repos svc-auth --format json
+assert_failure "duplicate workspace" "WORKSPACE_EXISTS" 4
+
+run_json gw create needs-branch --repos svc-auth --format json
+assert_failure "missing --branch" "USAGE" 2
+
+run_json gw create ghost-ws --branch feat/ghost --repos no-such-repo --format json
+assert_failure "unknown repo" "REPO_NOT_FOUND" 3
+
+run_json gw list --format yaml
+assert_failure "unknown --format value" "USAGE" 2
+
+run_json gw frobnicate --format json
+assert_failure "unknown command" "USAGE" 2
+
+# Destructive commands must not treat a prompt they cannot show as consent.
+run_json gw delete mc-ws --format json
+assert_failure "delete without --force" "USAGE" 2
+if gw list --format json </dev/null 2>/dev/null | jq -e '.result.workspaces[] | select(.name == "mc-ws")' > /dev/null; then
+    pass "refused delete left the workspace intact"
+else
+    fail "workspace disappeared after a refused delete"
+fi
+
+run_json gw remove-repo mc-ws --repos svc-api --format json
+assert_failure "remove-repo without --force" "USAGE" 2
+
+section "Machine contract: plan and apply"
+
+run_json gw plan delete mc-ws --format json
+assert_ok "plan delete"
+printf '%s' "${JSON_OUT}" > "${SCRATCH}/plan.json"
+if printf '%s' "${JSON_OUT}" | jq -e '.result.destructive == true and ([.result.changes[] | select(.destructive)] | length) > 0' > /dev/null 2>&1; then
+    pass "plan marks destructive changes"
+else
+    fail "plan should identify destructive changes"
+fi
+if printf '%s' "${JSON_OUT}" | jq -e '[.result.changes[] | select(.action == "remove_worktree")] | length == 2' > /dev/null 2>&1; then
+    pass "plan enumerates every worktree removal"
+else
+    fail "plan should list one removal per repo: $(printf '%s' "${JSON_OUT}" | jq -c '[.result.changes[].action]')"
+fi
+
+# State changing after review must invalidate the plan rather than be destroyed by it.
+echo "work added after the plan was reviewed" > "${GROVE_HOME}/.grove/workspaces/mc-ws/svc-auth/new-work.txt"
+run_json gw apply "${SCRATCH}/plan.json" --format json
+assert_failure "apply a plan after state changed" "STATE_CHANGED" 4
+if [ -f "${GROVE_HOME}/.grove/workspaces/mc-ws/svc-auth/new-work.txt" ]; then
+    pass "refused apply preserved the new work"
+else
+    fail "refused apply destroyed uncommitted work"
+fi
+
+# Re-planning surfaces the risk the stale plan did not know about.
+run_json gw plan delete mc-ws --format json
+assert_ok "re-plan after the change"
+if printf '%s' "${JSON_OUT}" | jq -e '[.result.warnings[] | select(contains("uncommitted"))] | length > 0' > /dev/null 2>&1; then
+    pass "fresh plan warns about uncommitted changes"
+else
+    fail "fresh plan should warn: $(printf '%s' "${JSON_OUT}" | jq -c '.result.warnings')"
+fi
+
+# A plan for a branch that was never pushed must name the commits at risk.
+gw create unpushed-ws --branch feat/unpushed --repos grove 2>&1 > /dev/null
+(cd "${GROVE_HOME}/.grove/workspaces/unpushed-ws/grove" \
+    && echo "exists nowhere else" > only-here.txt \
+    && git add . && git commit -q -m "local-only work")
+run_json gw plan delete unpushed-ws --format json
+assert_ok "plan delete for a never-pushed branch"
+if printf '%s' "${JSON_OUT}" | jq -e '[.result.warnings[] | select(contains("never pushed"))] | length > 0' > /dev/null 2>&1; then
+    pass "plan warns that commits exist only locally"
+else
+    fail "plan must warn about never-pushed commits: $(printf '%s' "${JSON_OUT}" | jq -c '.result.warnings')"
+fi
+gw delete unpushed-ws --force 2>&1 > /dev/null
+
+# A saved failure envelope is not a plan.
+run_json gw status no-such-workspace --format json
+printf '%s' "${JSON_OUT}" > "${SCRATCH}/failure.json"
+run_json gw apply "${SCRATCH}/failure.json" --format json
+assert_failure "apply a saved failure envelope" "USAGE" 2
+
+# plan | apply over a pipe, the way an agent would chain them.
+run_json gw plan create piped-ws --repos svc-api --branch feat/piped --format json
+assert_ok "plan create"
+JSON_CODE=0
+APPLY_OUT=$(printf '%s' "${JSON_OUT}" | gw apply - --format json 2>/dev/null) || JSON_CODE=$?
+JSON_OUT="${APPLY_OUT}"
+assert_ok "apply a plan from stdin"
+if gw list --format json </dev/null 2>/dev/null | jq -e '.result.workspaces[] | select(.name == "piped-ws")' > /dev/null; then
+    pass "piped plan created the workspace"
+else
+    fail "piped plan did not create the workspace"
+fi
+gw delete piped-ws --force 2>&1 > /dev/null
+
+section "Machine contract: agent lifecycle without human output"
+
+# The acceptance criterion: create → inspect → sync → delete, parsing only JSON.
+run_json gw create life-ws --repos svc-auth,svc-api --branch feat/life --format json
+assert_ok "lifecycle: create"
+if printf '%s' "${JSON_OUT}" | jq -e '[.result.repos[] | select(.outcome == "created")] | length == 2' > /dev/null 2>&1; then
+    pass "lifecycle: per-repo create outcomes"
+else
+    fail "lifecycle: expected 2 created repos: $(printf '%s' "${JSON_OUT}" | jq -c '.result.repos')"
+fi
+
+# next_actions must be runnable as-is, not a description of a command.
+NEXT=$(printf '%s' "${JSON_OUT}" | jq -r '.next_actions[0].command // empty')
+if [ -n "${NEXT}" ]; then
+    JSON_CODE=0
+    JSON_OUT=$(eval "${NEXT/#gw/${GW_BIN}}" 2>/dev/null </dev/null) || JSON_CODE=$?
+    assert_ok "lifecycle: next_actions command runs verbatim (${NEXT})"
+else
+    fail "lifecycle: create returned no next_actions"
+fi
+
+run_json gw status life-ws --format json
+assert_ok "lifecycle: status"
+if printf '%s' "${JSON_OUT}" | jq -e '.result.repos[0] | has("base_branch") and has("ahead") and has("behind")' > /dev/null 2>&1; then
+    pass "lifecycle: status reports ahead/behind against a named base branch"
+else
+    fail "lifecycle: status missing base_branch/ahead/behind"
+fi
+
+run_json gw sync life-ws --format json
+assert_ok "lifecycle: sync"
+
+run_json gw add-repo life-ws --repos svc-gateway --format json
+assert_ok "lifecycle: add-repo"
+run_json gw remove-repo life-ws --repos svc-gateway --force --format json
+assert_ok "lifecycle: remove-repo"
+if printf '%s' "${JSON_OUT}" | jq -e '[.result.repos[] | select(.outcome == "removed")] | length == 1' > /dev/null 2>&1; then
+    pass "lifecycle: remove-repo reports the removal"
+else
+    fail "lifecycle: remove-repo outcome missing"
+fi
+
+# Idempotence: repeating a removal converges instead of failing.
+run_json gw remove-repo life-ws --repos svc-gateway --force --format json
+assert_ok "lifecycle: repeated remove-repo converges"
+if printf '%s' "${JSON_OUT}" | jq -e '[.result.repos[] | select(.outcome == "not_found")] | length == 1' > /dev/null 2>&1; then
+    pass "lifecycle: already-removed repo reports not_found, not an error"
+else
+    fail "lifecycle: expected not_found: $(printf '%s' "${JSON_OUT}" | jq -c '.result.repos')"
+fi
+
+run_json gw delete life-ws --force --format json
+assert_ok "lifecycle: delete"
+if printf '%s' "${JSON_OUT}" | jq -e '.result.deleted[0].state_removed == true' > /dev/null 2>&1; then
+    pass "lifecycle: delete confirms state removal"
+else
+    fail "lifecycle: delete should report state_removed"
+fi
+
+section "Machine contract: text mode unaffected"
+
+# Human output must stay on the human path: no envelope, and a table on stdout.
+list_text=$(gw list 2>/dev/null </dev/null)
+if printf '%s' "${list_text}" | jq -e . > /dev/null 2>&1; then
+    fail "text mode emitted JSON"
+else
+    pass "text mode emits no envelope"
+fi
+if printf '%s' "${list_text}" | grep -q "NAME"; then
+    pass "text mode still prints a table"
+else
+    fail "text mode lost its table header"
+fi
+
+# The legacy --json flag keeps its pre-envelope shape for existing scripts.
+if gw list --json </dev/null 2>/dev/null | jq -e 'type == "array"' > /dev/null; then
+    pass "legacy --json still emits a bare array"
+else
+    fail "legacy --json changed shape"
+fi
+
+gw delete mc-ws --force 2>&1 > /dev/null
+gw delete noisy-ws --force 2>&1 > /dev/null
+
+# ---------------------------------------------------------------------------
 # Test: cross-workspace agent coordination
 # ---------------------------------------------------------------------------
 section "Announcements"
@@ -1046,43 +1411,43 @@ section "Announcements"
 gw create ann-alpha --branch feat/ann-alpha --repos svc-auth 2>&1
 gw create ann-beta --branch feat/ann-beta --repos svc-auth 2>&1
 
-(cd "${GROVE_HOME}/.grove/workspaces/ann-alpha" && gw announce -c breaking_change -m "auth tokens are opaque now" --format json > /tmp/ann-publish.json 2>/dev/null)
+(cd "${GROVE_HOME}/.grove/workspaces/ann-alpha" && gw announce -c breaking_change -m "auth tokens are opaque now" --format json > ${SCRATCH}/ann-publish.json 2>/dev/null)
 
-if jq -e '.ok == true and .result.count == 1' /tmp/ann-publish.json > /dev/null 2>&1; then
+if jq -e '.ok == true and .result.count == 1' ${SCRATCH}/ann-publish.json > /dev/null 2>&1; then
     pass "gw announce publishes an envelope"
 else
-    fail "gw announce failed: $(cat /tmp/ann-publish.json)"
+    fail "gw announce failed: $(cat ${SCRATCH}/ann-publish.json)"
 fi
 
 # The other agent receives the note while simply orienting.
-(cd "${GROVE_HOME}/.grove/workspaces/ann-beta" && gw context --format json > /tmp/ann-context.json 2>/dev/null)
-if jq -e '[.result.announcements[] | select(.workspace == "ann-alpha")] | length == 1' /tmp/ann-context.json > /dev/null 2>&1; then
+(cd "${GROVE_HOME}/.grove/workspaces/ann-beta" && gw context --format json > ${SCRATCH}/ann-context.json 2>/dev/null)
+if jq -e '[.result.announcements[] | select(.workspace == "ann-alpha")] | length == 1' ${SCRATCH}/ann-context.json > /dev/null 2>&1; then
     pass "gw context surfaces another workspace's announcement"
 else
-    fail "context missing announcement: $(jq -c .result.announcements /tmp/ann-context.json)"
+    fail "context missing announcement: $(jq -c .result.announcements ${SCRATCH}/ann-context.json)"
 fi
 
-(cd "${GROVE_HOME}/.grove/workspaces/ann-beta" && gw announcements --format json > /tmp/ann-read.json 2>/dev/null)
-if jq -e '.result.count == 1 and .result.announcements[0].category == "breaking_change"' /tmp/ann-read.json > /dev/null 2>&1; then
+(cd "${GROVE_HOME}/.grove/workspaces/ann-beta" && gw announcements --format json > ${SCRATCH}/ann-read.json 2>/dev/null)
+if jq -e '.result.count == 1 and .result.announcements[0].category == "breaking_change"' ${SCRATCH}/ann-read.json > /dev/null 2>&1; then
     pass "gw announcements reads the note"
 else
-    fail "gw announcements failed: $(cat /tmp/ann-read.json)"
+    fail "gw announcements failed: $(cat ${SCRATCH}/ann-read.json)"
 fi
 
 # A workspace never sees its own notes — that is noise, not coordination.
-(cd "${GROVE_HOME}/.grove/workspaces/ann-alpha" && gw announcements --format json > /tmp/ann-own.json 2>/dev/null)
-if jq -e '.result.count == 0' /tmp/ann-own.json > /dev/null 2>&1; then
+(cd "${GROVE_HOME}/.grove/workspaces/ann-alpha" && gw announcements --format json > ${SCRATCH}/ann-own.json 2>/dev/null)
+if jq -e '.result.count == 0' ${SCRATCH}/ann-own.json > /dev/null 2>&1; then
     pass "announcements exclude the publishing workspace"
 else
-    fail "publisher should not see its own note: $(cat /tmp/ann-own.json)"
+    fail "publisher should not see its own note: $(cat ${SCRATCH}/ann-own.json)"
 fi
 
 # Invalid category is a structured USAGE failure, not a stored note.
-(cd "${GROVE_HOME}/.grove/workspaces/ann-alpha" && gw announce -c gossip -m "nope" --format json > /tmp/ann-bad.json 2>/dev/null) || true
-if jq -e '.ok == false and .error.code == "USAGE"' /tmp/ann-bad.json > /dev/null 2>&1; then
+(cd "${GROVE_HOME}/.grove/workspaces/ann-alpha" && gw announce -c gossip -m "nope" --format json > ${SCRATCH}/ann-bad.json 2>/dev/null) || true
+if jq -e '.ok == false and .error.code == "USAGE"' ${SCRATCH}/ann-bad.json > /dev/null 2>&1; then
     pass "invalid announcement category returns USAGE"
 else
-    fail "expected USAGE for a bad category: $(cat /tmp/ann-bad.json)"
+    fail "expected USAGE for a bad category: $(cat ${SCRATCH}/ann-bad.json)"
 fi
 
 gw delete ann-alpha --force 2>&1

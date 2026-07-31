@@ -209,11 +209,12 @@ Two guarantees make a plan worth more than a printed warning:
 
 1. **Same validation path.** A plan is produced by the checks execution runs, so
    a plan that succeeds cannot fail validation at apply time.
-2. **State pinning.** The `fingerprint` covers the state the plan depends on —
-   including whether each repo is dirty. `gw apply` recomputes it and fails with
-   `STATE_CHANGED` (exit 4) rather than applying a plan that was reviewed against
-   a different world. If an agent starts editing after the plan was produced, the
-   delete is refused and the work survives.
+2. **State pinning.** The `fingerprint` covers the state the plan depends on. For
+   a delete that includes each repo's exact uncommitted changes and current
+   commit, so work added after review — even to a repo that was already dirty, or
+   a commit made on a clean one — invalidates the plan. `gw apply` recomputes it
+   and fails with `STATE_CHANGED` (exit 4) rather than applying a plan that was
+   reviewed against a different world.
 
 `gw apply` accepts a bare plan document, a saved `--format json` envelope, or `-`
 for stdin. A saved *failure* envelope is refused rather than parsed as an empty

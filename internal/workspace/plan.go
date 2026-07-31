@@ -442,9 +442,12 @@ func (s *Service) createFingerprint(name string, opts CreateOpts) string {
 	return hashOf(input)
 }
 
-// deleteFingerprint pins what a delete plan assumes. It includes each repo's
-// dirty state on purpose: if work appears after the plan was reviewed, applying
-// would destroy something nobody agreed to lose, so the plan must expire.
+// deleteFingerprint pins what a delete plan assumes.
+//
+// It captures each repo's uncommitted changes and current commit, not merely a
+// "is it dirty" flag. A boolean is too coarse for an irreversible operation: work
+// added to an already-dirty repo, or a commit made on a clean one, would leave the
+// flag unchanged and let a reviewed plan destroy work nobody agreed to lose.
 func (s *Service) deleteFingerprint(ws *models.Workspace) string {
 	input := []any{"delete", ws.Name, ws.Path}
 
@@ -453,8 +456,20 @@ func (s *Service) deleteFingerprint(ws *models.Workspace) string {
 	sort.Slice(repos, func(i, j int) bool { return repos[i].RepoName < repos[j].RepoName })
 
 	for _, r := range repos {
-		status, _ := gitops.RepoStatus(r.WorktreePath)
-		input = append(input, []any{r.RepoName, r.WorktreePath, r.Branch, r.SourceRepo, status != ""})
+		status, statusErr := gitops.RepoStatus(r.WorktreePath)
+		if statusErr != nil {
+			// An unreadable worktree is its own state: fingerprinting the error
+			// means a plan made while it was readable will not silently apply.
+			status = "unreadable: " + statusErr.Error()
+		}
+		input = append(input, []any{
+			r.RepoName,
+			r.WorktreePath,
+			r.Branch,
+			r.SourceRepo,
+			status,
+			gitops.HeadCommit(r.WorktreePath),
+		})
 	}
 	return hashOf(input)
 }

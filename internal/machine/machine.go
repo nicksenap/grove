@@ -115,20 +115,31 @@ func Enabled() bool { return Current() == FormatJSON }
 
 // DetectEarly scans raw args for the format flag before Cobra parses them, so
 // pre-command output (like the update notice) can honor machine mode. Cobra
-// remains the source of truth and will reject invalid values later; anything
-// unparseable here is ignored.
+// remains the source of truth and still validates the value.
+//
+// An unrecognized value enables machine mode anyway. Passing --format at all is an
+// explicit request for a parseable answer, so the rejection has to be parseable
+// too — otherwise the one case where a client most needs a machine-readable error
+// (it asked for a format Grove does not have) is the one case it would get bare
+// text on stderr.
 func DetectEarly(args []string) {
 	for i, a := range args {
 		switch {
 		case a == "--format" || a == "-o":
 			if i+1 < len(args) {
-				SetFormat(args[i+1])
+				applyEarlyFormat(args[i+1])
 			}
 		case strings.HasPrefix(a, "--format="):
-			SetFormat(strings.TrimPrefix(a, "--format="))
+			applyEarlyFormat(strings.TrimPrefix(a, "--format="))
 		case strings.HasPrefix(a, "-o="):
-			SetFormat(strings.TrimPrefix(a, "-o="))
+			applyEarlyFormat(strings.TrimPrefix(a, "-o="))
 		}
+	}
+}
+
+func applyEarlyFormat(value string) {
+	if err := SetFormat(value); err != nil {
+		setFormat(FormatJSON)
 	}
 }
 

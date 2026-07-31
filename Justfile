@@ -49,9 +49,15 @@ staticcheck:
 build:
     go build -ldflags "-X github.com/nicksenap/grove/cmd.Version=$(git describe --tags --always)" -o gw ./cmd/gw
 
-# Run e2e tests
+# Run e2e tests (sandboxed: own HOME, git config, and TMPDIR)
 e2e: build
     bash e2e/run.sh
+
+# Run the same e2e suite inside a container: fully hermetic, Linux, non-root.
+# Use --network=none to prove the suite needs no network.
+e2e-docker *args:
+    docker build -f e2e/Dockerfile -t grove-e2e .
+    docker run --rm {{ args }} grove-e2e
 
 # Set up dev environment (git hooks)
 dev:

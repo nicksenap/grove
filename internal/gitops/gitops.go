@@ -291,6 +291,16 @@ func CommitsAheadBehind(path, upstream string) (int, int, error) {
 	return ahead, behind, nil
 }
 
+// HeadCommit returns the current commit SHA, or "" if it cannot be determined
+// (e.g. an unborn branch).
+func HeadCommit(path string) string {
+	out, err := runGit(path, "rev-parse", "HEAD")
+	if err != nil {
+		return ""
+	}
+	return out
+}
+
 // RemoteURL returns the URL for a remote. Returns "" on any error.
 func RemoteURL(path, remote string) string {
 	out, err := runGit(path, "remote", "get-url", remote)

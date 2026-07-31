@@ -21,9 +21,17 @@ jobs:
         env:
           GIT_CEILING_DIRECTORIES: /
 
+  # The suite sandboxes itself (own HOME, GIT_CONFIG_GLOBAL, TMPDIR), so it runs
+  # directly on both platforms. macOS matters on its own: path resolution there
+  # goes through the /var -> /private/var symlink, and Apple Git differs from
+  # Debian's.
   e2e:
     needs: check
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
     steps:
       - uses: actions/checkout@v7
         with:
@@ -41,3 +49,18 @@ jobs:
         run: bash e2e/run.sh
         env:
           GW_BIN: ${{ github.workspace }}/gw
+
+  # Same suite, fully hermetic: nothing from a host is reachable, git is pinned,
+  # and it runs as a non-root user so permission bugs are not masked.
+  # --network=none proves the suite needs no network.
+  e2e-container:
+    needs: check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Build e2e image
+        run: docker build -f e2e/Dockerfile -t grove-e2e .
+
+      - name: Run e2e tests in an offline container
+        run: docker run --rm --network=none grove-e2e

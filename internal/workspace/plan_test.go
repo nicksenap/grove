@@ -517,3 +517,55 @@ func TestPlanDeleteWarnsWhenStatusCannotBeChecked(t *testing.T) {
 		t.Errorf("expected a warning about the failed check, got %v", plan.Warnings)
 	}
 }
+
+// A boolean "is dirty" fingerprint would let work added to an already-dirty repo
+// slip through, which is the case a coding agent actually produces: it starts from
+// a workspace that already had scratch files.
+func TestApplyRefusesWhenAlreadyDirtyRepoGainsMoreWork(t *testing.T) {
+	env := setupTestEnv(t)
+	env.createRepo("api")
+	env.svc.Create("dirtier", "feat/dirtier", []string{"api"}, env.repoMap, env.cfg)
+
+	wt := filepath.Join(env.wsDir, "dirtier", "api")
+	os.WriteFile(filepath.Join(wt, "scratch.txt"), []byte("pre-existing mess"), 0o644)
+
+	plan, err := env.svc.PlanDelete("dirtier", "test")
+	if err != nil {
+		t.Fatalf("plan: %v", err)
+	}
+
+	// Still dirty, but now dirty with something else.
+	os.WriteFile(filepath.Join(wt, "precious.txt"), []byte("added after review"), 0o644)
+
+	if _, err := env.svc.Apply(plan, "test"); machine.CodeFor(err) != machine.CodeStateChanged {
+		t.Fatalf("apply error = %v (%s), want %s", err, machine.CodeFor(err), machine.CodeStateChanged)
+	}
+	if _, err := os.Stat(filepath.Join(wt, "precious.txt")); err != nil {
+		t.Error("the work added after review must survive")
+	}
+}
+
+// Committing leaves the worktree clean, so a commit made after review must be
+// caught by the commit SHA rather than by dirtiness.
+func TestApplyRefusesWhenNewCommitAppearsAfterPlan(t *testing.T) {
+	env := setupTestEnv(t)
+	env.createRepo("api")
+	env.svc.Create("committed", "feat/committed", []string{"api"}, env.repoMap, env.cfg)
+
+	plan, err := env.svc.PlanDelete("committed", "test")
+	if err != nil {
+		t.Fatalf("plan: %v", err)
+	}
+
+	wt := filepath.Join(env.wsDir, "committed", "api")
+	os.WriteFile(filepath.Join(wt, "feature.txt"), []byte("new work"), 0o644)
+	env.run(wt, "git", "add", ".")
+	env.run(wt, "git", "commit", "-q", "-m", "work committed after the plan was reviewed")
+
+	if _, err := env.svc.Apply(plan, "test"); machine.CodeFor(err) != machine.CodeStateChanged {
+		t.Fatalf("apply error = %v (%s), want %s", err, machine.CodeFor(err), machine.CodeStateChanged)
+	}
+	if ws, _ := env.svc.State.GetWorkspace("committed"); ws == nil {
+		t.Error("a refused apply must not have deleted the workspace")
+	}
+}
