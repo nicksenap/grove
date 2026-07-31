@@ -1,5 +1,20 @@
 # Changelog
 
+## v1.1.11
+
+### Features
+
+- `gw create <name>` now defaults the interactive branch prompt to the workspace name — just hit Enter to accept it (shown as a Confirm-style bracket default).
+
+### Fixes
+
+- The update notice now suggests the correct Homebrew command: `brew update && brew upgrade grove` (the formula is `grove`, not `gw`).
+
+### Maintenance
+
+- Bumped `modernc.org/sqlite` and `actions/setup-go` (6 → 7).
+- README touch-ups.
+
 ## v1.1.10
 
 ### Fixes
