@@ -35,9 +35,9 @@ func TestClassifyCommandErrLeavesOtherErrorsAlone(t *testing.T) {
 // An already-classified error keeps its code — classification happens closest to
 // the cause, and the CLI boundary must not overwrite it.
 func TestClassifyCommandErrPreservesClassification(t *testing.T) {
-	err := machine.Errorf(machine.CodeWorktreeDirty, "api has uncommitted changes")
-	if got := machine.CodeFor(classifyCommandErr(err)); got != machine.CodeWorktreeDirty {
-		t.Errorf("code = %s, want %s", got, machine.CodeWorktreeDirty)
+	err := machine.Errorf(machine.CodeWorktreeExists, "api already has a worktree")
+	if got := machine.CodeFor(classifyCommandErr(err)); got != machine.CodeWorktreeExists {
+		t.Errorf("code = %s, want %s", got, machine.CodeWorktreeExists)
 	}
 }
 

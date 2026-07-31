@@ -80,7 +80,6 @@ var (
 	mu       sync.RWMutex
 	format   = FormatText
 	warnings []string
-	emitted  bool
 )
 
 // SetFormat sets the output mode from a user-supplied string.
@@ -160,7 +159,6 @@ func Reset() {
 	defer mu.Unlock()
 	format = FormatText
 	warnings = nil
-	emitted = false
 }
 
 // ---------------------------------------------------------------------------
@@ -233,17 +231,6 @@ func write(w io.Writer, env Envelope) {
 		return
 	}
 	fmt.Fprintln(w, string(data))
-	mu.Lock()
-	emitted = true
-	mu.Unlock()
-}
-
-// Emitted reports whether an envelope has already been written, so a command
-// can avoid producing a second one on a later failure.
-func Emitted() bool {
-	mu.RLock()
-	defer mu.RUnlock()
-	return emitted
 }
 
 func takeWarnings() []string {

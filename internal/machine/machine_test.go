@@ -70,8 +70,8 @@ func TestNextActionsAlwaysPresent(t *testing.T) {
 
 func TestErrorEnvelopeShape(t *testing.T) {
 	t.Cleanup(Reset)
-	err := Errorf(CodeWorktreeDirty, "api has uncommitted changes").
-		WithFix("Commit, stash, or explicitly force deletion").
+	err := Errorf(CodeWorktreeExists, "api already has a worktree for that branch").
+		WithFix("Use a different branch name, or remove the existing worktree").
 		WithActions(NextAction("inspect changes", "gw status api --format json"))
 
 	env := ErrorEnvelope(err)
@@ -85,13 +85,13 @@ func TestErrorEnvelopeShape(t *testing.T) {
 	if !ok {
 		t.Fatalf("error body missing: %v", got)
 	}
-	if body["code"] != string(CodeWorktreeDirty) {
-		t.Errorf("code = %v, want %s", body["code"], CodeWorktreeDirty)
+	if body["code"] != string(CodeWorktreeExists) {
+		t.Errorf("code = %v, want %s", body["code"], CodeWorktreeExists)
 	}
-	if body["message"] != "api has uncommitted changes" {
+	if body["message"] != "api already has a worktree for that branch" {
 		t.Errorf("message = %v", body["message"])
 	}
-	if got["fix"] != "Commit, stash, or explicitly force deletion" {
+	if got["fix"] != "Use a different branch name, or remove the existing worktree" {
 		t.Errorf("fix = %v", got["fix"])
 	}
 	if _, ok := got["result"]; ok {
@@ -130,7 +130,6 @@ func TestExitCodeClasses(t *testing.T) {
 		CodeUsage:             ExitUsage,
 		CodeWorkspaceNotFound: ExitNotFound,
 		CodeWorkspaceExists:   ExitConflict,
-		CodeWorktreeDirty:     ExitConflict,
 		CodeStateChanged:      ExitConflict,
 		CodeNotInitialized:    ExitPrecondition,
 		CodePermission:        ExitPermission,
@@ -215,9 +214,6 @@ func TestEmitSilentInTextMode(t *testing.T) {
 	buf.ReadFrom(r)
 	if buf.Len() != 0 {
 		t.Errorf("text mode wrote to stdout: %q", buf.String())
-	}
-	if Emitted() {
-		t.Error("nothing was emitted, Emitted() should be false")
 	}
 }
 

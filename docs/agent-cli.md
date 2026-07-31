@@ -57,15 +57,21 @@ Failure:
   "ok": false,
   "schemaVersion": 1,
   "error": {
-    "code": "WORKTREE_DIRTY",
-    "message": "api has uncommitted changes"
+    "code": "STATE_CHANGED",
+    "message": "state changed since the plan was created, so it was not applied"
   },
-  "fix": "Commit, stash, or explicitly force deletion",
+  "fix": "Re-plan and review the new plan before applying",
   "next_actions": [
-    { "description": "Inspect changes", "command": "gw status api --format json" }
+    { "description": "Regenerate the plan", "command": "gw plan delete api --format json" }
   ]
 }
 ```
+
+Uncommitted changes are reported as data rather than as an error: `gw sync` returns
+a per-repo `skipped` outcome with a reason, and `gw plan delete` warns about work
+that would be destroyed. There is no `WORKTREE_DIRTY` code, because no command
+returns one — a documented code that cannot occur only invites dead branches in
+client code.
 
 Fields:
 
@@ -96,7 +102,6 @@ Codes are stable identifiers. Branch on `error.code`, never on `error.message`.
 | `NO_WORKSPACES` | 3 | The operation needs at least one workspace to exist. |
 | `WORKSPACE_EXISTS` | 4 | A workspace with that name already exists. |
 | `WORKTREE_EXISTS` | 4 | The branch already has a worktree in that repo. |
-| `WORKTREE_DIRTY` | 4 | Uncommitted changes block the operation. |
 | `BRANCH_CONFLICT` | 4 | The requested branch state conflicts with the repo's. |
 | `STATE_CHANGED` | 4 | Relevant state changed since a plan was produced (see `gw apply`). |
 | `NOT_INITIALIZED` | 5 | Grove has no config yet — run `gw init <repo-dir>`. |

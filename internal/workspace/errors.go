@@ -60,14 +60,6 @@ func ErrWorktreeExists(branch, repo string) *machine.Error {
 		)
 }
 
-// ErrWorktreeDirty reports uncommitted changes blocking an operation.
-func ErrWorktreeDirty(repos []string) *machine.Error {
-	return machine.Errorf(machine.CodeWorktreeDirty,
-		"uncommitted changes in: %v", repos).
-		WithDetails(map[string]any{"dirty_repos": repos}).
-		WithFix("Commit or stash the changes, or re-run with --force")
-}
-
 // ErrGit wraps a failed git subprocess.
 func ErrGit(err error, format string, args ...any) *machine.Error {
 	return machine.Wrap(machine.CodeGitFailed, err, "%s: %s", fmt.Sprintf(format, args...), err)

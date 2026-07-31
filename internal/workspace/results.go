@@ -90,16 +90,6 @@ type RunRepoResult struct {
 	Detail   string `json:"detail,omitempty"`
 }
 
-// anyFailed reports whether any repo failed.
-func anyFailed(results []RepoResult) bool {
-	for _, r := range results {
-		if r.Failed() {
-			return true
-		}
-	}
-	return false
-}
-
 // FailedRepos returns the names of repos whose operation failed.
 func FailedRepos(results []RepoResult) []string {
 	var names []string

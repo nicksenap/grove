@@ -27,7 +27,6 @@ const (
 	// Conflicts: the request collides with existing state.
 	CodeWorkspaceExists Code = "WORKSPACE_EXISTS"
 	CodeWorktreeExists  Code = "WORKTREE_EXISTS"
-	CodeWorktreeDirty   Code = "WORKTREE_DIRTY"
 	CodeBranchConflict  Code = "BRANCH_CONFLICT"
 	CodeStateChanged    Code = "STATE_CHANGED"
 
@@ -71,7 +70,6 @@ var exitCodes = map[Code]int{
 	CodeNoWorkspaces:      ExitNotFound,
 	CodeWorkspaceExists:   ExitConflict,
 	CodeWorktreeExists:    ExitConflict,
-	CodeWorktreeDirty:     ExitConflict,
 	CodeBranchConflict:    ExitConflict,
 	CodeStateChanged:      ExitConflict,
 	CodeNotInitialized:    ExitPrecondition,
@@ -93,7 +91,6 @@ func AllCodes() []Code {
 		CodeNoWorkspaces,
 		CodeWorkspaceExists,
 		CodeWorktreeExists,
-		CodeWorktreeDirty,
 		CodeBranchConflict,
 		CodeStateChanged,
 		CodeNotInitialized,

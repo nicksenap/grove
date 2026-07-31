@@ -1392,6 +1392,35 @@ else
     fail "text mode lost its table header"
 fi
 
+# The human renderers are a separate code path from the envelope, so they need
+# their own exercise — a coverage profile of this suite showed printContext and
+# printPlan at zero before these assertions existed.
+context_text=$(cd "${GROVE_HOME}/.grove/workspaces/mc-ws" && gw context 2>/dev/null </dev/null)
+if printf '%s' "${context_text}" | grep -q "Workspace:" && printf '%s' "${context_text}" | grep -q "mc-ws"; then
+    pass "text mode renders the context summary"
+else
+    fail "context text output missing workspace details: ${context_text}"
+fi
+
+plan_text=$(gw plan delete mc-ws 2>/dev/null </dev/null)
+if printf '%s' "${plan_text}" | grep -q "Destructive" && printf '%s' "${plan_text}" | grep -q "remove_worktree"; then
+    pass "text mode renders the plan table with destructive changes"
+else
+    fail "plan text output missing destructive detail: ${plan_text}"
+fi
+
+# Keyed to a repo no other section uses: the announcement store is shared for the
+# whole run, so a note published here would otherwise show up in the coordination
+# section's results.
+announce_text=$(cd "${GROVE_HOME}/.grove/workspaces/mc-ws" \
+    && gw announce -r text-mode-only-repo -c status -m "text-mode note" 2>&1 </dev/null \
+    && gw announcements -r text-mode-only-repo --include-own 2>/dev/null </dev/null)
+if printf '%s' "${announce_text}" | grep -q "text-mode note" && printf '%s' "${announce_text}" | grep -qE "just now|[0-9]+[mhd] ago"; then
+    pass "text mode renders announcements with a relative age"
+else
+    fail "announcements text output missing note or age: ${announce_text}"
+fi
+
 # The legacy --json flag keeps its pre-envelope shape for existing scripts.
 if gw list --json </dev/null 2>/dev/null | jq -e 'type == "array"' > /dev/null; then
     pass "legacy --json still emits a bare array"

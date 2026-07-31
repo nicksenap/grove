@@ -228,10 +228,7 @@ func TestFailedReposFiltersResults(t *testing.T) {
 	if len(failed) != 2 || failed[0] != "b" || failed[1] != "c" {
 		t.Errorf("FailedRepos = %v, want [b c]", failed)
 	}
-	if !anyFailed(results) {
-		t.Error("anyFailed should be true")
-	}
-	if anyFailed(results[:1]) {
-		t.Error("anyFailed should be false when nothing failed")
+	if FailedRepos(results[:1]) != nil {
+		t.Error("FailedRepos should be empty when nothing failed")
 	}
 }
