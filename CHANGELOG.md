@@ -13,6 +13,18 @@
 
 ### Features
 
+- `gw plan create` / `gw plan delete` and `gw apply`: preview a mutation, review
+  every repository, path, and branch it would touch, then execute exactly what
+  was reviewed. Plans carry a fingerprint of the state they assume (including
+  per-repo dirtiness), and `gw apply` refuses with `STATE_CHANGED` if anything
+  relevant moved — so work created after a plan was reviewed is never destroyed
+  by it.
+- `gw context`: one read-only call reporting the current workspace, each repo's
+  live git state, configuration, announcements, and safe next actions.
+- Global `--format json` (`-o json`) on every command: a versioned response
+  envelope with stable error codes, semantic exit codes, and `next_actions`.
+  stdout carries exactly one JSON document; progress, warnings, and hook output
+  go to stderr. See [docs/agent-cli.md](docs/agent-cli.md).
 - `gw announce` / `gw announcements`: cross-workspace coordination for agents
   working in parallel, replacing the MCP server's `announce` /
   `get_announcements` tools. Notes are keyed by normalized repo remote, expire

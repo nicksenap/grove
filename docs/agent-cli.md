@@ -174,6 +174,56 @@ gw apply plan.json --format json
 Every step returns one envelope; a non-zero exit tells the caller which class of
 recovery to attempt.
 
+## Plan and apply
+
+Mutating operations have a review step. `gw plan` describes what would change;
+`gw apply` executes a plan that has been reviewed.
+
+```bash
+gw plan create feat-x -r svc-auth,api-gateway -b feat/x --format json > plan.json
+gw plan delete feat-x --format json
+gw apply plan.json --format json
+gw plan create feat-x -r api -b feat/x --format json | gw apply - --format json
+```
+
+A plan lists every repository, path, and branch it would touch, with each change
+marked `destructive` or not:
+
+```json
+{
+  "schema_version": 1,
+  "kind": "delete",
+  "workspace": "feat-x",
+  "destructive": true,
+  "changes": [
+    { "action": "remove_worktree", "repo": "api", "path": "/…/feat-x/api", "destructive": true },
+    { "action": "delete_branch", "repo": "api", "branch": "feat/x", "destructive": true,
+      "detail": "force-deleted, including unmerged commits" }
+  ],
+  "warnings": ["api has uncommitted changes that would be destroyed"],
+  "fingerprint": "3b1985…"
+}
+```
+
+Two guarantees make a plan worth more than a printed warning:
+
+1. **Same validation path.** A plan is produced by the checks execution runs, so
+   a plan that succeeds cannot fail validation at apply time.
+2. **State pinning.** The `fingerprint` covers the state the plan depends on —
+   including whether each repo is dirty. `gw apply` recomputes it and fails with
+   `STATE_CHANGED` (exit 4) rather than applying a plan that was reviewed against
+   a different world. If an agent starts editing after the plan was produced, the
+   delete is refused and the work survives.
+
+`gw apply` accepts a bare plan document, a saved `--format json` envelope, or `-`
+for stdin. A saved *failure* envelope is refused rather than parsed as an empty
+plan. `schema_version` versions the plan document independently of the response
+envelope; an unrecognized version is refused instead of misread.
+
+Plans are non-interactive by design: `gw plan create` requires `--repos`,
+`--preset`, or `--all` rather than falling back to a picker, because a plan has
+to be reproducible from its inputs.
+
 ## Cross-agent coordination
 
 When several agents work in parallel workspaces on the same repos, they can leave

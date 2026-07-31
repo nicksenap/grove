@@ -80,13 +80,11 @@ func (s *Service) CreateWithOpts(name string, opts CreateOpts) (*CreateResult, e
 	repoMap := opts.RepoMap
 	cfg := opts.Cfg
 
-	// Check duplicate
-	existing, err := s.State.GetWorkspace(name)
-	if err != nil {
+	// The same pre-flight checks `gw plan create` runs, so a reviewed plan and a
+	// direct create agree on what is valid — and so validation failures happen
+	// before anything is written to disk.
+	if err := s.validateCreate(name, opts); err != nil {
 		return nil, err
-	}
-	if existing != nil {
-		return nil, ErrWorkspaceExists(name)
 	}
 
 	logging.Info("creating workspace %q (branch=%s, repos=%v)", name, branch, repoNames)

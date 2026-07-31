@@ -67,6 +67,8 @@ func init() {
 		contextCmd,
 		announceCmd,
 		announcementsCmd,
+		planCmd,
+		applyCmd,
 		createCmd,
 		listCmd,
 		wsCmd,
