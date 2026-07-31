@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/nicksenap/grove/internal/gitops"
 	"github.com/nicksenap/grove/internal/machine"
 	"github.com/nicksenap/grove/internal/models"
 )
@@ -568,4 +569,109 @@ func TestApplyRefusesWhenNewCommitAppearsAfterPlan(t *testing.T) {
 	if ws, _ := env.svc.State.GetWorkspace("committed"); ws == nil {
 		t.Error("a refused apply must not have deleted the workspace")
 	}
+}
+
+// ---------------------------------------------------------------------------
+// Approval binds to the commands the plan displayed
+// ---------------------------------------------------------------------------
+
+// A plan lists the setup commands it will run, which is the part a reviewer most
+// needs to have approved: everything else is git work Grove controls, while these
+// are arbitrary code from a repo's .grove.toml. If the command can change between
+// review and apply, the review means nothing.
+func TestApplyRefusesWhenSetupCommandChangedAfterPlan(t *testing.T) {
+	env := setupTestEnv(t)
+	repoPath := env.createRepo("api")
+	writeGroveConfig(t, env, repoPath, `setup = "touch APPROVED"`)
+
+	plan, err := env.svc.PlanCreate("approved", CreateOpts{
+		Branch:  "feat/approved",
+		Repos:   []string{"api"},
+		RepoMap: env.repoMap,
+		Cfg:     env.cfg,
+	}, "test")
+	if err != nil {
+		t.Fatalf("plan: %v", err)
+	}
+
+	// The plan must show what it intends to run.
+	var shown []string
+	for _, c := range plan.Changes {
+		if c.Action == ActionRunSetupHook {
+			shown = append(shown, c.Detail)
+		}
+	}
+	if len(shown) != 1 || shown[0] != "touch APPROVED" {
+		t.Fatalf("plan should display the setup command, got %v", shown)
+	}
+
+	// Someone edits the command after the plan was reviewed.
+	writeGroveConfig(t, env, repoPath, `setup = "touch UNAPPROVED"`)
+
+	if _, err := env.svc.Apply(plan, "test"); machine.CodeFor(err) != machine.CodeStateChanged {
+		t.Fatalf("apply error = %v (%s), want %s", err, machine.CodeFor(err), machine.CodeStateChanged)
+	}
+	if ws, _ := env.svc.State.GetWorkspace("approved"); ws != nil {
+		t.Error("a refused apply must not have created the workspace")
+	}
+	if _, err := os.Stat(filepath.Join(env.wsDir, "approved", "api", "UNAPPROVED")); err == nil {
+		t.Error("the unapproved command must not have run")
+	}
+}
+
+// The same guarantee for teardown commands, which delete plans display and run.
+func TestApplyRefusesWhenTeardownCommandChangedAfterPlan(t *testing.T) {
+	env := setupTestEnv(t)
+	repoPath := env.createRepo("api")
+	writeGroveConfig(t, env, repoPath, `teardown = "echo approved"`)
+	env.svc.Create("teardown-ws", "feat/teardown", []string{"api"}, env.repoMap, env.cfg)
+
+	plan, err := env.svc.PlanDelete("teardown-ws", "test")
+	if err != nil {
+		t.Fatalf("plan: %v", err)
+	}
+
+	writeGroveConfig(t, env, repoPath, `teardown = "echo unapproved"`)
+
+	if _, err := env.svc.Apply(plan, "test"); machine.CodeFor(err) != machine.CodeStateChanged {
+		t.Fatalf("apply error = %v (%s), want %s", err, machine.CodeFor(err), machine.CodeStateChanged)
+	}
+	if ws, _ := env.svc.State.GetWorkspace("teardown-ws"); ws == nil {
+		t.Error("a refused apply must not have deleted the workspace")
+	}
+}
+
+// An unchanged command must still apply, or the guard would make plans unusable.
+func TestApplySucceedsWhenSetupCommandUnchanged(t *testing.T) {
+	env := setupTestEnv(t)
+	repoPath := env.createRepo("api")
+	writeGroveConfig(t, env, repoPath, `setup = "touch APPROVED"`)
+
+	plan, err := env.svc.PlanCreate("stable", CreateOpts{
+		Branch:  "feat/stable",
+		Repos:   []string{"api"},
+		RepoMap: env.repoMap,
+		Cfg:     env.cfg,
+	}, "test")
+	if err != nil {
+		t.Fatalf("plan: %v", err)
+	}
+
+	if _, err := env.svc.Apply(plan, "test"); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(env.wsDir, "stable", "api", "APPROVED")); err != nil {
+		t.Errorf("the approved setup command should have run: %v", err)
+	}
+}
+
+// writeGroveConfig writes a repo's .grove.toml and drops the read cache, since
+// production reads it once per process and tests need to simulate an edit between
+// two separate gw invocations.
+func writeGroveConfig(t *testing.T, env *testEnv, repoPath, contents string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(repoPath, ".grove.toml"), []byte(contents+"\n"), 0o644); err != nil {
+		t.Fatalf("write .grove.toml: %v", err)
+	}
+	gitops.ClearGroveConfigCache()
 }

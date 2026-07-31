@@ -214,12 +214,36 @@ Two guarantees make a plan worth more than a printed warning:
 
 1. **Same validation path.** A plan is produced by the checks execution runs, so
    a plan that succeeds cannot fail validation at apply time.
-2. **State pinning.** The `fingerprint` covers the state the plan depends on. For
-   a delete that includes each repo's exact uncommitted changes and current
-   commit, so work added after review — even to a repo that was already dirty, or
-   a commit made on a clean one — invalidates the plan. `gw apply` recomputes it
-   and fails with `STATE_CHANGED` (exit 4) rather than applying a plan that was
-   reviewed against a different world.
+2. **State pinning.** The `fingerprint` covers the state the plan depends on, and
+   `gw apply` recomputes it and fails with `STATE_CHANGED` (exit 4) rather than
+   applying a plan that was reviewed against a different world.
+
+What the fingerprint covers:
+
+| Plan | Pinned |
+| --- | --- |
+| both | the repos involved, their source paths, and the shell commands the plan displayed |
+| `create` | the target name being free, and each repo's local/remote branch situation |
+| `delete` | each repo's exact uncommitted changes and current commit |
+
+The commands matter most. Everything else in a plan describes git work Grove
+controls; `run_setup_hook` and `run_teardown_hook` are arbitrary code from a repo's
+`.grove.toml`. Pinning them is what makes review binding — otherwise a plan can
+display `go mod download` and apply something else, and approving it means nothing.
+
+### When this is worth the extra round trip
+
+Plan/apply exists for the gap between deciding and doing. It pays for itself when:
+
+- a human (or a second agent) reviews before execution;
+- the operation runs arbitrary setup commands you want to see first;
+- something else may touch the workspace in between — another agent, or you;
+- the operation is destructive and irreversible.
+
+For an agent that plans and applies in the same breath with no review in between,
+it is pure overhead: `gw delete --force --format json` already reports per-repo
+results, and `gw sync` already reports why a repo was skipped. Use plan/apply when
+the plan will actually be *read*.
 
 `gw apply` accepts a bare plan document, a saved `--format json` envelope, or `-`
 for stdin. A saved *failure* envelope is refused rather than parsed as an empty

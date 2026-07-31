@@ -143,7 +143,7 @@ func (s *Service) PlanCreate(name string, opts CreateOpts, version string) (*Pla
 		plan.Warnings = append(plan.Warnings, warnings...)
 	}
 
-	plan.Fingerprint = s.createFingerprint(name, opts)
+	plan.Fingerprint = s.createFingerprint(name, opts, plan.Changes)
 	return plan, nil
 }
 
@@ -288,7 +288,7 @@ func (s *Service) PlanDelete(name, version string) (*Plan, error) {
 		PlannedChange{Action: ActionRemoveStateEntry, Detail: ws.Name, Destructive: true},
 	)
 
-	plan.Fingerprint = s.deleteFingerprint(ws)
+	plan.Fingerprint = s.deleteFingerprint(ws, plan.Changes)
 	return plan, nil
 }
 
@@ -422,10 +422,11 @@ func (s *Service) validateCreate(name string, opts CreateOpts) error {
 // Fingerprints
 // ---------------------------------------------------------------------------
 
-// createFingerprint pins what a create plan assumes: the target name is free and
-// each repo's source path and branch situation are unchanged.
-func (s *Service) createFingerprint(name string, opts CreateOpts) string {
-	input := []any{"create", name, opts.Branch}
+// createFingerprint pins what a create plan assumes: the target name is free,
+// each repo's source path and branch situation are unchanged, and the setup
+// commands are the ones the plan displayed.
+func (s *Service) createFingerprint(name string, opts CreateOpts, changes []PlannedChange) string {
+	input := []any{"create", name, opts.Branch, plannedCommands(changes)}
 
 	repos := make([]string, len(opts.Repos))
 	copy(repos, opts.Repos)
@@ -448,8 +449,8 @@ func (s *Service) createFingerprint(name string, opts CreateOpts) string {
 // "is it dirty" flag. A boolean is too coarse for an irreversible operation: work
 // added to an already-dirty repo, or a commit made on a clean one, would leave the
 // flag unchanged and let a reviewed plan destroy work nobody agreed to lose.
-func (s *Service) deleteFingerprint(ws *models.Workspace) string {
-	input := []any{"delete", ws.Name, ws.Path}
+func (s *Service) deleteFingerprint(ws *models.Workspace, changes []PlannedChange) string {
+	input := []any{"delete", ws.Name, ws.Path, plannedCommands(changes)}
 
 	repos := make([]models.RepoWorktree, len(ws.Repos))
 	copy(repos, ws.Repos)
@@ -472,6 +473,24 @@ func (s *Service) deleteFingerprint(ws *models.Workspace) string {
 		})
 	}
 	return hashOf(input)
+}
+
+// plannedCommands lists the shell commands a plan would execute, in order.
+//
+// These are the part of a plan a reviewer most needs to have approved: everything
+// else describes git operations Grove controls, while these are arbitrary code from
+// a repo's .grove.toml (and, once blueprints land, from a shared or remote file).
+// Including them in the fingerprint is what makes approval binding — otherwise a
+// plan can display one command and apply another, and the review means nothing.
+func plannedCommands(changes []PlannedChange) []string {
+	var cmds []string
+	for _, c := range changes {
+		switch c.Action {
+		case ActionRunSetupHook, ActionRunTeardownHook:
+			cmds = append(cmds, c.Action+" "+c.Repo+": "+c.Detail)
+		}
+	}
+	return cmds
 }
 
 func hashOf(v any) string {

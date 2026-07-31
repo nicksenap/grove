@@ -20,9 +20,10 @@
 - `gw plan create` / `gw plan delete` and `gw apply`: preview a mutation, review
   every repository, path, and branch it would touch, then execute exactly what
   was reviewed. Plans carry a fingerprint of the state they assume (including
-  each repo's exact uncommitted changes and current commit), and `gw apply`
-  refuses with `STATE_CHANGED` if anything relevant moved — so work created after
-  a plan was reviewed is never destroyed by it.
+  each repo's exact uncommitted changes and current commit, and the shell commands
+  the plan displayed), and `gw apply` refuses with `STATE_CHANGED` if anything
+  relevant moved — so work created after a plan was reviewed is never destroyed by
+  it, and a `.grove.toml` setup command edited after review is never executed.
 - `gw context`: one read-only call reporting the current workspace, each repo's
   live git state, configuration, announcements, and safe next actions.
 - Global `--format json` (`-o json`) on every command: a versioned response

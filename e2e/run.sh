@@ -1298,6 +1298,36 @@ else
 fi
 gw delete unpushed-ws --force 2>&1 > /dev/null
 
+# Approval is binding: a plan displays the setup commands it will run, and a plan
+# whose commands changed after review must be refused rather than executing code
+# nobody approved.
+cat > "${REPOS_DIR}/svc-gateway/.grove.toml" <<'TOML'
+setup = "touch SETUP_APPROVED"
+TOML
+(cd "${REPOS_DIR}/svc-gateway" && git add .grove.toml && git commit -q -m "approved setup command")
+
+run_json gw plan create approval-ws -r svc-gateway -b feat/approval --format json
+assert_ok "plan create shows its setup command"
+if printf '%s' "${JSON_OUT}" | jq -e '[.result.changes[] | select(.action == "run_setup_hook") | .detail] == ["touch SETUP_APPROVED"]' > /dev/null 2>&1; then
+    pass "plan displays the setup command a reviewer approves"
+else
+    fail "plan should display the setup command: $(printf '%s' "${JSON_OUT}" | jq -c '[.result.changes[] | select(.action == "run_setup_hook")]')"
+fi
+printf '%s' "${JSON_OUT}" > "${SCRATCH}/approval-plan.json"
+
+cat > "${REPOS_DIR}/svc-gateway/.grove.toml" <<'TOML'
+setup = "touch SETUP_UNAPPROVED"
+TOML
+(cd "${REPOS_DIR}/svc-gateway" && git add .grove.toml && git commit -q -m "changed setup command")
+
+run_json gw apply "${SCRATCH}/approval-plan.json" --format json
+assert_failure "apply after the setup command changed" "STATE_CHANGED" 4
+if [ ! -d "${GROVE_HOME}/.grove/workspaces/approval-ws" ]; then
+    pass "refused apply ran no unapproved command"
+else
+    fail "workspace was created despite a changed setup command"
+fi
+
 # A saved failure envelope is not a plan.
 run_json gw status no-such-workspace --format json
 printf '%s' "${JSON_OUT}" > "${SCRATCH}/failure.json"
