@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased
+
+### Breaking
+
+- Removed Grove's built-in MCP server. `gw mcp-serve`, the generated `.mcp.json`
+  `grove` entry, the announcements SQLite database, and the `announce` /
+  `get_announcements` tools are gone. The `gw` CLI is now the only first-party
+  agent interface. Run `gw doctor --fix` to strip the stale `grove` entry from
+  `.mcp.json` files in existing workspaces (other MCP servers are preserved).
+
+### Maintenance
+
+- Dropped the `modernc.org/sqlite` dependency tree; the release binary shrank
+  from 13.0 MB to 9.0 MB (-31%).
+
 ## v1.1.11
 
 ### Features

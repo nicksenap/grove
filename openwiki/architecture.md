@@ -163,13 +163,6 @@ Manages external commands:
 - Stores plugin metadata in `~/.grove/plugins/`
 - Plugins are exec'd from PATH or `~/.grove/plugins/`
 
-#### MCP Server (`internal/mcp/`)
-Exposes workspace state via JSON-RPC for Claude Code integration:
-- Listens on stdin/stdout
-- Serves workspace list, details, and status
-- Allows Claude Code to query and create workspaces
-- Started via `gw mcp-serve` (usually auto-launched by Claude)
-
 ### 6. **UI Layers**
 
 #### Interactive Picker (`internal/picker/`)
@@ -310,7 +303,6 @@ Test fixtures often create temporary directories with real git repos, allowing t
 | `internal/gitops/gitops.go` | Git wrappers | ~600 lines, subprocess management |
 | `internal/lifecycle/lifecycle.go` | Hook system | ~300 lines, placeholder expansion |
 | `internal/plugin/` | Plugin management | Install, upgrade, remove |
-| `internal/mcp/` | MCP server | Claude Code integration |
 | `docs/hooks.md` | Hook documentation | Comprehensive, with examples |
 | `docs/plugins.md` | Plugin documentation | Installation, environment vars |
 | `AGENTS.md`, `CLAUDE.md` | Agent guidance | Architecture and dev setup |

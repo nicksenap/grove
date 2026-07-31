@@ -138,7 +138,7 @@ Grove is organized into clear layers:
 - **Core logic**: `internal/workspace/` orchestrates git worktrees and manages workspace state
 - **Configuration**: `internal/config/` loads global config; `internal/gitops/` reads per-repo `.grove.toml`
 - **Data**: `internal/state/` persists workspace list to `~/.grove/state.json`
-- **Integrations**: `internal/lifecycle/` runs hooks; `internal/plugin/` manages plugins; `internal/mcp/` serves workspace state to Claude Code
+- **Integrations**: `internal/lifecycle/` runs hooks; `internal/plugin/` manages plugins; agents drive Grove through the CLI itself
 
 All repos are discovered once at command start via `internal/discover/`, then matched to the requested repos by name. Multi-repo operations use goroutines for concurrent execution.
 
@@ -168,7 +168,6 @@ All repos are discovered once at command start via `internal/discover/`, then ma
 - `internal/gitops/gitops.go` — Git subprocess wrappers
 - `internal/lifecycle/lifecycle.go` — Lifecycle hooks
 - `internal/plugin/` — Plugin management
-- `internal/mcp/` — MCP server for Claude Code integration
 
 ## Testing
 

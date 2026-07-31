@@ -353,32 +353,22 @@ func TestCreateWithOptsPersistsSource(t *testing.T) {
 	}
 }
 
-func TestCreateWritesMCPConfig(t *testing.T) {
+func TestCreateWritesNoMCPConfig(t *testing.T) {
 	env := setupTestEnv(t)
 	env.createRepo("api")
 
 	env.svc.Create("mcp-ws", "feat/mcp", []string{"api"}, env.repoMap, env.cfg)
 
-	// .mcp.json in workspace root
-	mcpPath := filepath.Join(env.wsDir, "mcp-ws", ".mcp.json")
-	data, err := os.ReadFile(mcpPath)
-	if err != nil {
-		t.Fatalf("reading .mcp.json: %v", err)
-	}
-	var mcpCfg models.MCPConfig
-	if err := json.Unmarshal(data, &mcpCfg); err != nil {
-		t.Fatalf("parsing .mcp.json: %v", err)
-	}
-	if _, ok := mcpCfg.MCPServers["grove"]; !ok {
-		t.Error(".mcp.json missing grove server entry")
+	// Grove no longer ships an MCP server, so workspace creation must not
+	// generate a .mcp.json anywhere.
+	wsRoot := filepath.Join(env.wsDir, "mcp-ws")
+	if _, err := os.Stat(filepath.Join(wsRoot, ".mcp.json")); err == nil {
+		t.Error("create should not write .mcp.json in the workspace root")
 	}
 
-	// .mcp.json should NOT be written inside the repo worktree — that would
-	// dirty the tree and break sync. Claude Code is run from the workspace
-	// root, which is where the shell integration cd's the user.
-	wt := filepath.Join(env.wsDir, "mcp-ws", "api")
+	wt := filepath.Join(wsRoot, "api")
 	if _, err := os.Stat(filepath.Join(wt, ".mcp.json")); err == nil {
-		t.Error(".mcp.json should not be written inside a repo worktree")
+		t.Error("create should not write .mcp.json inside a repo worktree")
 	}
 	status := env.run(wt, "git", "status", "--porcelain")
 	if status != "" {
@@ -1138,65 +1128,112 @@ func TestAllWorkspacesSummaryMultiple(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// MCP config tests
+// Legacy .mcp.json migration
 // ---------------------------------------------------------------------------
 
-func TestMCPConfigMergesWithExisting(t *testing.T) {
+func TestCleanStaleMCPEntryPreservesOtherServers(t *testing.T) {
 	env := setupTestEnv(t)
 	env.createRepo("api")
-
 	env.svc.Create("merge-ws", "feat/merge", []string{"api"}, env.repoMap, env.cfg)
 
-	// Add another server to .mcp.json
-	mcpPath := filepath.Join(env.wsDir, "merge-ws", "api", ".mcp.json")
-	existing := `{"mcpServers":{"grove":{"command":"gw","args":["mcp-serve","--workspace","merge-ws"]},"other":{"command":"other-tool","args":[]}}}`
-	os.WriteFile(mcpPath, []byte(existing), 0o644)
+	wsPath := filepath.Join(env.wsDir, "merge-ws")
+	mcpPath := filepath.Join(wsPath, ".mcp.json")
+	legacy := `{"mcpServers":{"grove":{"command":"gw","args":["mcp-serve","--workspace","merge-ws"]},"other":{"command":"other-tool","args":[]}}}`
+	os.WriteFile(mcpPath, []byte(legacy), 0o644)
 
-	// Create another workspace that writes .mcp.json — simulate by calling writeMCPConfig directly
-	ws, _ := env.svc.State.GetWorkspace("merge-ws")
-	writeMCPConfig(*ws)
-
-	// "other" server should still be there
-	data, _ := os.ReadFile(mcpPath)
-	var mcpCfg map[string]interface{}
-	json.Unmarshal(data, &mcpCfg)
-
-	servers := mcpCfg["mcpServers"].(map[string]interface{})
-	if _, ok := servers["other"]; !ok {
-		t.Error("existing 'other' server should be preserved")
+	if !StaleMCPEntry(wsPath) {
+		t.Fatal("expected the legacy grove entry to be detected")
 	}
-	if _, ok := servers["grove"]; !ok {
-		t.Error("'grove' server should exist")
+	if !CleanStaleMCPEntry(wsPath) {
+		t.Fatal("expected cleanup to report a change")
 	}
-}
 
-func TestMCPConfigRemoveOnlyGrove(t *testing.T) {
-	env := setupTestEnv(t)
-	env.createRepo("api")
-
-	env.svc.Create("rmcp-ws", "feat/rmcp", []string{"api"}, env.repoMap, env.cfg)
-
-	// Add another server at the workspace-root .mcp.json
-	mcpPath := filepath.Join(env.wsDir, "rmcp-ws", ".mcp.json")
-	existing := `{"mcpServers":{"grove":{"command":"gw","args":["mcp-serve","--workspace","rmcp-ws"]},"keeper":{"command":"keep-me","args":[]}}}`
-	os.WriteFile(mcpPath, []byte(existing), 0o644)
-
-	ws, _ := env.svc.State.GetWorkspace("rmcp-ws")
-	removeMCPConfig(*ws)
-
-	// "keeper" should remain, "grove" should be gone
 	data, err := os.ReadFile(mcpPath)
 	if err != nil {
 		t.Fatalf("file should still exist: %v", err)
 	}
-	var mcpCfg map[string]interface{}
-	json.Unmarshal(data, &mcpCfg)
-	servers := mcpCfg["mcpServers"].(map[string]interface{})
+	var cfg map[string]any
+	json.Unmarshal(data, &cfg)
+	servers := cfg["mcpServers"].(map[string]any)
 	if _, ok := servers["grove"]; ok {
 		t.Error("'grove' should be removed")
 	}
-	if _, ok := servers["keeper"]; !ok {
-		t.Error("'keeper' should be preserved")
+	if _, ok := servers["other"]; !ok {
+		t.Error("existing 'other' server should be preserved")
+	}
+	if StaleMCPEntry(wsPath) {
+		t.Error("cleanup should be idempotent")
+	}
+}
+
+func TestCleanStaleMCPEntryRemovesEmptyFile(t *testing.T) {
+	env := setupTestEnv(t)
+	env.createRepo("api")
+	env.svc.Create("rmcp-ws", "feat/rmcp", []string{"api"}, env.repoMap, env.cfg)
+
+	wsPath := filepath.Join(env.wsDir, "rmcp-ws")
+	mcpPath := filepath.Join(wsPath, ".mcp.json")
+	legacy := `{"mcpServers":{"grove":{"command":"gw","args":["mcp-serve","--workspace","rmcp-ws"]}}}`
+	os.WriteFile(mcpPath, []byte(legacy), 0o644)
+
+	if !CleanStaleMCPEntry(wsPath) {
+		t.Fatal("expected cleanup to report a change")
+	}
+	if _, err := os.Stat(mcpPath); !os.IsNotExist(err) {
+		t.Error(".mcp.json should be deleted once grove was its only server")
+	}
+}
+
+func TestCleanStaleMCPEntryIgnoresForeignGroveEntry(t *testing.T) {
+	env := setupTestEnv(t)
+	env.createRepo("api")
+	env.svc.Create("ext-ws", "feat/ext", []string{"api"}, env.repoMap, env.cfg)
+
+	wsPath := filepath.Join(env.wsDir, "ext-ws")
+	mcpPath := filepath.Join(wsPath, ".mcp.json")
+	// A user-installed external adapter that happens to be named "grove" is not
+	// ours to delete.
+	external := `{"mcpServers":{"grove":{"command":"grove-mcp-adapter","args":["serve"]}}}`
+	os.WriteFile(mcpPath, []byte(external), 0o644)
+
+	if StaleMCPEntry(wsPath) {
+		t.Error("an external adapter should not be flagged as a stale grove entry")
+	}
+	if CleanStaleMCPEntry(wsPath) {
+		t.Error("an external adapter should not be modified")
+	}
+	data, _ := os.ReadFile(mcpPath)
+	if string(data) != external {
+		t.Errorf("file should be untouched, got %s", data)
+	}
+}
+
+func TestDoctorReportsAndFixesStaleMCPConfig(t *testing.T) {
+	env := setupTestEnv(t)
+	env.createRepo("api")
+	env.svc.Create("doc-ws", "feat/doc", []string{"api"}, env.repoMap, env.cfg)
+
+	wsPath := filepath.Join(env.wsDir, "doc-ws")
+	os.WriteFile(filepath.Join(wsPath, ".mcp.json"),
+		[]byte(`{"mcpServers":{"grove":{"command":"gw","args":["mcp-serve","--workspace","doc-ws"]}}}`), 0o644)
+
+	issues, fixed, err := env.svc.Doctor(false)
+	if err != nil {
+		t.Fatalf("doctor: %v", err)
+	}
+	if len(issues) != 1 || fixed != 0 {
+		t.Fatalf("expected 1 unfixed issue, got %d issues / %d fixed", len(issues), fixed)
+	}
+
+	issues, fixed, err = env.svc.Doctor(true)
+	if err != nil {
+		t.Fatalf("doctor --fix: %v", err)
+	}
+	if len(issues) != 1 || fixed != 1 {
+		t.Fatalf("expected 1 fixed issue, got %d issues / %d fixed", len(issues), fixed)
+	}
+	if _, err := os.Stat(filepath.Join(wsPath, ".mcp.json")); !os.IsNotExist(err) {
+		t.Error("doctor --fix should remove the stale .mcp.json")
 	}
 }
 

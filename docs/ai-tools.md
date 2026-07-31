@@ -70,8 +70,31 @@ gw dash                  # launch the dashboard
 
 See the [gw-dash README](https://github.com/nicksenap/gw-dash) for keybindings, Zellij integration, and architecture.
 
-## MCP server
+## No MCP server — use the CLI
 
-Grove exposes a cross-workspace communication server via MCP (Model Context Protocol). This lets Claude Code agents in different workspaces announce changes and discover what other agents are working on.
+Grove has no built-in MCP server. The `gw` CLI *is* the agent interface: any agent
+with shell access can drive Grove through ordinary commands with stable
+machine-readable output.
 
-The server is started automatically via `.mcp.json` — no manual setup needed.
+```bash
+gw context --format json     # where am I, what state is everything in
+gw list --format json
+gw status --format json
+gw create feat-x -r svc-auth,api-gateway -b feat/x --format json
+```
+
+See [Agent CLI contract](agent-cli.md) for the response envelope, error codes, and
+exit codes.
+
+### Migrating from the old MCP server
+
+Workspaces created by Grove ≤ 1.1.11 have a `grove` entry in their `.mcp.json`
+pointing at the removed `gw mcp-serve`. Clean it up with:
+
+```bash
+gw doctor         # reports stale entries
+gw doctor --fix   # removes only the grove entry, keeping other servers
+```
+
+The `announce` / `get_announcements` cross-workspace coordination tools were
+removed with the server and have no CLI replacement.

@@ -124,21 +124,11 @@ else
     fail "expected branch feat/e2e, got ${auth_branch}"
 fi
 
-# Verify .mcp.json was written in workspace root AND worktree dirs
-if [ -f "${WS_DIR}/.mcp.json" ]; then
-    if jq -e '.mcpServers.grove' "${WS_DIR}/.mcp.json" > /dev/null 2>&1; then
-        pass ".mcp.json has grove server entry (workspace root)"
-    else
-        fail ".mcp.json missing grove entry"
-    fi
+# Verify no .mcp.json is generated (Grove no longer ships an MCP server)
+if [ ! -f "${WS_DIR}/.mcp.json" ] && [ ! -f "${WS_DIR}/svc-auth/.mcp.json" ]; then
+    pass "create writes no .mcp.json"
 else
-    fail ".mcp.json not created in workspace root"
-fi
-
-if [ ! -f "${WS_DIR}/svc-auth/.mcp.json" ]; then
-    pass ".mcp.json not written into repo worktrees (workspace root only)"
-else
-    fail ".mcp.json should not be written inside a repo worktree"
+    fail ".mcp.json should not be created by gw create"
 fi
 
 # Verify .grove.toml setup hook ran
@@ -1001,78 +991,48 @@ fi
 gw delete run-ws --force 2>&1
 
 # ---------------------------------------------------------------------------
-# Test: MCP server (stdio JSON-RPC)
+# Test: legacy .mcp.json migration (gw doctor --fix)
 # ---------------------------------------------------------------------------
-section "MCP server"
+section "Legacy .mcp.json migration"
 
 gw create mcp-ws --branch feat/mcp --repos svc-auth 2>&1
+MCP_WS_DIR="${GROVE_HOME}/.grove/workspaces/mcp-ws"
 
-# Inline MCP smoke test (no Python dependency needed)
-MCP_ERRORS=0
-
-# Helper to send JSON-RPC and read response
-mcp_test() {
-    local input="$1"
-    local expected_id="$2"
-
-    # Send all messages and capture output
-    echo "$input" | timeout_cmd 10 gw mcp-serve --workspace mcp-ws 2>/dev/null || true
+# Simulate a workspace created by an older Grove: a grove entry pointing at the
+# removed `gw mcp-serve`, alongside an unrelated server that must survive.
+cat > "${MCP_WS_DIR}/.mcp.json" <<'LEGACY'
+{
+  "mcpServers": {
+    "grove": {"command": "gw", "args": ["mcp-serve", "--workspace", "mcp-ws"]},
+    "keeper": {"command": "keep-me", "args": []}
+  }
 }
+LEGACY
 
-# Test initialize + tools/list + announce + get_announcements + list_workspaces
-MCP_INPUT=$(cat <<'JSONRPC'
-{"jsonrpc":"2.0","method":"initialize","id":1,"params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"e2e","version":"0.1"}}}
-{"jsonrpc":"2.0","method":"notifications/initialized"}
-{"jsonrpc":"2.0","method":"ping","id":99}
-{"jsonrpc":"2.0","method":"tools/list","id":2}
-{"jsonrpc":"2.0","method":"tools/call","id":3,"params":{"name":"announce","arguments":{"repo_url":"git@github.com:org/repo.git","category":"info","message":"e2e test"}}}
-{"jsonrpc":"2.0","method":"tools/call","id":4,"params":{"name":"get_announcements","arguments":{"repo_url":"git@github.com:org/repo.git"}}}
-{"jsonrpc":"2.0","method":"tools/call","id":5,"params":{"name":"list_workspaces","arguments":{}}}
-JSONRPC
-)
-
-MCP_OUT=$(echo "${MCP_INPUT}" | timeout_cmd 10 "${GW_BIN}" mcp-serve --workspace mcp-ws 2>/dev/null || true)
-
-# Check initialize response
-if echo "${MCP_OUT}" | grep -q '"protocolVersion"'; then
-    pass "MCP initialize"
+if gw doctor 2>&1 | grep -q "mcp.json"; then
+    pass "doctor reports stale .mcp.json grove entry"
 else
-    fail "MCP initialize failed"
+    fail "doctor did not report stale .mcp.json"
 fi
 
-# Check ping response (id: 99)
-if echo "${MCP_OUT}" | grep -q '"id":99'; then
-    pass "MCP ping"
+gw doctor --fix > /dev/null 2>&1 || true
+
+if jq -e '.mcpServers.grove' "${MCP_WS_DIR}/.mcp.json" > /dev/null 2>&1; then
+    fail "doctor --fix should remove the grove entry"
 else
-    fail "MCP ping failed"
+    pass "doctor --fix removes the grove entry"
 fi
 
-# Check tools/list has all 3 tools
-if echo "${MCP_OUT}" | grep -q '"announce"' && echo "${MCP_OUT}" | grep -q '"get_announcements"' && echo "${MCP_OUT}" | grep -q '"list_workspaces"'; then
-    pass "MCP tools/list returns all 3 tools"
+if jq -e '.mcpServers.keeper' "${MCP_WS_DIR}/.mcp.json" > /dev/null 2>&1; then
+    pass "doctor --fix preserves other MCP servers"
 else
-    fail "MCP tools/list missing tools"
+    fail "doctor --fix should preserve unrelated MCP servers"
 fi
 
-# Check announce returned "published"
-if echo "${MCP_OUT}" | grep -q 'published'; then
-    pass "MCP announce tool works"
+if gw mcp-serve --workspace mcp-ws > /dev/null 2>&1; then
+    fail "gw mcp-serve should no longer exist"
 else
-    fail "MCP announce failed"
-fi
-
-# Check get_announcements returns empty (same workspace excluded)
-if echo "${MCP_OUT}" | grep -q '\[\]'; then
-    pass "MCP get_announcements excludes own workspace"
-else
-    fail "MCP get_announcements should return empty"
-fi
-
-# Check list_workspaces returns workspace name
-if echo "${MCP_OUT}" | grep -q 'mcp-ws'; then
-    pass "MCP list_workspaces returns current workspace"
-else
-    fail "MCP list_workspaces missing workspace"
+    pass "gw mcp-serve is gone"
 fi
 
 gw delete mcp-ws --force 2>&1

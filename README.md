@@ -98,13 +98,14 @@ Full documentation lives in the [OpenWiki](openwiki/quickstart.md) — start wit
 - [Architecture](openwiki/architecture.md) — layered design, data model, concurrency, and key decisions
 - [Workflows](openwiki/workflows.md) — how each command maps to code (create, sync, run, delete, presets…)
 - [Operations](openwiki/operations.md) — configuration, hooks, state, troubleshooting, and release process
-- [Integrations](openwiki/integrations.md) — plugins, the MCP server, and workspace source provenance
+- [Integrations](openwiki/integrations.md) — plugins, agent usage, and workspace source provenance
 
 ### Focused topic guides
 
 - [Hooks](docs/hooks.md) — global hooks (terminal integration) & per-repo hooks (`.grove.toml`, `gw run`)
 - [Plugins](docs/plugins.md) — extend gw with external commands
-- [AI coding tools](docs/ai-tools.md) — Claude Code workflows, MCP server
+- [AI coding tools](docs/ai-tools.md) — Claude Code workflows, agent usage
+- [Agent CLI contract](docs/agent-cli.md) — machine-readable output, error codes, exit codes
 
 ## Requirements
 

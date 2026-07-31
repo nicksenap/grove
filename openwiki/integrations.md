@@ -197,123 +197,30 @@ gw archive list                    # List archived workspaces
 
 ---
 
-## Claude Code Integration (`gw mcp-serve`)
+## Agent Integration (the CLI itself)
 
-Grove exposes a **Model Context Protocol (MCP)** server on stdin/stdout that allows Claude Code to query and create workspaces directly.
-
-### What is MCP?
-
-MCP is a protocol for AI agents to interact with external tools via JSON-RPC. Claude Code uses MCP servers to access Grove state.
-
-### Start the MCP Server
+Grove has no built-in MCP server. Coding agents with shell access drive Grove
+through `gw` directly, using machine-readable output:
 
 ```bash
-gw mcp-serve
+gw context --format json    # workspace, repos, git state, safe next actions
+gw list --format json
+gw status --format json
+gw create feat-x -r svc-a,svc-b -b feat/x --format json
+gw delete feat-x --force --format json
 ```
 
-Listens on stdin/stdout (usually started by Claude Code automatically via `.mcp.json`).
+Every machine-mode response uses one versioned envelope with stable error codes
+and semantic exit codes — see [Agent CLI contract](../docs/agent-cli.md).
 
-### Available Methods
+### Migrating off the removed MCP server
 
-#### `list_workspaces`
+Grove ≤ 1.1.11 ran `gw mcp-serve` and wrote a `grove` entry into each
+workspace's `.mcp.json`. Both are gone. `gw doctor` reports leftover entries and
+`gw doctor --fix` removes only Grove's entry, preserving other servers.
 
-List all workspaces.
-
-```json
-{
-  "jsonrpc": "2.0",
-  "method": "list_workspaces",
-  "id": 1
-}
-```
-
-Response:
-
-```json
-{
-  "jsonrpc": "2.0",
-  "result": [
-    {
-      "name": "feat-login",
-      "branch": "feat/login",
-      "path": "~/.grove/workspaces/feat-login",
-      "created_at": "2024-01-15T10:30:45.123456",
-      "repos": ["svc-api", "svc-auth"]
-    }
-  ],
-  "id": 1
-}
-```
-
-#### `get_workspace`
-
-Get details of a specific workspace.
-
-```json
-{
-  "jsonrpc": "2.0",
-  "method": "get_workspace",
-  "params": { "name": "feat-login" },
-  "id": 2
-}
-```
-
-#### `create_workspace`
-
-Create a new workspace from Claude Code.
-
-```json
-{
-  "jsonrpc": "2.0",
-  "method": "create_workspace",
-  "params": {
-    "name": "claude-task",
-    "branch": "feat/claude-task",
-    "repos": ["svc-api", "svc-auth"],
-    "source": {
-      "provider": "claude",
-      "url": "claude:///task-id",
-      "title": "Fix auth bug"
-    }
-  },
-  "id": 3
-}
-```
-
-#### `get_workspace_status`
-
-Get git status across all repos in workspace.
-
-```json
-{
-  "jsonrpc": "2.0",
-  "method": "get_workspace_status",
-  "params": { "name": "feat-login" },
-  "id": 4
-}
-```
-
-### Implementation Details
-
-- **Location**: `internal/mcp/mcp.go`
-- **Protocol**: JSON-RPC 2.0 over stdin/stdout
-- **Thread-safe**: Synchronizes access to state.json
-- **Error handling**: Returns JSON-RPC error codes for invalid operations
-
-### Custom Claude Code Setup
-
-If Claude Code is not auto-configured with Grove's MCP server, add to `.mcp.json` in your project root:
-
-```json
-{
-  "mcpServers": {
-    "grove": {
-      "command": "gw",
-      "args": ["mcp-serve"]
-    }
-  }
-}
-```
+The `announce` / `get_announcements` cross-workspace coordination tools and their
+SQLite database were removed with no replacement.
 
 ---
 
@@ -332,7 +239,7 @@ gw create my-feature -b feat/login -r svc-a,svc-b \
 This metadata is:
 - Stored in workspace state (`.source` field)
 - Passed to hooks via placeholders: `{source_url}`, `{source_ref}`, `{source_title}`
-- Available to plugins (MCP, claude memory, dashboard)
+- Available to plugins (claude memory, dashboard)
 
 **Use cases**:
 - Claude Code agents → Trace back to original PR or task
@@ -517,26 +424,6 @@ gw --verbose create my-feature  # Show hook firing
 Verify hook is in `~/.grove/config.toml`:
 ```bash
 grep "post_create" ~/.grove/config.toml
-```
-
-### MCP Server Not Starting
-
-Ensure gw is on PATH:
-```bash
-which gw
-gw mcp-serve  # Test manually
-```
-
-Check Claude Code config (`.mcp.json`):
-```json
-{
-  "mcpServers": {
-    "grove": {
-      "command": "gw",
-      "args": ["mcp-serve"]
-    }
-  }
-}
 ```
 
 ### Memory Sync Issues

@@ -155,9 +155,6 @@ func (s *Service) CreateWithOpts(name string, opts CreateOpts) error {
 	// Record stats
 	s.Stats.RecordCreated(ws)
 
-	// Write .mcp.json
-	writeMCPConfig(ws)
-
 	logging.Info("workspace %q created at %s", name, wsPath)
 	console.Successf("Workspace %s created at %s", name, wsPath)
 
@@ -271,81 +268,6 @@ func (s *Service) runSetupHooks(ws models.Workspace) {
 	wg.Wait()
 }
 
-// mcpServerEntry returns the grove MCP server config.
-func mcpServerEntry(wsName string) models.MCPServer {
-	return models.MCPServer{
-		Command: "gw",
-		Args:    []string{"mcp-serve", "--workspace", wsName},
-	}
-}
-
-// mergeMCPConfig reads existing .mcp.json, adds/updates the grove entry, writes back.
-func mergeMCPConfig(path string, wsName string) {
-	var existing map[string]any
-
-	data, err := os.ReadFile(path)
-	if err == nil {
-		json.Unmarshal(data, &existing)
-	}
-	if existing == nil {
-		existing = make(map[string]any)
-	}
-
-	servers, ok := existing["mcpServers"].(map[string]any)
-	if !ok {
-		servers = make(map[string]any)
-	}
-	servers["grove"] = mcpServerEntry(wsName)
-	existing["mcpServers"] = servers
-
-	out, err := json.MarshalIndent(existing, "", "  ")
-	if err != nil {
-		return
-	}
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, out, 0o644); err != nil {
-		return
-	}
-	os.Rename(tmp, path)
-}
-
-func writeMCPConfig(ws models.Workspace) {
-	mergeMCPConfig(filepath.Join(ws.Path, ".mcp.json"), ws.Name)
-}
-
-// removeMCPConfig removes the grove entry from the workspace's .mcp.json.
-func removeMCPConfig(ws models.Workspace) {
-	path := filepath.Join(ws.Path, ".mcp.json")
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return
-	}
-	var existing map[string]any
-	if err := json.Unmarshal(data, &existing); err != nil {
-		return
-	}
-	servers, ok := existing["mcpServers"].(map[string]any)
-	if !ok {
-		return
-	}
-	delete(servers, "grove")
-	if len(servers) == 0 {
-		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-			logging.Warn("could not remove %s: %s", path, err)
-		}
-		return
-	}
-	existing["mcpServers"] = servers
-	out, err := json.MarshalIndent(existing, "", "  ")
-	if err != nil {
-		logging.Warn("could not marshal %s: %s", path, err)
-		return
-	}
-	if err := os.WriteFile(path, out, 0o644); err != nil {
-		logging.Warn("could not update %s: %s", path, err)
-	}
-}
-
 // Delete removes a workspace and its worktrees.
 func (s *Service) Delete(name string) error {
 	ws, err := s.State.GetWorkspace(name)
@@ -357,7 +279,6 @@ func (s *Service) Delete(name string) error {
 	}
 
 	logging.Info("deleting workspace %q", name)
-	removeMCPConfig(*ws)
 
 	// Parallel teardown+remove for all repos
 	succeeded := make([]bool, len(ws.Repos))
@@ -971,12 +892,35 @@ func (s *Service) Doctor(fix bool) ([]models.DoctorIssue, int, error) {
 			continue
 		}
 
+		f, iss = s.checkStaleMCPConfig(ws, fix)
+		fixed += f
+		issues = append(issues, iss...)
+
 		f, iss = s.checkWorkspaceRepos(&ws, fix)
 		fixed += f
 		issues = append(issues, iss...)
 	}
 
 	return issues, fixed, nil
+}
+
+// checkStaleMCPConfig flags the legacy `grove` entry in a workspace's
+// `.mcp.json`, left behind by Grove versions that shipped a built-in MCP
+// server. `--fix` removes just that entry.
+func (s *Service) checkStaleMCPConfig(ws models.Workspace, fix bool) (int, []models.DoctorIssue) {
+	if !StaleMCPEntry(ws.Path) {
+		return 0, nil
+	}
+	issue := models.DoctorIssue{
+		Workspace:       ws.Name,
+		Repo:            nil,
+		Issue:           "stale grove entry in .mcp.json (built-in MCP server was removed)",
+		SuggestedAction: "remove the grove entry from .mcp.json",
+	}
+	if fix && CleanStaleMCPEntry(ws.Path) {
+		return 1, []models.DoctorIssue{issue}
+	}
+	return 0, []models.DoctorIssue{issue}
 }
 
 func (s *Service) checkWorkspaceExists(ws models.Workspace, fix bool) (int, []models.DoctorIssue) {
