@@ -61,13 +61,14 @@ type WorkspaceContext struct {
 
 // RepoContext is one repo's live state. It embeds RepoStatus so `gw context` and
 // `gw status` report identical git state for the same repo — two commands
-// describing the same thing differently is how agents get confused.
+// describing the same thing differently is how agents get confused. That embedding
+// also carries BaseBranch, so context does not re-resolve what the status
+// collection already resolved.
 type RepoContext struct {
 	RepoStatus
 	SourceRepo string `json:"source_repo"`
 	Path       string `json:"path"`
 	Remote     string `json:"remote,omitempty"`
-	BaseBranch string `json:"base_branch,omitempty"`
 	Dirty      bool   `json:"dirty"`
 }
 
@@ -174,15 +175,11 @@ func (s *Service) repoContexts(repos []models.RepoWorktree) []RepoContext {
 		go func(idx int, repo models.RepoWorktree) {
 			defer wg.Done()
 			status := collectRepoStatus(repo)
-			// The same resolution sync uses, so the reported base branch is the
-			// one a rebase would actually target.
-			base, _ := gitops.ResolveBaseBranch(repo.SourceRepo)
 			out[idx] = RepoContext{
 				RepoStatus: status,
 				SourceRepo: repo.SourceRepo,
 				Path:       repo.WorktreePath,
 				Remote:     gitops.RemoteURL(repo.WorktreePath, "origin"),
-				BaseBranch: base,
 				Dirty:      !status.Clean(),
 			}
 		}(i, r)

@@ -71,6 +71,16 @@ func init() {
 	devNull, _ = os.Open(os.DevNull)
 }
 
+// Cost note: every exported function here shells out to git at least once, even
+// the ones that read like cheap accessors. ResolveBaseBranch is the most
+// expensive — up to three subprocesses (symbolic-ref, then probing origin/main and
+// origin/master) — and callers have repeatedly resolved the same value twice
+// without noticing. Prefer passing a resolved value down over re-asking for it.
+//
+// Memoization was measured and deliberately not added: the remaining repeat
+// resolutions are separated by a Fetch, which changes the answer and would have to
+// invalidate the cache anyway.
+
 // runGit executes a git command in the given directory.
 func runGit(dir string, args ...string) (string, error) {
 	cmd := exec.Command("git", args...)

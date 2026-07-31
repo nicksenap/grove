@@ -672,12 +672,16 @@ func (s *Service) Sync(wsName string) (*SyncResult, error) {
 // strings because "-" means "could not be determined" — a distinct outcome from
 // zero that agents need to see rather than have flattened into 0.
 type RepoStatus struct {
-	Repo   string         `json:"repo"`
-	Branch string         `json:"branch"`
-	Status string         `json:"status"`
-	Ahead  string         `json:"ahead"`
-	Behind string         `json:"behind"`
-	PR     *gitops.PRInfo `json:"pr,omitempty"`
+	Repo   string `json:"repo"`
+	Branch string `json:"branch"`
+	Status string `json:"status"`
+	Ahead  string `json:"ahead"`
+	Behind string `json:"behind"`
+	// BaseBranch is what Ahead/Behind were measured against. Without it those
+	// numbers are uninterpretable, and callers that need it would otherwise
+	// resolve it a second time.
+	BaseBranch string         `json:"base_branch,omitempty"`
+	PR         *gitops.PRInfo `json:"pr,omitempty"`
 }
 
 // Clean reports whether the worktree has no uncommitted changes.
@@ -743,6 +747,7 @@ func collectRepoStatus(r models.RepoWorktree) RepoStatus {
 	if upstream == "" {
 		upstream = "origin/main"
 	}
+	rs.BaseBranch = upstream
 	ahead, behind, err := gitops.CommitsAheadBehind(r.WorktreePath, upstream)
 	if err == nil {
 		rs.Ahead = fmt.Sprintf("%d", ahead)
