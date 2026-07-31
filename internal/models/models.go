@@ -1,7 +1,6 @@
 package models
 
 import (
-	"encoding/json"
 	"fmt"
 	"strconv"
 	"strings"
@@ -231,9 +230,4 @@ type DoctorIssue struct {
 	Repo            *string `json:"repo"`
 	Issue           string  `json:"issue"`
 	SuggestedAction string  `json:"suggested_action"`
-}
-
-// ToJSON marshals to indented JSON.
-func ToJSON(v interface{}) ([]byte, error) {
-	return json.MarshalIndent(v, "", "  ")
 }

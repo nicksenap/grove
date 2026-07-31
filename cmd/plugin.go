@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 
@@ -75,11 +74,7 @@ var pluginListCmd = &cobra.Command{
 		}
 
 		if pluginListJSON {
-			data, err := json.MarshalIndent(plugins, "", "  ")
-			if err != nil {
-				exitError(fmt.Sprintf("failed to marshal JSON: %s", err))
-			}
-			fmt.Println(string(data))
+			emitLegacyJSON(plugins)
 			return
 		}
 

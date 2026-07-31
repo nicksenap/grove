@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
@@ -104,11 +103,7 @@ var presetListCmd = &cobra.Command{
 		}
 
 		if presetListJSON {
-			data, err := json.MarshalIndent(cfg.Presets, "", "  ")
-			if err != nil {
-				exitError(fmt.Sprintf("failed to marshal JSON: %s", err))
-			}
-			fmt.Println(string(data))
+			emitLegacyJSON(cfg.Presets)
 			return
 		}
 
@@ -138,15 +133,7 @@ var presetShowCmd = &cobra.Command{
 		}
 
 		if presetShowJSON {
-			out := map[string]any{
-				"name":  args[0],
-				"repos": preset.Repos,
-			}
-			data, err := json.MarshalIndent(out, "", "  ")
-			if err != nil {
-				exitError(fmt.Sprintf("failed to marshal JSON: %s", err))
-			}
-			fmt.Println(string(data))
+			emitLegacyJSON(map[string]any{"name": args[0], "repos": preset.Repos})
 			return
 		}
 

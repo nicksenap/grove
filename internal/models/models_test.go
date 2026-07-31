@@ -256,20 +256,3 @@ func TestDoctorIssueJSON(t *testing.T) {
 		t.Errorf("expected nil repo, got %v", issue3.Repo)
 	}
 }
-
-func TestToJSON(t *testing.T) {
-	ws := Workspace{Name: "test", Path: "/tmp/test", Branch: "main"}
-	data, err := ToJSON(ws)
-	if err != nil {
-		t.Fatalf("ToJSON: %v", err)
-	}
-	if len(data) == 0 {
-		t.Error("expected non-empty JSON output")
-	}
-
-	// Verify it's valid JSON
-	var m map[string]interface{}
-	if err := json.Unmarshal(data, &m); err != nil {
-		t.Errorf("ToJSON output is not valid JSON: %v", err)
-	}
-}
