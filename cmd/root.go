@@ -64,6 +64,7 @@ func init() {
 	// Register all subcommands
 	rootCmd.AddCommand(
 		initCmd,
+		contextCmd,
 		createCmd,
 		listCmd,
 		wsCmd,
