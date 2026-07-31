@@ -1,8 +1,8 @@
 ---
 type: "Reference"
 title: "Workflows"
-description: "Main Grove user workflows, from repository discovery and workspace creation through navigation, synchronization, execution, cleanup, and recovery."
-tags: [grove, workflows, workspaces, git, cli]
+description: "Operational Grove workflows for setup, workspace lifecycle, multi-repo operations, agent context, coordination announcements, and reviewable plan/apply mutations."
+tags: ["workflows", "workspaces", "agents", "coordination"]
 ---
 
 # Workflows
@@ -196,8 +196,39 @@ gw remove-repo feat-login -r svc-a
 ### Key Decisions When Modifying
 
 - **Concurrency**: `Status()` and `Sync()` use `sync.WaitGroup` to parallelize git operations; each repo is independent
-- **Error handling**: Multi-repo operations continue even if one repo fails; errors are accumulated and reported
+- **Error handling**: Multi-repo operations continue even if one repo fails; errors are accumulated and reported in structured per-repo results
 - **Destructive operations**: `RemoveRepo()` deletes the worktree and branch; consider making this optional
+
+---
+
+## Workflow: Agent Orientation and Coordination
+
+Agents should begin with the read-only context call, which identifies whether Grove is initialized, the containing workspace, live branch and dirty/ahead/behind state for each repo, configured repo directories and presets, recent announcements, and safe next actions:
+
+```bash
+gw context --format json
+```
+
+Agents working in parallel can publish advisory, repo-keyed notes without sharing a database:
+
+```bash
+gw announce -c breaking_change -m "auth tokens are now opaque strings" --format json
+gw announcements --format json
+```
+
+Announcements are stored as JSON files under `~/.grove/announcements/`, keyed by normalized remotes, excluded from the publishing workspace, visible for 30 days via the dedicated read, and limited to the recent seven-day/20-note context view. The coordination implementation is `internal/announce/`; unreadable announcement storage degrades to no notes rather than failing the main command. See [Integrations](integrations.md) for the CLI-only agent boundary and MCP migration.
+
+## Workflow: Reviewable Mutations
+
+Use `gw plan` when an agent or reviewer needs to inspect a mutation before execution:
+
+```bash
+gw plan create feat-x -r svc-auth,api-gateway -b feat/x --format json > plan.json
+gw plan delete feat-x --format json
+gw apply plan.json --format json
+```
+
+Plans are independently versioned (`schema_version: 1`), enumerate every repo/path/branch action, identify destructive changes, and use the same validation path as execution. A fingerprint captures relevant workspace and repository state, including dirtiness. `gw apply` recomputes it and refuses with `STATE_CHANGED` (exit 4) if the state changed after review. Applying a saved failure envelope is rejected; plans can also be passed through stdin with `gw apply -`.
 
 ---
 

@@ -1,8 +1,8 @@
 ---
 type: "Reference"
 title: "Operations"
-description: "Operational guidance for installing, configuring, maintaining, troubleshooting, and validating Grove workspaces and its local runtime state."
-tags: [grove, operations, configuration, troubleshooting, maintenance]
+description: "Grove installation, configuration, state maintenance, troubleshooting, and doctor-based migration checks."
+tags: ["operations", "configuration", "troubleshooting"]
 ---
 
 # Operations
@@ -438,7 +438,13 @@ Checks for:
 - Worktree conflicts (path collisions)
 - Config issues (missing repo_dirs, invalid presets)
 
-Suggests fixes for each issue.
+Suggests fixes for each issue. After the built-in MCP server was removed, `gw doctor` also reports stale Grove entries in workspace `.mcp.json` files. Use the targeted migration repair to remove only Grove's entry while preserving other MCP servers:
+
+```bash
+gw doctor --fix
+```
+
+For agent and CI callers, use `--format json`; the result identifies findings without mixing diagnostics into stdout.
 
 ### Common Issues
 

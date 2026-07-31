@@ -4,8 +4,8 @@ okf_version: "0.1"
 
 # Files
 
-- [Architecture](architecture.md) - Architecture of Grove's CLI, workspace orchestration, Git operation wrappers, persisted state, repository discovery, lifecycle hooks, plugins, and MCP integration.
-- [Integrations](integrations.md) - Grove integration points, including external plugins, lifecycle hooks, Claude Code support, Zellij workflows, and the MCP server.
-- [Operations](operations.md) - Operational guidance for installing, configuring, maintaining, troubleshooting, and validating Grove workspaces and its local runtime state.
-- [Grove Documentation](quickstart.md) - Entry point for Grove, a CLI that creates and manages multi-repository Git worktree workspaces, with setup commands, configuration, architecture pointers, workflows, operations, integrations, and testing guidance.
-- [Workflows](workflows.md) - Main Grove user workflows, from repository discovery and workspace creation through navigation, synchronization, execution, cleanup, and recovery.
+- [Architecture](architecture.md) - Grove's layered CLI and workspace orchestration architecture, including the machine-readable agent boundary, structured multi-repo results, and reviewable plan/apply mutations.
+- [Integrations](integrations.md) - Grove integration points, including external plugins and the CLI-only agent interface after built-in MCP removal.
+- [Operations](operations.md) - Grove installation, configuration, state maintenance, troubleshooting, and doctor-based migration checks.
+- [Grove Documentation](quickstart.md) - Entry point for Grove, a Git worktree workspace orchestrator, including setup, multi-repository workflows, operations, integrations, and the CLI contract for agents.
+- [Workflows](workflows.md) - Operational Grove workflows for setup, workspace lifecycle, multi-repo operations, agent context, coordination announcements, and reviewable plan/apply mutations.

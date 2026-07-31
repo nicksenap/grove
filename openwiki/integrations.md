@@ -1,13 +1,13 @@
 ---
 type: "Reference"
 title: "Integrations"
-description: "Grove integration points, including external plugins, lifecycle hooks, Claude Code support, Zellij workflows, and the MCP server."
-tags: [grove, integrations, plugins, hooks, mcp]
+description: "Grove integration points, including external plugins and the CLI-only agent interface after built-in MCP removal."
+tags: ["integrations", "agents", "plugins", "mcp-migration"]
 ---
 
 # Integrations
 
-This page covers external integrations: plugins, AI tools, and the MCP server.
+This page covers external integrations: lifecycle plugins and the CLI-only agent interface. Grove no longer ships a built-in MCP server; agents with shell access use the machine-readable `gw` contract described in [Agent CLI contract](../docs/agent-cli.md).
 
 ## Plugin Ecosystem Overview
 

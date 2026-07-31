@@ -1,8 +1,8 @@
 ---
 type: "Reference"
 title: "Grove Documentation"
-description: "Entry point for Grove, a CLI that creates and manages multi-repository Git worktree workspaces, with setup commands, configuration, architecture pointers, workflows, operations, integrations, and testing guidance."
-tags: [grove, cli, git, worktrees, quickstart]
+description: "Entry point for Grove, a Git worktree workspace orchestrator, including setup, multi-repository workflows, operations, integrations, and the CLI contract for agents."
+tags: ["grove", "git-worktree", "cli", "agents"]
 ---
 
 # Grove Documentation
@@ -127,7 +127,12 @@ setup = ["npm install", "npm run build"]  # run after worktree creation
 | `gw delete <name>` | Clean up workspace (worktrees + branches) |
 | `gw plugin install <repo>` | Install a plugin from GitHub |
 | `gw wizard` | Interactive setup of plugins and hooks |
-| `gw doctor` | Diagnose workspace issues |
+| `gw doctor` | Diagnose workspace issues; `--fix` removes stale Grove MCP entries |
+| `gw context --format json` | One-call agent orientation: current workspace, repo state, announcements, and next actions |
+| `gw announce` / `gw announcements` | Publish or read advisory notes shared across workspaces |
+| `gw plan` / `gw apply` | Review and execute state-pinned mutations |
+
+For automation, add the global `--format json` (or `-o json`) flag. It emits one versioned envelope on stdout with stable error codes and exit classes; see [Integrations](integrations.md) and the authoritative [Agent CLI contract](../docs/agent-cli.md).
 
 ## Architecture Overview
 
@@ -138,15 +143,16 @@ Grove is organized into clear layers:
 - **Core logic**: `internal/workspace/` orchestrates git worktrees and manages workspace state
 - **Configuration**: `internal/config/` loads global config; `internal/gitops/` reads per-repo `.grove.toml`
 - **Data**: `internal/state/` persists workspace list to `~/.grove/state.json`
-- **Integrations**: `internal/lifecycle/` runs hooks; `internal/plugin/` manages plugins; agents drive Grove through the CLI itself
+- **Integrations**: `internal/lifecycle/` runs hooks; `internal/plugin/` manages plugins; `internal/machine/` defines the versioned JSON agent contract; `internal/announce/` stores cross-workspace notes; agents drive Grove through the CLI itself (the built-in MCP server was removed)
 
 All repos are discovered once at command start via `internal/discover/`, then matched to the requested repos by name. Multi-repo operations use goroutines for concurrent execution.
 
 ## Next Steps
 
-- **Understand the design**: Read [architecture.md](architecture.md)
-- **Learn workflows**: Read [workflows.md](workflows.md)
-- **Configure and integrate**: Read [operations.md](operations.md) and [integrations.md](integrations.md)
+- **Understand the design**: Read [architecture.md](architecture.md), including the CLI-only agent boundary and structured per-repo results.
+- **Learn workflows**: Read [workflows.md](workflows.md) for context, announcements, and plan/apply.
+- **Configure and integrate**: Read [operations.md](operations.md) and [integrations.md](integrations.md), including MCP migration.
+- **Automate safely**: Read the [Agent CLI contract](../docs/agent-cli.md) for versioned JSON envelopes, error/exit codes, announcements, and state-pinned plans.
 
 ## Requirements
 

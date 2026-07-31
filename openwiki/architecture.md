@@ -1,8 +1,8 @@
 ---
 type: "Reference"
 title: "Architecture"
-description: "Architecture of Grove's CLI, workspace orchestration, Git operation wrappers, persisted state, repository discovery, lifecycle hooks, plugins, and MCP integration."
-tags: [grove, architecture, cli, workspaces, git]
+description: "Grove's layered CLI and workspace orchestration architecture, including the machine-readable agent boundary, structured multi-repo results, and reviewable plan/apply mutations."
+tags: ["architecture", "cli", "workspaces", "agents"]
 ---
 
 # Architecture
@@ -48,7 +48,20 @@ Cobra command handlers that:
 - `cmd/sync_cmd.go` — Rebase all repos
 - `cmd/add_repo.go`, `cmd/remove_repo.go` — Modify existing workspace
 - `cmd/run.go` — Launch interactive TUI for running per-repo processes
+- `cmd/context.go` — Produce a read-only workspace/repository orientation view
+- `cmd/announce.go` — Publish and list cross-workspace coordination notes
+- `cmd/plan.go` — Produce and apply reviewable mutation plans
 - `cmd/preset.go` — Manage presets (named repo groups)
+
+Agent-facing commands use the CLI itself as the integration boundary. `internal/machine/` emits a versioned JSON envelope for `--format json`, while `internal/workspace/results.go` preserves per-repository outcomes for concurrent operations instead of collapsing partial success into one error. `internal/workspace/plan.go` adds a separate versioned plan document and fingerprints the relevant state so `gw apply` can reject stale plans with `STATE_CHANGED`.
+
+### Agent CLI boundary (`internal/machine/`)
+
+The CLI is Grove's only first-party agent interface; the built-in MCP server was removed. A global `--format json`/`-o json` flag switches commands from human text to one stdout response envelope. The envelope has `ok`, `schemaVersion` (currently `1`), command-specific `result`, structured `error`, optional `warnings`/`fix`, and `next_actions`; progress and diagnostics go to stderr. The [Agent CLI contract](../docs/agent-cli.md) is authoritative for stable error codes and exit classes, while [workflows](workflows.md) explains how agents use context, announcements, and plan/apply.
+
+### Structured multi-repo results (`internal/workspace/results.go`)
+
+Concurrent mutations return a result containing one `RepoResult` per repository rather than reducing partial success to a single boolean. Outcomes include `created`, `added`, `already_present`, `removed`, `not_found`, `rebased`, `up_to_date`, `skipped`, `exited`, and `failed`; run results also carry each repo's `exit_code`. This is part of the machine-mode contract and lets agents decide what to retry or repair.
 
 ### 3. **Core Layer** (`internal/workspace/`)
 **`workspace.Service`** is the orchestrator:
@@ -182,6 +195,27 @@ Structured debug logging:
 - `Setup(verbose)` — Initialize logging level
 - `Info()`, `Debug()`, `Error()` — Log at appropriate levels
 - Disabled by default; enabled with `--verbose` flag
+
+## Agent request flow
+
+The agent-facing path keeps machine output separate from human interaction and validates review artifacts before mutation:
+
+```mermaid
+sequenceDiagram
+    participant Agent
+    participant CLI as cmd layer
+    participant Machine as internal machine
+    participant Service as workspace Service
+    participant State as local state
+    Agent->>CLI: gw plan or gw apply --format json
+    CLI->>Machine: select JSON envelope
+    CLI->>Service: validate or execute workspace operation
+    Service->>State: read workspace and repository state
+    Service-->>CLI: result or STATE_CHANGED
+    CLI-->>Agent: one versioned JSON envelope
+```
+
+Caption: machine mode wraps workspace validation and mutation while preserving a single parseable stdout response.
 
 ## Data Flow Example: `gw create my-feature -b feat/login -r svc-a,svc-b`
 
