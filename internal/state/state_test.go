@@ -1,9 +1,13 @@
 package state
 
 import (
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/nicksenap/grove/internal/models"
 )
@@ -279,5 +283,126 @@ func TestAtomicWrite(t *testing.T) {
 	tmpPath := s.Path + ".tmp"
 	if _, err := os.Stat(tmpPath); !os.IsNotExist(err) {
 		t.Error("temp file should be cleaned up")
+	}
+}
+
+func TestWithLockHelperProcess(t *testing.T) {
+	if os.Getenv("GROVE_LOCK_HELPER") != "1" {
+		return
+	}
+
+	store := &Store{Path: os.Getenv("GROVE_LOCK_STATE")}
+	err := store.WithLock(func() error {
+		if err := os.WriteFile(os.Getenv("GROVE_LOCK_MARKER"), []byte("locked"), 0o600); err != nil {
+			return err
+		}
+		if os.Getenv("GROVE_LOCK_HOLD") == "1" {
+			time.Sleep(300 * time.Millisecond)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestWithLockSerializesProcesses(t *testing.T) {
+	store := testStore(t)
+	firstMarker := filepath.Join(t.TempDir(), "first.locked")
+	secondMarker := filepath.Join(t.TempDir(), "second.locked")
+
+	first := exec.Command(os.Args[0], "-test.run=^TestWithLockHelperProcess$")
+	first.Env = append(os.Environ(),
+		"GROVE_LOCK_HELPER=1",
+		"GROVE_LOCK_HOLD=1",
+		"GROVE_LOCK_STATE="+store.Path,
+		"GROVE_LOCK_MARKER="+firstMarker,
+	)
+	if err := first.Start(); err != nil {
+		t.Fatalf("start first process: %v", err)
+	}
+	t.Cleanup(func() { _ = first.Process.Kill() })
+	waitForFile(t, firstMarker)
+
+	second := exec.Command(os.Args[0], "-test.run=^TestWithLockHelperProcess$")
+	second.Env = append(os.Environ(),
+		"GROVE_LOCK_HELPER=1",
+		"GROVE_LOCK_STATE="+store.Path,
+		"GROVE_LOCK_MARKER="+secondMarker,
+	)
+	if err := second.Start(); err != nil {
+		t.Fatalf("start second process: %v", err)
+	}
+	t.Cleanup(func() { _ = second.Process.Kill() })
+
+	time.Sleep(75 * time.Millisecond)
+	if _, err := os.Stat(secondMarker); !os.IsNotExist(err) {
+		t.Fatal("second process acquired the lock while the first held it")
+	}
+	if err := first.Wait(); err != nil {
+		t.Fatalf("first process: %v", err)
+	}
+	if err := second.Wait(); err != nil {
+		t.Fatalf("second process: %v", err)
+	}
+	if _, err := os.Stat(secondMarker); err != nil {
+		t.Fatalf("second process never acquired the released lock: %v", err)
+	}
+}
+
+func waitForFile(t *testing.T, path string) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if _, err := os.Stat(path); err == nil {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for %s", path)
+}
+
+func TestWithLockPreventsLostUpdates(t *testing.T) {
+	s := testStore(t)
+	const workers = 12
+
+	start := make(chan struct{})
+	errs := make(chan error, workers)
+	var wg sync.WaitGroup
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			<-start
+			store := &Store{Path: s.Path}
+			errs <- store.WithLock(func() error {
+				workspaces, err := store.Load()
+				if err != nil {
+					return err
+				}
+				workspaces = append(workspaces, models.NewWorkspace(
+					fmt.Sprintf("ws-%d", i),
+					fmt.Sprintf("/tmp/ws-%d", i),
+					"main",
+				))
+				return store.Save(workspaces)
+			})
+		}(i)
+	}
+	close(start)
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatalf("locked update: %v", err)
+		}
+	}
+
+	workspaces, err := s.Load()
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if len(workspaces) != workers {
+		t.Fatalf("expected %d workspaces, got %d", workers, len(workspaces))
 	}
 }

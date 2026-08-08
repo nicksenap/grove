@@ -75,7 +75,7 @@ var removeRepoCmd = &cobra.Command{
 			}
 		}
 
-		if err := workspace.NewService().RemoveRepos(wsName, repoNames); err != nil {
+		if err := workspace.NewService().RemoveReposWithOptions(wsName, repoNames, workspace.RemoveOptions{Force: removeRepoForce}); err != nil {
 			exitError(err.Error())
 		}
 	},
@@ -83,7 +83,7 @@ var removeRepoCmd = &cobra.Command{
 
 func init() {
 	removeRepoCmd.Flags().StringVarP(&removeRepoRepos, "repos", "r", "", "Comma-separated repo names")
-	removeRepoCmd.Flags().BoolVarP(&removeRepoForce, "force", "f", false, "Skip confirmation")
+	removeRepoCmd.Flags().BoolVarP(&removeRepoForce, "force", "f", false, "Skip worktree safety checks and confirmation")
 	removeRepoCmd.RegisterFlagCompletionFunc("repos", completeRepoNames)
 	removeRepoCmd.ValidArgsFunction = completeWorkspaceNames
 }

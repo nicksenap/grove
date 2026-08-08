@@ -2,6 +2,7 @@ package workspace
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -68,25 +69,55 @@ func (s *Service) Create(name, branch string, repoNames []string, repoMap map[st
 // implementation behind Create, additionally supporting per-repo branch tracking
 // (BranchMode/TrackBranchRepo) and a persisted Source link.
 func (s *Service) CreateWithOpts(name string, opts CreateOpts) error {
+	var ws models.Workspace
+	if err := s.State.WithLock(func() error {
+		var err error
+		ws, err = s.createWithOptsLocked(name, opts)
+		return err
+	}); err != nil {
+		return err
+	}
+
+	// Setup commands are user-owned and may invoke gw, so run them after the
+	// workspace is committed and the cross-process mutation lock is released.
+	if hasSetupHooks(ws) {
+		console.Infof("running setup hooks...")
+	}
+	s.runSetupHooks(ws)
+
+	s.Stats.RecordCreated(ws)
+	logging.Info("workspace %q created at %s", name, ws.Path)
+	console.Successf("Workspace %s created at %s", name, ws.Path)
+
+	if cdFile := os.Getenv("GROVE_CD_FILE"); cdFile != "" {
+		os.WriteFile(cdFile, []byte(ws.Path), 0o644)
+	}
+
+	return nil
+}
+
+func (s *Service) createWithOptsLocked(name string, opts CreateOpts) (models.Workspace, error) {
 	branch := opts.Branch
 	repoNames := opts.Repos
 	repoMap := opts.RepoMap
 	cfg := opts.Cfg
 
-	// Check duplicate
 	existing, err := s.State.GetWorkspace(name)
 	if err != nil {
-		return err
+		return models.Workspace{}, err
 	}
 	if existing != nil {
-		return fmt.Errorf("workspace %s already exists", name)
+		return models.Workspace{}, fmt.Errorf("workspace %s already exists", name)
 	}
 
 	logging.Info("creating workspace %q (branch=%s, repos=%v)", name, branch, repoNames)
 
+	if err := os.MkdirAll(cfg.WorkspaceDir, 0o755); err != nil {
+		return models.Workspace{}, fmt.Errorf("creating workspace parent: %w", err)
+	}
 	wsPath := filepath.Join(cfg.WorkspaceDir, name)
-	if err := os.MkdirAll(wsPath, 0o755); err != nil {
-		return fmt.Errorf("creating workspace dir: %w", err)
+	if err := os.Mkdir(wsPath, 0o755); err != nil {
+		return models.Workspace{}, fmt.Errorf("creating workspace dir: %w", err)
 	}
 
 	ws := models.NewWorkspace(name, wsPath, branch)
@@ -97,8 +128,10 @@ func (s *Service) CreateWithOpts(name string, opts CreateOpts) error {
 	for i, repoName := range repoNames {
 		sourcePath, ok := repoMap[repoName]
 		if !ok {
-			os.RemoveAll(wsPath)
-			return fmt.Errorf("repo %s not found", repoName)
+			return models.Workspace{}, errors.Join(
+				fmt.Errorf("repo %s not found", repoName),
+				removeEmptyDir(wsPath),
+			)
 		}
 		sourcePaths[i] = sourcePath
 	}
@@ -118,94 +151,79 @@ func (s *Service) CreateWithOpts(name string, opts CreateOpts) error {
 	fetchWg.Wait()
 
 	// Phase 2: sequential worktree creation (for rollback safety)
-	var created []models.RepoWorktree
+	var created []provisionedRepo
 	for i, repoName := range repoNames {
 		console.Infof("[%d/%d] %s", i+1, len(repoNames), repoName)
-		// Resolve the per-repo mode. With no TrackBranchRepo set, opts.BranchMode
-		// applies to every repo; otherwise only the named repo uses it.
 		mode := opts.BranchMode
 		if opts.TrackBranchRepo != "" && repoName != opts.TrackBranchRepo {
 			mode = BranchModeCreate
 		}
-		rw, err := provisionWorktreeNoFetch(sourcePaths[i], repoName, wsPath, branch, mode)
+		provisioned, err := provisionWorktreeNoFetch(sourcePaths[i], repoName, wsPath, branch, mode)
 		if err != nil {
-			logging.Error("workspace creation failed for %q — rolled back", name)
-			rollback(created)
-			os.RemoveAll(wsPath)
-			return fmt.Errorf("provisioning %s: %w", repoName, err)
+			logging.Error("workspace creation failed for %q — rolling back", name)
+			return models.Workspace{}, errors.Join(
+				fmt.Errorf("provisioning %s: %w", repoName, err),
+				s.rollback(created),
+				removeEmptyDir(wsPath),
+			)
 		}
-		created = append(created, *rw)
+		created = append(created, *provisioned)
+		ws.Repos = append(ws.Repos, provisioned.worktree)
 	}
 
-	ws.Repos = created
-
-	// Run setup hooks (parallel)
-	if hasSetupHooks(ws) {
-		console.Infof("running setup hooks...")
-	}
-	s.runSetupHooks(ws)
-
-	// Save state
 	if err := s.State.AddWorkspace(ws); err != nil {
-		rollback(created)
-		os.RemoveAll(wsPath)
-		return err
+		return models.Workspace{}, errors.Join(err, s.rollback(created), removeEmptyDir(wsPath))
 	}
 
-	// Record stats
-	s.Stats.RecordCreated(ws)
-
-	// Write .mcp.json
 	writeMCPConfig(ws)
-
-	logging.Info("workspace %q created at %s", name, wsPath)
-	console.Successf("Workspace %s created at %s", name, wsPath)
-
-	// Write GROVE_CD_FILE if set
-	if cdFile := os.Getenv("GROVE_CD_FILE"); cdFile != "" {
-		os.WriteFile(cdFile, []byte(wsPath), 0o644)
-	}
-
-	return nil
+	return ws, nil
 }
 
-func provisionWorktree(sourcePath, repoName, wsPath, branch string) (*models.RepoWorktree, error) {
+type provisionedRepo struct {
+	worktree      models.RepoWorktree
+	branchCreated bool
+}
+
+func provisionWorktree(sourcePath, repoName, wsPath, branch string) (*provisionedRepo, error) {
 	_ = gitops.Fetch(sourcePath)
 	return provisionWorktreeNoFetch(sourcePath, repoName, wsPath, branch, BranchModeCreate)
 }
 
-func provisionWorktreeNoFetch(sourcePath, repoName, wsPath, branch string, mode BranchMode) (*models.RepoWorktree, error) {
+func provisionWorktreeNoFetch(sourcePath, repoName, wsPath, branch string, mode BranchMode) (*provisionedRepo, error) {
 	wtPath := filepath.Join(wsPath, repoName)
 
-	// Check if branch already has a worktree
 	hasWT, _ := gitops.WorktreeHasBranch(sourcePath, branch)
 	if hasWT {
 		return nil, fmt.Errorf("branch %s already has a worktree in %s", branch, repoName)
 	}
 
-	// Track mode: check out an existing remote branch (e.g. a PR head) rather
-	// than creating a new branch. Only meaningful when the branch does not
-	// already exist locally; otherwise fall through to the normal add below.
+	// Tracking creates the local branch as part of git worktree add.
 	if mode == BranchModeTrack && !gitops.BranchExists(sourcePath, branch) {
 		if gitops.RemoteBranchExists(sourcePath, branch) {
 			logging.Info("tracking existing remote branch %q in %s", branch, repoName)
 			if err := gitops.WorktreeAddTracking(sourcePath, wtPath, branch); err != nil {
-				return nil, fmt.Errorf("adding tracking worktree: %w", err)
+				var cleanupErr error
+				if gitops.BranchExists(sourcePath, branch) {
+					if err := gitops.DeleteBranch(sourcePath, branch, true); err != nil {
+						cleanupErr = fmt.Errorf("rolling back branch: %w", err)
+					}
+				}
+				return nil, errors.Join(fmt.Errorf("adding tracking worktree: %w", err), cleanupErr)
 			}
-			return &models.RepoWorktree{
-				RepoName:     repoName,
-				SourceRepo:   sourcePath,
-				WorktreePath: wtPath,
-				Branch:       branch,
+			return &provisionedRepo{
+				worktree: models.RepoWorktree{
+					RepoName:     repoName,
+					SourceRepo:   sourcePath,
+					WorktreePath: wtPath,
+					Branch:       branch,
+				},
+				branchCreated: true,
 			}, nil
 		}
-		// Remote branch missing (deleted, force-pushed, or a fork PR whose head
-		// lives on another remote). Fall back to create-mode with a warning
-		// rather than failing mid-creation.
 		console.Warningf("%s: remote branch %s not found — creating a new branch from base instead", repoName, branch)
 	}
 
-	// Create branch if needed
+	branchCreated := false
 	if !gitops.BranchExists(sourcePath, branch) {
 		base, err := gitops.ResolveBaseBranch(sourcePath)
 		if err != nil {
@@ -220,25 +238,52 @@ func provisionWorktreeNoFetch(sourcePath, repoName, wsPath, branch string, mode 
 				}
 			}
 		}
+		branchCreated = true
 	}
 
-	// Add worktree
 	if err := gitops.WorktreeAdd(sourcePath, wtPath, branch); err != nil {
-		return nil, fmt.Errorf("adding worktree: %w", err)
+		var cleanupErr error
+		if branchCreated {
+			if err := gitops.DeleteBranch(sourcePath, branch, true); err != nil {
+				cleanupErr = fmt.Errorf("rolling back branch: %w", err)
+			}
+		}
+		return nil, errors.Join(fmt.Errorf("adding worktree: %w", err), cleanupErr)
 	}
 
-	return &models.RepoWorktree{
-		RepoName:     repoName,
-		SourceRepo:   sourcePath,
-		WorktreePath: wtPath,
-		Branch:       branch,
+	return &provisionedRepo{
+		worktree: models.RepoWorktree{
+			RepoName:     repoName,
+			SourceRepo:   sourcePath,
+			WorktreePath: wtPath,
+			Branch:       branch,
+		},
+		branchCreated: branchCreated,
 	}, nil
 }
 
-func rollback(repos []models.RepoWorktree) {
-	for _, r := range repos {
-		gitops.WorktreeRemove(r.SourceRepo, r.WorktreePath)
+func (s *Service) rollback(repos []provisionedRepo) error {
+	var errs []error
+	for i := len(repos) - 1; i >= 0; i-- {
+		repo := repos[i]
+		if err := s.removeWorktree(repo.worktree.SourceRepo, repo.worktree.WorktreePath, true); err != nil {
+			errs = append(errs, fmt.Errorf("%s: rolling back worktree: %w", repo.worktree.RepoName, err))
+			continue
+		}
+		if repo.branchCreated {
+			if err := gitops.DeleteBranch(repo.worktree.SourceRepo, repo.worktree.Branch, true); err != nil {
+				errs = append(errs, fmt.Errorf("%s: rolling back branch: %w", repo.worktree.RepoName, err))
+			}
+		}
 	}
+	return errors.Join(errs...)
+}
+
+func removeEmptyDir(path string) error {
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("removing empty workspace root %s: %w", path, err)
+	}
+	return nil
 }
 
 func hasSetupHooks(ws models.Workspace) bool {
@@ -346,8 +391,18 @@ func removeMCPConfig(ws models.Workspace) {
 	}
 }
 
-// Delete removes a workspace and its worktrees.
+// RemoveOptions controls destructive worktree cleanup.
+type RemoveOptions struct {
+	Force bool
+}
+
+// Delete removes a workspace using safe defaults.
 func (s *Service) Delete(name string) error {
+	return s.DeleteWithOptions(name, RemoveOptions{})
+}
+
+// DeleteWithOptions removes a workspace and its worktrees.
+func (s *Service) DeleteWithOptions(name string, opts RemoveOptions) error {
 	ws, err := s.State.GetWorkspace(name)
 	if err != nil {
 		return err
@@ -356,69 +411,176 @@ func (s *Service) Delete(name string) error {
 		return fmt.Errorf("workspace %s not found", name)
 	}
 
-	logging.Info("deleting workspace %q", name)
-	removeMCPConfig(*ws)
-
-	// Parallel teardown+remove for all repos
-	succeeded := make([]bool, len(ws.Repos))
-	var wg sync.WaitGroup
-	for i, r := range ws.Repos {
-		wg.Add(1)
-		go func(idx int, repo models.RepoWorktree) {
-			defer wg.Done()
-			groveCfg, _ := gitops.ReadGroveConfig(repo.SourceRepo)
-			if groveCfg != nil && groveCfg.Teardown != "" {
-				s.RunCmdSilent(repo.WorktreePath, groveCfg.Teardown)
-			}
-
-			if err := gitops.WorktreeRemove(repo.SourceRepo, repo.WorktreePath); err != nil {
-				if err := os.RemoveAll(repo.WorktreePath); err != nil {
-					logging.Warn("failed to remove worktree for %s: %s", repo.RepoName, err)
-					console.Warningf("%s: failed to remove worktree: %s", repo.RepoName, err)
-					return
-				}
-			}
-
-			if err := gitops.DeleteBranch(repo.SourceRepo, repo.Branch, true); err != nil {
-				logging.Warn("failed to delete branch %q in %s: %s", repo.Branch, repo.RepoName, err)
-				console.Warningf("%s: failed to delete branch %s: %s", repo.RepoName, repo.Branch, err)
-			} else {
-				logging.Info("deleted branch %q in %s", repo.Branch, repo.RepoName)
-			}
-
-			succeeded[idx] = true
-		}(i, r)
-	}
-	wg.Wait()
-
-	failCount := 0
-	for _, ok := range succeeded {
-		if !ok {
-			failCount++
-		}
-	}
-	if failCount > 0 {
-		logging.Warn("workspace %q: %d worktree(s) failed to remove", name, failCount)
+	if err := preflightRemovals(ws.Repos, opts.Force); err != nil {
+		return err
 	}
 
-	os.RemoveAll(ws.Path)
+	// Teardown commands are user-owned and may invoke gw. Run them before the
+	// mutation lock, then reload and preflight state again while locked.
+	s.runTeardownHooks(ws.Repos)
 
-	s.Stats.RecordDeleted(*ws)
-
-	_, dirErr := os.Stat(ws.Path)
-	if failCount == 0 || os.IsNotExist(dirErr) {
-		if err := s.State.RemoveWorkspace(name); err != nil {
-			return err
-		}
+	var deleted *models.Workspace
+	if err := s.State.WithLock(func() error {
+		var err error
+		deleted, err = s.deleteLocked(name, opts)
+		return err
+	}); err != nil {
+		return err
 	}
 
+	s.Stats.RecordDeleted(*deleted)
 	logging.Info("workspace %q deleted", name)
 	console.Successf("Workspace %s deleted", name)
 	return nil
 }
 
+func (s *Service) deleteLocked(name string, opts RemoveOptions) (*models.Workspace, error) {
+	ws, err := s.State.GetWorkspace(name)
+	if err != nil {
+		return nil, err
+	}
+	if ws == nil {
+		return nil, fmt.Errorf("workspace %s not found", name)
+	}
+	if err := preflightRemovals(ws.Repos, opts.Force); err != nil {
+		return nil, err
+	}
+
+	logging.Info("deleting workspace %q", name)
+	original := *ws
+	remaining := make([]models.RepoWorktree, 0, len(ws.Repos))
+	var cleanupErrs []error
+
+	for _, repo := range ws.Repos {
+		if err := s.removeWorktree(repo.SourceRepo, repo.WorktreePath, opts.Force); err != nil {
+			remaining = append(remaining, repo)
+			cleanupErrs = append(cleanupErrs, fmt.Errorf("%s: removing worktree: %w", repo.RepoName, err))
+			continue
+		}
+		s.deleteBranch(repo, opts.Force)
+	}
+
+	if len(remaining) > 0 {
+		ws.Repos = remaining
+		if err := s.State.UpdateWorkspace(*ws); err != nil {
+			cleanupErrs = append(cleanupErrs, fmt.Errorf("updating state: %w", err))
+		}
+		return nil, errors.Join(cleanupErrs...)
+	}
+
+	removeMCPConfig(*ws)
+	if err := os.Remove(ws.Path); err != nil && !os.IsNotExist(err) {
+		ws.Repos = nil
+		cleanupErrs = append(cleanupErrs, fmt.Errorf("removing workspace root %s: %w", ws.Path, err))
+		if stateErr := s.State.UpdateWorkspace(*ws); stateErr != nil {
+			cleanupErrs = append(cleanupErrs, fmt.Errorf("updating state: %w", stateErr))
+		}
+		return nil, errors.Join(cleanupErrs...)
+	}
+
+	if err := s.State.RemoveWorkspace(name); err != nil {
+		return nil, err
+	}
+	return &original, nil
+}
+
+func (s *Service) runTeardownHooks(repos []models.RepoWorktree) {
+	for _, repo := range repos {
+		groveCfg, _ := gitops.ReadGroveConfig(repo.SourceRepo)
+		if groveCfg != nil && groveCfg.Teardown != "" {
+			s.RunCmdSilent(repo.WorktreePath, groveCfg.Teardown)
+		}
+	}
+}
+
+func (s *Service) removeWorktree(repo, path string, force bool) error {
+	if s.RemoveWorktree != nil {
+		return s.RemoveWorktree(repo, path, force)
+	}
+	return gitops.WorktreeRemove(repo, path, force)
+}
+
+func (s *Service) deleteBranch(repo models.RepoWorktree, force bool) {
+	if err := gitops.DeleteBranch(repo.SourceRepo, repo.Branch, force); err != nil {
+		logging.Warn("failed to delete branch %q in %s: %s", repo.Branch, repo.RepoName, err)
+		console.Warningf("%s: failed to delete branch %s: %s", repo.RepoName, repo.Branch, err)
+		return
+	}
+	logging.Info("deleted branch %q in %s", repo.Branch, repo.RepoName)
+}
+
+func preflightRemovals(repos []models.RepoWorktree, force bool) error {
+	if force {
+		return nil
+	}
+	var errs []error
+	for _, repo := range repos {
+		if err := preflightRemoval(repo); err != nil {
+			errs = append(errs, fmt.Errorf("%s: %w", repo.RepoName, err))
+		}
+	}
+	return errors.Join(errs...)
+}
+
+func preflightRemoval(repo models.RepoWorktree) error {
+	entries, err := gitops.WorktreeList(repo.SourceRepo)
+	if err != nil {
+		return fmt.Errorf("reading worktree registration: %w", err)
+	}
+
+	expectedPath := canonicalPath(repo.WorktreePath)
+	registered := false
+	for _, entry := range entries {
+		if canonicalPath(entry.Path) != expectedPath {
+			continue
+		}
+		registered = true
+		if entry.Branch != repo.Branch {
+			return fmt.Errorf("unexpected branch %q at %s (expected %q)", entry.Branch, repo.WorktreePath, repo.Branch)
+		}
+		break
+	}
+	if !registered {
+		return fmt.Errorf("worktree path is not registered: %s", repo.WorktreePath)
+	}
+
+	branch, err := gitops.CurrentBranch(repo.WorktreePath)
+	if err != nil {
+		return fmt.Errorf("reading current branch: %w", err)
+	}
+	if branch != repo.Branch {
+		return fmt.Errorf("unexpected current branch %q (expected %q)", branch, repo.Branch)
+	}
+
+	status, err := gitops.RepoStatus(repo.WorktreePath)
+	if err != nil {
+		return fmt.Errorf("reading worktree status: %w", err)
+	}
+	if status != "" {
+		return fmt.Errorf("dirty worktree; commit, stash, or use --force")
+	}
+	return nil
+}
+
+func canonicalPath(path string) string {
+	absolute, err := filepath.Abs(path)
+	if err != nil {
+		absolute = path
+	}
+	if resolved, err := filepath.EvalSymlinks(absolute); err == nil {
+		return filepath.Clean(resolved)
+	}
+	return filepath.Clean(absolute)
+}
+
 // Rename renames a workspace using a state-first pattern with rollback.
 func (s *Service) Rename(oldName, newName string) error {
+	return s.State.WithLock(func() error {
+		return s.renameLocked(oldName, newName)
+	})
+}
+
+func (s *Service) renameLocked(oldName, newName string) error {
 	ws, err := s.State.GetWorkspace(oldName)
 	if err != nil {
 		return err
@@ -480,12 +642,33 @@ func (s *Service) Rename(oldName, newName string) error {
 
 // AddRepos adds repos to an existing workspace.
 func (s *Service) AddRepos(wsName string, repoNames []string, repoMap map[string]string) error {
-	ws, err := s.State.GetWorkspace(wsName)
-	if err != nil {
+	var added []models.RepoWorktree
+	if err := s.State.WithLock(func() error {
+		var err error
+		added, err = s.addReposLocked(wsName, repoNames, repoMap)
+		return err
+	}); err != nil {
 		return err
 	}
+
+	if len(added) == 0 {
+		return nil
+	}
+
+	// As with create, setup runs after the state mutation lock is released.
+	s.runSetupHooks(models.Workspace{Repos: added})
+	logging.Info("added %d repo(s) to workspace %q", len(added), wsName)
+	console.Successf("Added %d repo(s) to %s", len(added), wsName)
+	return nil
+}
+
+func (s *Service) addReposLocked(wsName string, repoNames []string, repoMap map[string]string) ([]models.RepoWorktree, error) {
+	ws, err := s.State.GetWorkspace(wsName)
+	if err != nil {
+		return nil, err
+	}
 	if ws == nil {
-		return fmt.Errorf("workspace %s not found", wsName)
+		return nil, fmt.Errorf("workspace %s not found", wsName)
 	}
 
 	existing := make(map[string]bool)
@@ -502,38 +685,46 @@ func (s *Service) AddRepos(wsName string, repoNames []string, repoMap map[string
 
 	if len(toAdd) == 0 {
 		console.Info("All repos already in workspace")
-		return nil
+		return nil, nil
 	}
 
-	beforeLen := len(ws.Repos)
-	for _, repoName := range toAdd {
+	sourcePaths := make([]string, len(toAdd))
+	for i, repoName := range toAdd {
 		sourcePath, ok := repoMap[repoName]
 		if !ok {
-			return fmt.Errorf("repo %s not found", repoName)
+			return nil, fmt.Errorf("repo %s not found", repoName)
 		}
-
-		rw, err := provisionWorktree(sourcePath, repoName, ws.Path, ws.Branch)
-		if err != nil {
-			return fmt.Errorf("adding %s: %w", repoName, err)
-		}
-
-		ws.Repos = append(ws.Repos, *rw)
+		sourcePaths[i] = sourcePath
 	}
 
-	newWS := models.Workspace{Repos: ws.Repos[beforeLen:]}
-	s.runSetupHooks(newWS)
+	created := make([]provisionedRepo, 0, len(toAdd))
+	for i, repoName := range toAdd {
+		provisioned, err := provisionWorktree(sourcePaths[i], repoName, ws.Path, ws.Branch)
+		if err != nil {
+			return nil, errors.Join(fmt.Errorf("adding %s: %w", repoName, err), s.rollback(created))
+		}
+		created = append(created, *provisioned)
+		ws.Repos = append(ws.Repos, provisioned.worktree)
+	}
 
 	if err := s.State.UpdateWorkspace(*ws); err != nil {
-		return err
+		return nil, errors.Join(err, s.rollback(created))
 	}
 
-	logging.Info("added %d repo(s) to workspace %q", len(toAdd), wsName)
-	console.Successf("Added %d repo(s) to %s", len(toAdd), wsName)
-	return nil
+	added := make([]models.RepoWorktree, 0, len(created))
+	for _, repo := range created {
+		added = append(added, repo.worktree)
+	}
+	return added, nil
 }
 
-// RemoveRepos removes repos from a workspace.
+// RemoveRepos removes repos from a workspace using safe defaults.
 func (s *Service) RemoveRepos(wsName string, repoNames []string) error {
+	return s.RemoveReposWithOptions(wsName, repoNames, RemoveOptions{})
+}
+
+// RemoveReposWithOptions removes selected repos from a workspace.
+func (s *Service) RemoveReposWithOptions(wsName string, repoNames []string, opts RemoveOptions) error {
 	ws, err := s.State.GetWorkspace(wsName)
 	if err != nil {
 		return err
@@ -542,52 +733,71 @@ func (s *Service) RemoveRepos(wsName string, repoNames []string) error {
 		return fmt.Errorf("workspace %s not found", wsName)
 	}
 
-	type removeItem struct {
-		name string
-		repo *models.RepoWorktree
-	}
-	var items []removeItem
-	for _, repoName := range repoNames {
-		r := ws.FindRepo(repoName)
-		if r != nil {
-			items = append(items, removeItem{name: repoName, repo: r})
-		}
-	}
-
-	succeeded := make([]bool, len(items))
-	var wg sync.WaitGroup
-	for i, item := range items {
-		wg.Add(1)
-		go func(idx int, r models.RepoWorktree) {
-			defer wg.Done()
-			groveCfg, _ := gitops.ReadGroveConfig(r.SourceRepo)
-			if groveCfg != nil && groveCfg.Teardown != "" {
-				s.RunCmdSilent(r.WorktreePath, groveCfg.Teardown)
-			}
-
-			if err := gitops.WorktreeRemove(r.SourceRepo, r.WorktreePath); err != nil {
-				os.RemoveAll(r.WorktreePath)
-			}
-
-			gitops.DeleteBranch(r.SourceRepo, r.Branch, false)
-			succeeded[idx] = true
-		}(i, *item.repo)
-	}
-	wg.Wait()
-
-	for i, item := range items {
-		if succeeded[i] {
-			ws.RemoveRepo(item.name)
-		}
-	}
-
-	if err := s.State.UpdateWorkspace(*ws); err != nil {
+	selected := selectRepos(ws, repoNames)
+	if err := preflightRemovals(selected, opts.Force); err != nil {
 		return err
 	}
+	s.runTeardownHooks(selected)
 
-	logging.Info("removed %d repo(s) from workspace %q", len(repoNames), wsName)
-	console.Successf("Removed %d repo(s) from %s", len(repoNames), wsName)
+	var removed int
+	if err := s.State.WithLock(func() error {
+		var err error
+		removed, err = s.removeReposLocked(wsName, repoNames, opts)
+		return err
+	}); err != nil {
+		return err
+	}
+	if removed == 0 {
+		return nil
+	}
+
+	logging.Info("removed %d repo(s) from workspace %q", removed, wsName)
+	console.Successf("Removed %d repo(s) from %s", removed, wsName)
 	return nil
+}
+
+func (s *Service) removeReposLocked(wsName string, repoNames []string, opts RemoveOptions) (int, error) {
+	ws, err := s.State.GetWorkspace(wsName)
+	if err != nil {
+		return 0, err
+	}
+	if ws == nil {
+		return 0, fmt.Errorf("workspace %s not found", wsName)
+	}
+
+	items := selectRepos(ws, repoNames)
+	if err := preflightRemovals(items, opts.Force); err != nil {
+		return 0, err
+	}
+
+	removed := 0
+	var cleanupErrs []error
+	for _, repo := range items {
+		if err := s.removeWorktree(repo.SourceRepo, repo.WorktreePath, opts.Force); err != nil {
+			cleanupErrs = append(cleanupErrs, fmt.Errorf("%s: removing worktree: %w", repo.RepoName, err))
+			continue
+		}
+		s.deleteBranch(repo, opts.Force)
+		ws.RemoveRepo(repo.RepoName)
+		removed++
+	}
+
+	if removed > 0 {
+		if err := s.State.UpdateWorkspace(*ws); err != nil {
+			cleanupErrs = append(cleanupErrs, fmt.Errorf("updating state: %w", err))
+		}
+	}
+	return removed, errors.Join(cleanupErrs...)
+}
+
+func selectRepos(ws *models.Workspace, names []string) []models.RepoWorktree {
+	selected := make([]models.RepoWorktree, 0, len(names))
+	for _, name := range names {
+		if repo := ws.FindRepo(name); repo != nil {
+			selected = append(selected, *repo)
+		}
+	}
+	return selected
 }
 
 // syncOneRepo syncs a single repo.
@@ -953,6 +1163,21 @@ func (s *Service) AllWorkspacesSummary() ([]WorkspaceSummary, error) {
 
 // Doctor checks workspace health and returns issues.
 func (s *Service) Doctor(fix bool) ([]models.DoctorIssue, int, error) {
+	if !fix {
+		return s.doctor(false)
+	}
+
+	var issues []models.DoctorIssue
+	var fixed int
+	err := s.State.WithLock(func() error {
+		var err error
+		issues, fixed, err = s.doctor(true)
+		return err
+	})
+	return issues, fixed, err
+}
+
+func (s *Service) doctor(fix bool) ([]models.DoctorIssue, int, error) {
 	workspaces, err := s.State.Load()
 	if err != nil {
 		return nil, 0, err

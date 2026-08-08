@@ -178,9 +178,13 @@ func RemoteBranchExists(repo, branch string) bool {
 	return err == nil
 }
 
-// WorktreeRemove removes a worktree.
-func WorktreeRemove(repo, path string) error {
-	_, err := runGit(repo, "worktree", "remove", path, "--force")
+// WorktreeRemove removes a worktree. Force allows removal of a dirty worktree.
+func WorktreeRemove(repo, path string, force bool) error {
+	args := []string{"worktree", "remove", path}
+	if force {
+		args = append(args, "--force")
+	}
+	_, err := runGit(repo, args...)
 	return err
 }
 

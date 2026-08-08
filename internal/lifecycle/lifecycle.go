@@ -128,7 +128,7 @@ func Run(hookName string, vars Vars) error {
 	if hook.Stream {
 		// Stream live to stderr, prefixed, so progress is visible. stderr keeps
 		// gw's stdout clean for shell integration (e.g. `cd "$(gw go ...)"`).
-		w := &streamio.PrefixWriter{Prefix: prefix, W: os.Stderr}
+		w := streamio.New(prefix, os.Stderr)
 		cmd.Stdout = w
 		cmd.Stderr = w
 		runErr := cmd.Run()
@@ -166,7 +166,7 @@ func wrap(hookName string, hook models.Hook, runErr error, ctx context.Context) 
 // echoCaptured prints captured hook output to stderr, prefixing each line so it
 // reads the same as streamed output.
 func echoCaptured(prefix string, out []byte) {
-	w := &streamio.PrefixWriter{Prefix: prefix, W: os.Stderr}
+	w := streamio.New(prefix, os.Stderr)
 	w.Write(out)
 	w.Flush()
 }

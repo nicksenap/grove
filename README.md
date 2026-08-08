@@ -82,8 +82,8 @@ gw status my-feature   # git status across every repo
 gw sync my-feature     # rebase all repos onto their base branch
 gw run my-feature      # run dev processes (TUI)
 
-# Clean up when done
-gw delete my-feature   # removes worktrees + branches
+# Clean up when done (refuses dirty worktrees unless --force is used)
+gw delete my-feature   # removes worktrees + safely deletes merged branches
 ```
 
 Interactive menus support **type-to-search** filtering, arrow-key navigation (single-select), or arrow + tab (multi-select) with an `(all)` shortcut.

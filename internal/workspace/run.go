@@ -83,8 +83,9 @@ func Run(wsName string) error {
 		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 
 		// Prefix output with repo name
-		outW := &streamio.PrefixWriter{Prefix: fmt.Sprintf("[%s] ", r.RepoName), W: os.Stdout}
-		errW := &streamio.PrefixWriter{Prefix: fmt.Sprintf("[%s] ", r.RepoName), W: os.Stderr}
+		prefix := fmt.Sprintf("[%s] ", r.RepoName)
+		outW := streamio.New(prefix, os.Stdout)
+		errW := streamio.New(prefix, os.Stderr)
 		cmd.Stdout = outW
 		cmd.Stderr = errW
 
