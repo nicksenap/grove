@@ -35,9 +35,19 @@ type PrefixWriter struct {
 	midLine bool
 }
 
+// New returns a PrefixWriter that prepends prefix to every complete line it
+// forwards to w.
+func New(prefix string, w io.Writer) *PrefixWriter {
+	return &PrefixWriter{Prefix: prefix, W: w}
+}
+
 // Write implements io.Writer. It forwards each complete line prefixed with
 // Prefix and buffers any trailing partial line.
 func (pw *PrefixWriter) Write(p []byte) (int, error) {
+	if len(p) == 0 {
+		return 0, nil
+	}
+
 	pw.mu.Lock()
 	defer pw.mu.Unlock()
 
@@ -47,21 +57,21 @@ func (pw *PrefixWriter) Write(p []byte) (int, error) {
 		if idx < 0 {
 			break
 		}
-		pw.emit(pw.buf[:idx], true)
+		pw.emitLine(pw.buf[:idx], true)
 		pw.buf = pw.buf[idx+1:]
 	}
 	// Prevent unbounded growth: flush the oversized partial line without a
 	// newline and remember we're mid-line so the continuation isn't prefixed.
 	if len(pw.buf) > maxLineBuffer {
-		pw.emit(pw.buf, false)
+		pw.emitLine(pw.buf, false)
 		pw.buf = pw.buf[:0]
 	}
 	return len(p), nil
 }
 
-// emit writes one (possibly partial) line to W. It adds Prefix only at the
+// emitLine writes one (possibly partial) line to W. It adds Prefix only at the
 // start of a fresh line and a trailing newline only when newline is true.
-func (pw *PrefixWriter) emit(line []byte, newline bool) {
+func (pw *PrefixWriter) emitLine(line []byte, newline bool) {
 	if !pw.midLine {
 		fmt.Fprint(pw.W, pw.Prefix)
 	}
@@ -82,7 +92,7 @@ func (pw *PrefixWriter) Flush() {
 	defer pw.mu.Unlock()
 
 	if len(pw.buf) > 0 {
-		pw.emit(pw.buf, true)
+		pw.emitLine(pw.buf, true)
 		pw.buf = pw.buf[:0]
 	}
 }
