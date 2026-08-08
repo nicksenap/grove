@@ -151,7 +151,7 @@ func TestWorktreeAddAndRemove(t *testing.T) {
 	}
 
 	// Remove
-	if err := WorktreeRemove(repo, wtPath); err != nil {
+	if err := WorktreeRemove(repo, wtPath, true); err != nil {
 		t.Fatalf("remove: %v", err)
 	}
 }
@@ -209,7 +209,7 @@ func TestWorktreeAddTracking(t *testing.T) {
 		t.Errorf("expected upstream origin/feat/pr-head, got %q", upstream)
 	}
 
-	WorktreeRemove(repo, wtPath)
+	WorktreeRemove(repo, wtPath, true)
 }
 
 func TestWorktreeHasBranch(t *testing.T) {
@@ -236,7 +236,7 @@ func TestWorktreeHasBranch(t *testing.T) {
 	}
 
 	// Cleanup
-	WorktreeRemove(repo, wtPath)
+	WorktreeRemove(repo, wtPath, true)
 }
 
 func TestWorktreeListParsing(t *testing.T) {
@@ -336,7 +336,7 @@ func TestRebaseOnto(t *testing.T) {
 	}
 
 	// Cleanup
-	WorktreeRemove(repo, wtPath)
+	WorktreeRemove(repo, wtPath, true)
 }
 
 func TestCommitsAheadBehind(t *testing.T) {
@@ -368,7 +368,7 @@ func TestCommitsAheadBehind(t *testing.T) {
 	}
 
 	// Cleanup
-	WorktreeRemove(repo, wtPath)
+	WorktreeRemove(repo, wtPath, true)
 }
 
 func TestRemoteURL(t *testing.T) {
@@ -495,7 +495,7 @@ func TestWorktreeRepair(t *testing.T) {
 		t.Fatalf("repair: %v", err)
 	}
 
-	WorktreeRemove(repo, wtPath)
+	WorktreeRemove(repo, wtPath, true)
 }
 
 func TestDeleteBranchForce(t *testing.T) {

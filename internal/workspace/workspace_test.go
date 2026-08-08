@@ -3,6 +3,7 @@ package workspace
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -203,6 +204,81 @@ func TestCreateRollbackOnFailure(t *testing.T) {
 	ws, _ := env.svc.State.GetWorkspace("rollback-ws")
 	if ws != nil {
 		t.Error("workspace should not be in state after rollback")
+	}
+}
+
+func TestCreateFailurePreservesPreexistingWorkspaceRoot(t *testing.T) {
+	env := setupTestEnv(t)
+	path := filepath.Join(env.wsDir, "preexisting-root")
+	if err := os.Mkdir(path, 0o755); err != nil {
+		t.Fatalf("create pre-existing root: %v", err)
+	}
+
+	err := env.svc.Create("preexisting-root", "feat/preexisting-root", []string{"missing"}, env.repoMap, env.cfg)
+	if err == nil {
+		t.Fatal("expected missing repo error")
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("pre-existing workspace root should remain: %v", err)
+	}
+}
+
+func TestCreateRollbackRemovesBranchesCreatedByInvocation(t *testing.T) {
+	env := setupTestEnv(t)
+	api := env.createRepo("api")
+	web := env.createRepo("web")
+
+	conflictPath := filepath.Join(env.dir, "web-conflict")
+	env.run(web, "git", "worktree", "add", "-q", "-b", "feat/create-rollback", conflictPath)
+
+	err := env.svc.Create("create-rollback", "feat/create-rollback", []string{"api", "web"}, env.repoMap, env.cfg)
+	if err == nil || !strings.Contains(err.Error(), "web") {
+		t.Fatalf("expected web conflict, got %v", err)
+	}
+	if gitops.BranchExists(api, "feat/create-rollback") {
+		t.Error("rollback should remove the api branch created by this invocation")
+	}
+	if _, err := os.Stat(filepath.Join(env.wsDir, "create-rollback")); !os.IsNotExist(err) {
+		t.Error("empty workspace root should be removed after rollback")
+	}
+}
+
+func TestConcurrentCreatesPreserveBothStateEntries(t *testing.T) {
+	env := setupTestEnv(t)
+	env.createRepo("api")
+	env.createRepo("web")
+
+	svcA := *env.svc
+	svcA.State = state.NewStore(env.groveDir)
+	svcA.Stats = &stats.Tracker{StatsPath: filepath.Join(env.groveDir, "stats-a.json"), NowFn: time.Now}
+	svcB := *env.svc
+	svcB.State = state.NewStore(env.groveDir)
+	svcB.Stats = &stats.Tracker{StatsPath: filepath.Join(env.groveDir, "stats-b.json"), NowFn: time.Now}
+
+	start := make(chan struct{})
+	errs := make(chan error, 2)
+	go func() {
+		<-start
+		errs <- svcA.Create("ws-a", "feat/a", []string{"api"}, env.repoMap, env.cfg)
+	}()
+	go func() {
+		<-start
+		errs <- svcB.Create("ws-b", "feat/b", []string{"web"}, env.repoMap, env.cfg)
+	}()
+	close(start)
+
+	for range 2 {
+		if err := <-errs; err != nil {
+			t.Fatalf("concurrent create: %v", err)
+		}
+	}
+
+	workspaces, err := env.svc.State.Load()
+	if err != nil {
+		t.Fatalf("load state: %v", err)
+	}
+	if len(workspaces) != 2 {
+		t.Fatalf("expected both workspaces in state, got %d", len(workspaces))
 	}
 }
 
@@ -508,6 +584,102 @@ func TestDeleteCleansBranch(t *testing.T) {
 	}
 }
 
+func TestDeleteRejectsDirtyWorktreeByDefault(t *testing.T) {
+	env := setupTestEnv(t)
+	env.createRepo("api")
+	if err := env.svc.Create("dirty-delete", "feat/dirty-delete", []string{"api"}, env.repoMap, env.cfg); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	ws, _ := env.svc.State.GetWorkspace("dirty-delete")
+	dirtyFile := filepath.Join(ws.Repos[0].WorktreePath, "dirty.txt")
+	if err := os.WriteFile(dirtyFile, []byte("keep me"), 0o644); err != nil {
+		t.Fatalf("write dirty file: %v", err)
+	}
+
+	err := env.svc.DeleteWithOptions("dirty-delete", RemoveOptions{})
+	if err == nil || !strings.Contains(err.Error(), "api") || !strings.Contains(err.Error(), "dirty") {
+		t.Fatalf("expected repo-named dirty error, got %v", err)
+	}
+	if _, err := os.Stat(dirtyFile); err != nil {
+		t.Fatalf("dirty file should remain: %v", err)
+	}
+	if saved, _ := env.svc.State.GetWorkspace("dirty-delete"); saved == nil {
+		t.Fatal("workspace state should remain")
+	}
+}
+
+func TestDeleteForceRemovesDirtyWorktree(t *testing.T) {
+	env := setupTestEnv(t)
+	env.createRepo("api")
+	if err := env.svc.Create("force-delete", "feat/force-delete", []string{"api"}, env.repoMap, env.cfg); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	ws, _ := env.svc.State.GetWorkspace("force-delete")
+	if err := os.WriteFile(filepath.Join(ws.Repos[0].WorktreePath, "dirty.txt"), []byte("remove me"), 0o644); err != nil {
+		t.Fatalf("write dirty file: %v", err)
+	}
+
+	if err := env.svc.DeleteWithOptions("force-delete", RemoveOptions{Force: true}); err != nil {
+		t.Fatalf("force delete: %v", err)
+	}
+	if saved, _ := env.svc.State.GetWorkspace("force-delete"); saved != nil {
+		t.Fatal("workspace state should be removed")
+	}
+}
+
+func TestDeleteRemovalFailurePreservesPathAndState(t *testing.T) {
+	env := setupTestEnv(t)
+	env.createRepo("api")
+	if err := env.svc.Create("failed-delete", "feat/failed-delete", []string{"api"}, env.repoMap, env.cfg); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	ws, _ := env.svc.State.GetWorkspace("failed-delete")
+	env.svc.RemoveWorktree = func(repo, path string, force bool) error {
+		return fmt.Errorf("simulated git failure")
+	}
+
+	err := env.svc.Delete("failed-delete")
+	if err == nil || !strings.Contains(err.Error(), "api") {
+		t.Fatalf("expected repo-named removal error, got %v", err)
+	}
+	if _, err := os.Stat(ws.Repos[0].WorktreePath); err != nil {
+		t.Fatalf("worktree path should remain: %v", err)
+	}
+	if saved, _ := env.svc.State.GetWorkspace("failed-delete"); saved == nil || len(saved.Repos) != 1 {
+		t.Fatal("failed repo should remain in state")
+	}
+	if _, err := os.Stat(filepath.Join(ws.Path, ".mcp.json")); err != nil {
+		t.Fatalf("failed delete should preserve workspace MCP config: %v", err)
+	}
+}
+
+func TestDeletePreflightsEveryRepoBeforeRemovingAny(t *testing.T) {
+	env := setupTestEnv(t)
+	env.createRepo("api")
+	env.createRepo("web")
+	if err := env.svc.Create("preflight-delete", "feat/preflight-delete", []string{"api", "web"}, env.repoMap, env.cfg); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	ws, _ := env.svc.State.GetWorkspace("preflight-delete")
+	apiPath := ws.Repos[0].WorktreePath
+	ws.Repos[1].WorktreePath = filepath.Join(ws.Path, "unexpected-web")
+	if err := env.svc.State.UpdateWorkspace(*ws); err != nil {
+		t.Fatalf("corrupt state fixture: %v", err)
+	}
+
+	err := env.svc.Delete("preflight-delete")
+	if err == nil || !strings.Contains(err.Error(), "web") {
+		t.Fatalf("expected web preflight error, got %v", err)
+	}
+	if _, err := os.Stat(apiPath); err != nil {
+		t.Fatalf("api should not be removed before all preflights pass: %v", err)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Rename tests
 // ---------------------------------------------------------------------------
@@ -720,6 +892,86 @@ func TestAddReposNotFound(t *testing.T) {
 	}
 }
 
+func TestAddReposRollsBackEarlierAdditions(t *testing.T) {
+	env := setupTestEnv(t)
+	env.createRepo("api")
+	env.createRepo("web")
+	worker := env.createRepo("worker")
+	if err := env.svc.Create("add-rollback", "feat/add-rollback", []string{"api"}, env.repoMap, env.cfg); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	conflictPath := filepath.Join(env.dir, "worker-conflict")
+	env.run(worker, "git", "worktree", "add", "-q", "-b", "feat/add-rollback", conflictPath)
+
+	err := env.svc.AddRepos("add-rollback", []string{"web", "worker"}, env.repoMap)
+	if err == nil || !strings.Contains(err.Error(), "worker") {
+		t.Fatalf("expected worker conflict, got %v", err)
+	}
+
+	ws, _ := env.svc.State.GetWorkspace("add-rollback")
+	if ws.FindRepo("web") != nil {
+		t.Fatal("rolled-back web repo should not be saved")
+	}
+	if _, err := os.Stat(filepath.Join(ws.Path, "web")); !os.IsNotExist(err) {
+		t.Error("rolled-back web worktree should be removed")
+	}
+	if gitops.BranchExists(env.repoMap["web"], "feat/add-rollback") {
+		t.Error("branch created for rolled-back web repo should be removed")
+	}
+}
+
+func TestAddReposRollbackPreservesPreexistingBranch(t *testing.T) {
+	env := setupTestEnv(t)
+	env.createRepo("api")
+	web := env.createRepo("web")
+	worker := env.createRepo("worker")
+	if err := env.svc.Create("add-preserve", "feat/add-preserve", []string{"api"}, env.repoMap, env.cfg); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	env.run(web, "git", "branch", "feat/add-preserve")
+	conflictPath := filepath.Join(env.dir, "worker-preserve-conflict")
+	env.run(worker, "git", "worktree", "add", "-q", "-b", "feat/add-preserve", conflictPath)
+
+	err := env.svc.AddRepos("add-preserve", []string{"web", "worker"}, env.repoMap)
+	if err == nil {
+		t.Fatal("expected worker conflict")
+	}
+	if _, err := os.Stat(filepath.Join(env.wsDir, "add-preserve", "web")); !os.IsNotExist(err) {
+		t.Error("rolled-back web worktree should be removed")
+	}
+	if !gitops.BranchExists(web, "feat/add-preserve") {
+		t.Error("rollback should preserve a branch it did not create")
+	}
+}
+
+func TestAddReposCleansBranchWhenWorktreeAddFails(t *testing.T) {
+	env := setupTestEnv(t)
+	env.createRepo("api")
+	web := env.createRepo("web")
+	if err := env.svc.Create("add-provision-fail", "feat/add-provision-fail", []string{"api"}, env.repoMap, env.cfg); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	blockedPath := filepath.Join(env.wsDir, "add-provision-fail", "web")
+	if err := os.MkdirAll(blockedPath, 0o755); err != nil {
+		t.Fatalf("create blocked path: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(blockedPath, "keep.txt"), []byte("occupied"), 0o644); err != nil {
+		t.Fatalf("write blocked path: %v", err)
+	}
+
+	if err := env.svc.AddRepos("add-provision-fail", []string{"web"}, env.repoMap); err == nil {
+		t.Fatal("expected worktree add failure")
+	}
+	if gitops.BranchExists(web, "feat/add-provision-fail") {
+		t.Error("branch created before failed worktree add should be cleaned up")
+	}
+	if _, err := os.Stat(filepath.Join(blockedPath, "keep.txt")); err != nil {
+		t.Fatal("pre-existing blocked path should remain untouched")
+	}
+}
+
 // ---------------------------------------------------------------------------
 // RemoveRepos tests
 // ---------------------------------------------------------------------------
@@ -787,6 +1039,65 @@ func TestRemoveReposNonexistent(t *testing.T) {
 	err := env.svc.RemoveRepos("rm-ne", []string{"nonexistent"})
 	if err != nil {
 		t.Fatalf("remove nonexistent: %v", err)
+	}
+}
+
+func TestRemoveReposRejectsDirtyWorktreeByDefault(t *testing.T) {
+	env := setupTestEnv(t)
+	env.createRepo("api")
+	env.createRepo("web")
+	if err := env.svc.Create("dirty-remove", "feat/dirty-remove", []string{"api", "web"}, env.repoMap, env.cfg); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	ws, _ := env.svc.State.GetWorkspace("dirty-remove")
+	web := ws.FindRepo("web")
+	if err := os.WriteFile(filepath.Join(web.WorktreePath, "dirty.txt"), []byte("keep me"), 0o644); err != nil {
+		t.Fatalf("write dirty file: %v", err)
+	}
+
+	err := env.svc.RemoveRepos("dirty-remove", []string{"web"})
+	if err == nil || !strings.Contains(err.Error(), "web") || !strings.Contains(err.Error(), "dirty") {
+		t.Fatalf("expected repo-named dirty error, got %v", err)
+	}
+	if saved, _ := env.svc.State.GetWorkspace("dirty-remove"); saved == nil || saved.FindRepo("web") == nil {
+		t.Fatal("dirty repo should remain in state")
+	}
+}
+
+func TestRemoveReposRetainsOnlyFailedEntries(t *testing.T) {
+	env := setupTestEnv(t)
+	env.createRepo("api")
+	env.createRepo("web")
+	env.createRepo("worker")
+	if err := env.svc.Create("partial-remove", "feat/partial-remove", []string{"api", "web", "worker"}, env.repoMap, env.cfg); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	ws, _ := env.svc.State.GetWorkspace("partial-remove")
+	apiPath := ws.FindRepo("api").WorktreePath
+	webPath := ws.FindRepo("web").WorktreePath
+	env.svc.RemoveWorktree = func(repo, path string, force bool) error {
+		if path == webPath {
+			return fmt.Errorf("simulated git failure")
+		}
+		return gitops.WorktreeRemove(repo, path, force)
+	}
+
+	err := env.svc.RemoveRepos("partial-remove", []string{"api", "web"})
+	if err == nil || !strings.Contains(err.Error(), "web") {
+		t.Fatalf("expected web removal error, got %v", err)
+	}
+	if _, err := os.Stat(apiPath); !os.IsNotExist(err) {
+		t.Error("successfully removed api worktree should be gone")
+	}
+	if _, err := os.Stat(webPath); err != nil {
+		t.Fatalf("failed web worktree should remain: %v", err)
+	}
+
+	saved, _ := env.svc.State.GetWorkspace("partial-remove")
+	if saved == nil || saved.FindRepo("api") != nil || saved.FindRepo("web") == nil || saved.FindRepo("worker") == nil {
+		t.Fatalf("state should retain failed and untouched repos: %+v", saved)
 	}
 }
 
@@ -1691,29 +2002,45 @@ func TestLoggingRename(t *testing.T) {
 	}
 }
 
-func TestDeleteForceDeletesUnmergedBranch(t *testing.T) {
+func TestDeletePreservesUnmergedBranchWithoutForce(t *testing.T) {
 	readLog := setupLogging(t)
 	env := setupTestEnv(t)
 	env.createRepo("api")
 
 	env.svc.Create("unmerged-ws", "feat/unmerged", []string{"api"}, env.repoMap, env.cfg)
 
-	// Add an unmerged commit to the worktree branch
 	wt := filepath.Join(env.wsDir, "unmerged-ws", "api")
 	os.WriteFile(filepath.Join(wt, "new.txt"), []byte("unmerged work"), 0o644)
 	env.run(wt, "git", "add", ".")
 	env.run(wt, "git", "commit", "-q", "-m", "unmerged commit")
 
 	sourceRepo := env.repoMap["api"]
-	env.svc.Delete("unmerged-ws")
-
-	log := readLog()
-	if !strings.Contains(log, "deleted branch") {
-		t.Errorf("log should confirm branch deletion, got:\n%s", log)
+	if err := env.svc.Delete("unmerged-ws"); err != nil {
+		t.Fatalf("delete: %v", err)
 	}
 
-	// Verify the branch is actually gone from the source repo
-	if gitops.BranchExists(sourceRepo, "feat/unmerged") {
-		t.Error("branch feat/unmerged should have been force-deleted from source repo")
+	if !gitops.BranchExists(sourceRepo, "feat/unmerged") {
+		t.Error("safe delete should preserve an unmerged branch")
+	}
+	if log := readLog(); !strings.Contains(log, "failed to delete branch") {
+		t.Errorf("log should explain preserved branch, got:\n%s", log)
+	}
+}
+
+func TestDeleteForceDeletesUnmergedBranch(t *testing.T) {
+	env := setupTestEnv(t)
+	env.createRepo("api")
+
+	env.svc.Create("force-unmerged-ws", "feat/force-unmerged", []string{"api"}, env.repoMap, env.cfg)
+	wt := filepath.Join(env.wsDir, "force-unmerged-ws", "api")
+	os.WriteFile(filepath.Join(wt, "new.txt"), []byte("unmerged work"), 0o644)
+	env.run(wt, "git", "add", ".")
+	env.run(wt, "git", "commit", "-q", "-m", "unmerged commit")
+
+	if err := env.svc.DeleteWithOptions("force-unmerged-ws", RemoveOptions{Force: true}); err != nil {
+		t.Fatalf("force delete: %v", err)
+	}
+	if gitops.BranchExists(env.repoMap["api"], "feat/force-unmerged") {
+		t.Error("force delete should remove an unmerged branch")
 	}
 }

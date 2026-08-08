@@ -82,16 +82,16 @@ func doDelete(args []string, force bool) {
 			}
 		}
 
-		if err := workspace.NewService().Delete(name); err != nil {
+		if err := workspace.NewService().DeleteWithOptions(name, workspace.RemoveOptions{Force: force}); err != nil {
 			exitError(err.Error())
 		}
 	}
 }
 
 func init() {
-	deleteCmd.Flags().BoolVarP(&deleteCmdForce, "force", "f", false, "Skip confirmation")
+	deleteCmd.Flags().BoolVarP(&deleteCmdForce, "force", "f", false, "Skip worktree safety checks and confirmation")
 	deleteCmd.ValidArgsFunction = completeWorkspaceNames
 
-	wsDeleteCmd.Flags().BoolVarP(&wsDeleteCmdForce, "force", "f", false, "Skip confirmation")
+	wsDeleteCmd.Flags().BoolVarP(&wsDeleteCmdForce, "force", "f", false, "Skip worktree safety checks and confirmation")
 	wsDeleteCmd.ValidArgsFunction = completeWorkspaceNames
 }

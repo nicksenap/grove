@@ -11,10 +11,11 @@ import (
 
 // Service orchestrates workspace operations with injectable dependencies.
 type Service struct {
-	State        *state.Store
-	Stats        *stats.Tracker
-	RunCmd       func(dir, cmd string) error
-	RunCmdSilent func(dir, cmd string) error
+	State          *state.Store
+	Stats          *stats.Tracker
+	RunCmd         func(dir, cmd string) error
+	RunCmdSilent   func(dir, cmd string) error
+	RemoveWorktree func(repo, path string, force bool) error // optional test seam
 }
 
 // NewService creates a Service with production dependencies.
