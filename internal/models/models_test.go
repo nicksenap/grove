@@ -138,12 +138,12 @@ func TestWorkspaceSourceRoundtrip(t *testing.T) {
 	ws := Workspace{
 		Name:   "pr-feature",
 		Path:   "/ws/pr-feature",
-		Branch: "feat/data-status",
+		Branch: "feat/example",
 		Source: &WorkspaceSource{
 			Provider: "github",
-			URL:      "https://github.com/funnel-io/conversational-analytics/pull/1172",
+			URL:      "https://github.com/acme/example-app/pull/1172",
 			Ref:      "1172",
-			Title:    "Surface data source status",
+			Title:    "Example pull request",
 		},
 	}
 

@@ -1,0 +1,30 @@
+version: 1
+name: example-stack
+
+repositories:
+  api:
+    url: https://github.com/acme/example-api.git
+    ref: main
+  web:
+    url: https://github.com/acme/example-web.git
+    ref: main
+
+jobs:
+  setup-api:
+    repository: api
+    steps:
+      - name: Install API dependencies
+        run: make setup
+
+  setup-web:
+    repository: web
+    steps:
+      - name: Install web dependencies
+        run: make setup
+
+  verify-api:
+    repository: api
+    needs: [setup-api, setup-web]
+    steps:
+      - name: Verify API
+        run: make check

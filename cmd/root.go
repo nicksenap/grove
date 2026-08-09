@@ -26,6 +26,12 @@ var rootCmd = &cobra.Command{
 	Short: "Grove — Git Worktree Workspace Orchestrator",
 	Long:  "Manages multi-repo worktree-based workspaces",
 	PersistentPreRun: func(cmd *cobra.Command, args []string) {
+		if cmd.Annotations[offlineCommandAnnotation] == "true" {
+			return
+		}
+		if notice := update.NewChecker(config.GroveDir).FormatNotice(Version); notice != "" {
+			fmt.Fprintf(os.Stderr, "\033[2m%s\033[0m\n", notice)
+		}
 		logging.Setup(verbose)
 		logging.Info("gw %s", cmd.Name())
 	},
@@ -62,6 +68,7 @@ func init() {
 		statsCmd,
 		shellInitCmd,
 		presetCmd,
+		recipeCmd,
 		addDirCmd,
 		removeDirCmd,
 		runCmd,
@@ -74,11 +81,6 @@ func init() {
 }
 
 func Execute() {
-	// Non-blocking version check
-	if notice := update.NewChecker(config.GroveDir).FormatNotice(Version); notice != "" {
-		fmt.Fprintf(os.Stderr, "\033[2m%s\033[0m\n", notice)
-	}
-
 	if err := rootCmd.Execute(); err != nil {
 		// If cobra says "unknown command", try to find a matching plugin
 		if isUnknownCommandErr(err) {
@@ -107,7 +109,7 @@ func Execute() {
 
 // isUnknownCommandErr checks if the error is cobra's "unknown command" error.
 func isUnknownCommandErr(err error) bool {
-	return strings.Contains(err.Error(), "unknown command")
+	return strings.HasPrefix(err.Error(), "unknown command ")
 }
 
 // extractUnknownCommand pulls the command name from cobra's error message.

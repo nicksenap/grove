@@ -104,6 +104,7 @@ Full documentation lives in the [OpenWiki](openwiki/quickstart.md) — start wit
 
 - [Hooks](docs/hooks.md) — global hooks (terminal integration) & per-repo hooks (`.grove.toml`, `gw run`)
 - [Plugins](docs/plugins.md) — extend gw with external commands
+- [Recipe v1](docs/recipe-v1.md) — strict workspace Recipe schema and validation
 - [AI coding tools](docs/ai-tools.md) — Claude Code workflows, MCP server
 
 ## Requirements

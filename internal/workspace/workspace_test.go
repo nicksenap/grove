@@ -405,9 +405,9 @@ func TestCreateWithOptsPersistsSource(t *testing.T) {
 
 	src := &models.WorkspaceSource{
 		Provider: "github",
-		URL:      "https://github.com/funnel-io/conversational-analytics/pull/1172",
+		URL:      "https://github.com/acme/example-app/pull/1172",
 		Ref:      "1172",
-		Title:    "Surface data source status",
+		Title:    "Example pull request",
 	}
 	err := env.svc.CreateWithOpts("src-ws", CreateOpts{
 		Branch:  "feat/src",

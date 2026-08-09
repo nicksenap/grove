@@ -39,6 +39,9 @@ func Install(repo string) error {
 
 	// Plugin name is the repo name (e.g. "gw-dash" → command name "dash")
 	pluginCmd := strings.TrimPrefix(name, "gw-")
+	if err := validatePluginName(pluginCmd); err != nil {
+		return err
+	}
 
 	// Fetch latest release
 	release, err := fetchRelease(owner, name)
@@ -114,6 +117,9 @@ func loadMeta(pluginCmd string) (*pluginMeta, error) {
 
 // Upgrade re-fetches the latest release for an installed plugin.
 func Upgrade(name string) error {
+	if err := validatePluginName(name); err != nil {
+		return err
+	}
 	meta, err := loadMeta(name)
 	if err != nil {
 		return fmt.Errorf("plugin %q has no install metadata — reinstall with: gw plugin install <repo>", name)
