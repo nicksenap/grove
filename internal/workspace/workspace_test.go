@@ -870,10 +870,14 @@ func TestAddReposAlreadyPresent(t *testing.T) {
 	env.createRepo("api")
 	env.svc.Create("dup-ws", "feat/dup", []string{"api"}, env.repoMap, env.cfg)
 
-	// Adding same repo again should be a no-op
-	err := env.svc.AddRepos("dup-ws", []string{"api"}, env.repoMap)
-	if err != nil {
-		t.Fatalf("add duplicate: %v", err)
+	// Adding same repo again should be a no-op without wait progress.
+	output := captureStderr(t, func() {
+		if err := env.svc.AddRepos("dup-ws", []string{"api"}, env.repoMap); err != nil {
+			t.Fatalf("add duplicate: %v", err)
+		}
+	})
+	if strings.Contains(output, "Adding") {
+		t.Errorf("no-op addition should not show wait progress, got: %q", output)
 	}
 
 	ws, _ := env.svc.State.GetWorkspace("dup-ws")
@@ -1041,8 +1045,8 @@ func TestRemoveReposNonexistent(t *testing.T) {
 			t.Fatalf("remove nonexistent: %v", err)
 		}
 	})
-	if strings.Contains(output, "Removing") {
-		t.Errorf("no-op removal should not show progress, got: %q", output)
+	if output != "" {
+		t.Errorf("no-op removal should be silent, got: %q", output)
 	}
 }
 
@@ -1806,6 +1810,7 @@ func captureStderr(t *testing.T, fn func()) string {
 	os.Stderr = w
 	defer func() {
 		os.Stderr = oldStderr
+		w.Close()
 		r.Close()
 	}()
 
@@ -1827,8 +1832,8 @@ func TestAddReposShowsProgressOnStderr(t *testing.T) {
 		toAdd    []string
 		expected string
 	}{
-		{name: "singular", toAdd: []string{"web"}, expected: "Adding 1 repo to add-progress-singular"},
-		{name: "plural", toAdd: []string{"web", "worker"}, expected: "Adding 2 repos to add-progress-plural"},
+		{name: "singular", toAdd: []string{"web"}, expected: "Adding 1 repo to add-progress-singular. Please wait."},
+		{name: "plural", toAdd: []string{"web", "worker"}, expected: "Adding 2 repos to add-progress-plural. Please wait."},
 	}
 
 	for _, tt := range tests {
@@ -1861,8 +1866,8 @@ func TestRemoveReposShowsProgressOnStderr(t *testing.T) {
 		toRemove []string
 		expected string
 	}{
-		{name: "singular", toRemove: []string{"web"}, expected: "Removing 1 repo from remove-progress-singular"},
-		{name: "plural", toRemove: []string{"web", "worker"}, expected: "Removing 2 repos from remove-progress-plural"},
+		{name: "singular", toRemove: []string{"web"}, expected: "Removing 1 repo from remove-progress-singular. Please wait."},
+		{name: "plural", toRemove: []string{"web", "worker"}, expected: "Removing 2 repos from remove-progress-plural. Please wait."},
 	}
 
 	for _, tt := range tests {
