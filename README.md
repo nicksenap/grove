@@ -20,6 +20,8 @@ One feature across three services means `git worktree add` three times, tracking
 
 Grove gives you the multi-repo worktree workflow that monorepos get for free. One command, one workspace, all repos on the same branch.
 
+## Getting Started
+
 ### 1. Install Grove
 
 Pick **any one** of the following methods:
@@ -44,15 +46,7 @@ cd grove && go build -o gw ./cmd/gw
 mv gw /usr/local/bin/
 ```
 
-### 2. Upgrading (optional, Homebrew)
-
-If you installed with Homebrew:
-
-```bash
-brew update && brew upgrade grove
-```
-
-### 3. Add shell integration
+### 2. Add shell integration
 
 This enables `gw go` to change your working directory and auto-cds into new workspaces after `gw create`.
 
@@ -68,6 +62,14 @@ eval "$(gw shell-init)"
 gw shell-init --shell nu | save -f ~/.config/nushell/grove.nu
 # then add to config.nu:
 source grove.nu
+```
+
+## Upgrading
+
+If you installed with Homebrew:
+
+```bash
+brew update && brew upgrade grove
 ```
 
 ## Usage
