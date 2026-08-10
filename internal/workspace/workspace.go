@@ -688,6 +688,8 @@ func (s *Service) addReposLocked(wsName string, repoNames []string, repoMap map[
 		return nil, nil
 	}
 
+	console.Infof("Adding %d repos to %s. Please wait.", len(toAdd), wsName)
+
 	sourcePaths := make([]string, len(toAdd))
 	for i, repoName := range toAdd {
 		sourcePath, ok := repoMap[repoName]
@@ -737,6 +739,11 @@ func (s *Service) RemoveReposWithOptions(wsName string, repoNames []string, opts
 	if err := preflightRemovals(selected, opts.Force); err != nil {
 		return err
 	}
+	if len(selected) == 0 {
+		return nil
+	}
+
+	console.Infof("Removing %d repos from %s. Please wait.", len(selected), wsName)
 	s.runTeardownHooks(selected)
 
 	var removed int
