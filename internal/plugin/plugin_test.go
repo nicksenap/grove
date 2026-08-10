@@ -3,6 +3,7 @@ package plugin
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/nicksenap/grove/internal/config"
@@ -54,6 +55,17 @@ func TestFindNotFound(t *testing.T) {
 	_, err := Find("nonexistent")
 	if err == nil {
 		t.Fatal("expected error for missing plugin")
+	}
+}
+
+func TestFindRejectsUnsafeNames(t *testing.T) {
+	setupPluginDir(t)
+	for _, name := range []string{"", "../bin/sh", "foo/bar", `foo\\bar`, ".hidden"} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := Find(name); err == nil || !strings.Contains(err.Error(), "invalid plugin name") {
+				t.Fatalf("Find(%q) error = %v, want invalid plugin name", name, err)
+			}
+		})
 	}
 }
 
@@ -129,6 +141,13 @@ func TestRemoveNotInstalled(t *testing.T) {
 	err := Remove("nothere")
 	if err == nil {
 		t.Fatal("expected error removing non-existent plugin")
+	}
+}
+
+func TestRemoveRejectsUnsafeName(t *testing.T) {
+	setupPluginDir(t)
+	if err := Remove("../../target"); err == nil || !strings.Contains(err.Error(), "invalid plugin name") {
+		t.Fatalf("error = %v, want invalid plugin name", err)
 	}
 }
 

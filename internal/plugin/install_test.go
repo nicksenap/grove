@@ -11,8 +11,23 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
+
+func TestInstallRejectsUnsafePluginName(t *testing.T) {
+	err := Install("owner/gw-../../bin/sh")
+	if err == nil || !strings.Contains(err.Error(), "invalid plugin name") {
+		t.Fatalf("error = %v, want invalid plugin name", err)
+	}
+}
+
+func TestUpgradeRejectsUnsafePluginName(t *testing.T) {
+	err := Upgrade("../../bin/sh")
+	if err == nil || !strings.Contains(err.Error(), "invalid plugin name") {
+		t.Fatalf("error = %v, want invalid plugin name", err)
+	}
+}
 
 func TestParseRepo(t *testing.T) {
 	tests := []struct {

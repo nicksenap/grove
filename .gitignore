@@ -7,3 +7,6 @@ dist/
 
 # Generated per-workspace by gw create
 .mcp.json
+
+# Local-only private validation fixtures
+.private/

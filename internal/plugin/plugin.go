@@ -25,6 +25,9 @@ func Dir() string {
 // Find locates a plugin binary by name. Checks ~/.grove/plugins/ first, then $PATH.
 // Returns the absolute path to the binary, or error if not found.
 func Find(name string) (string, error) {
+	if err := validatePluginName(name); err != nil {
+		return "", err
+	}
 	bin := "gw-" + name
 
 	// Check plugins dir first
@@ -139,6 +142,9 @@ func List() ([]InstalledPlugin, error) {
 
 // Remove deletes a plugin and its metadata from the plugins directory.
 func Remove(name string) error {
+	if err := validatePluginName(name); err != nil {
+		return err
+	}
 	bin := "gw-" + name
 	pluginPath := filepath.Join(Dir(), bin)
 
@@ -153,6 +159,24 @@ func Remove(name string) error {
 	os.Remove(metaPath(name))
 
 	return os.Remove(pluginPath)
+}
+
+func validatePluginName(name string) error {
+	if len(name) == 0 || len(name) > 64 || !isPluginNameAlphanumeric(name[0]) {
+		return fmt.Errorf("invalid plugin name %q", name)
+	}
+	for i := 1; i < len(name); i++ {
+		char := name[i]
+		if isPluginNameAlphanumeric(char) || char == '-' || char == '_' || char == '.' {
+			continue
+		}
+		return fmt.Errorf("invalid plugin name %q", name)
+	}
+	return nil
+}
+
+func isPluginNameAlphanumeric(char byte) bool {
+	return char >= 'a' && char <= 'z' || char >= 'A' && char <= 'Z' || char >= '0' && char <= '9'
 }
 
 // InstalledPlugin describes a plugin found in the plugins directory.
