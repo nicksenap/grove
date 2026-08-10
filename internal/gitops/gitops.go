@@ -383,44 +383,70 @@ func Clone(url, destDir string) (string, string, error) {
 	dest := filepath.Join(destDir, name)
 
 	if _, err := os.Stat(dest); err == nil {
-		// Already exists — verify it's a git repo with a matching remote
-		if !IsGitRepo(dest) {
-			return "", "", fmt.Errorf("directory %s already exists but is not a git repo", dest)
-		}
-		existingRemote := RemoteURL(dest, "origin")
-		if existingRemote != "" && existingRemote != url {
-			return "", "", fmt.Errorf("directory %s already exists but points to %s, not %s", name, existingRemote, url)
+		if err := validateExistingClone(dest, name, url); err != nil {
+			return "", "", err
 		}
 		return dest, name, nil
 	}
 
 	const maxAttempts = 3
 	backoff := cloneBackoff
-
 	var lastErr error
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
-		_, lastErr = runGit(destDir, "clone", url, name)
-		if lastErr == nil {
-			return dest, name, nil
+		tempDir, err := os.MkdirTemp(destDir, ".grove-clone-"+name+"-")
+		if err != nil {
+			return "", "", fmt.Errorf("creating temporary clone directory: %w", err)
 		}
+		_, lastErr = runGit(destDir, "clone", url, tempDir)
+		if lastErr == nil {
+			if err := os.Rename(tempDir, dest); err == nil {
+				return dest, name, nil
+			}
+			_ = os.RemoveAll(tempDir) // uniquely owned by this invocation
+			if err := validateExistingClone(dest, name, url); err == nil {
+				return dest, name, nil
+			} else {
+				return "", "", err
+			}
+		}
+		_ = os.RemoveAll(tempDir) // uniquely owned by this invocation
 
-		// Don't retry auth errors — they'll fail every time
+		// Don't retry auth errors — they'll fail every time.
 		var gitErr *GitError
 		if errors.As(lastErr, &gitErr) && isAuthError(gitErr.Stderr) {
 			break
 		}
-
 		if attempt < maxAttempts {
 			logging.Warn("clone %s failed (attempt %d/%d), retrying in %v: %s",
 				url, attempt, maxAttempts, backoff, lastErr)
 			time.Sleep(backoff)
 			backoff *= 2
 		}
-
-		// Clean up partial clone directory
-		os.RemoveAll(dest)
 	}
 	return "", "", fmt.Errorf("cloning %s: %w", url, lastErr)
+}
+
+func validateExistingClone(dest, name, expectedRemote string) error {
+	if !IsGitRepo(dest) {
+		return fmt.Errorf("directory %s already exists but is not a git repo", dest)
+	}
+	existingRemote := RemoteURL(dest, "origin")
+	if existingRemote == "" {
+		return fmt.Errorf("directory %s already exists but has no origin remote", name)
+	}
+	if !sameRemoteIdentity(existingRemote, expectedRemote) {
+		return fmt.Errorf("directory %s already exists but points to %s, not %s", name, existingRemote, expectedRemote)
+	}
+	return nil
+}
+
+func sameRemoteIdentity(left, right string) bool {
+	if left == right {
+		return true
+	}
+	leftIdentity, leftErr := CanonicalRemoteIdentity(left)
+	rightIdentity, rightErr := CanonicalRemoteIdentity(right)
+	return leftErr == nil && rightErr == nil && leftIdentity == rightIdentity
 }
 
 // RepoBaseBranch returns "origin/<base>" from .grove.toml, or "".

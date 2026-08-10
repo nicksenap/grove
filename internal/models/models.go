@@ -10,10 +10,11 @@ import (
 
 // RepoWorktree represents a single repo's worktree within a workspace.
 type RepoWorktree struct {
-	RepoName     string `json:"repo_name"`
-	SourceRepo   string `json:"source_repo"`
-	WorktreePath string `json:"worktree_path"`
-	Branch       string `json:"branch"`
+	RepoName       string `json:"repo_name"`
+	SourceRepo     string `json:"source_repo"`
+	WorktreePath   string `json:"worktree_path"`
+	Branch         string `json:"branch"`
+	PreserveBranch bool   `json:"preserve_branch,omitempty"`
 }
 
 // Workspace represents a named collection of worktrees.

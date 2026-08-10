@@ -46,6 +46,17 @@ func TestParseValidRecipe(t *testing.T) {
 	}
 }
 
+func TestParseJobTimeout(t *testing.T) {
+	input := strings.Replace(validRecipe, "needs: [setup-api]", "timeout-minutes: 30\n    needs: [setup-api]", 1)
+	result := Parse([]byte(input))
+	if len(result.Errors) != 0 {
+		t.Fatalf("unexpected errors: %+v", result.Errors)
+	}
+	if got := result.Recipe.Jobs["verify"].TimeoutMinutes; got != 30 {
+		t.Fatalf("timeout-minutes = %d, want 30", got)
+	}
+}
+
 func TestGenericExample(t *testing.T) {
 	data, err := os.ReadFile("../../examples/recipes/example-stack.yaml")
 	if err != nil {
@@ -103,6 +114,7 @@ func TestParseRejectsIncorrectSchemaTypes(t *testing.T) {
 		strings.Replace(validRecipe, "url: https://github.com/acme/example-app.git", "url: true", 1),
 		strings.Replace(validRecipe, "ref: main", "ref: null", 1),
 		strings.Replace(validRecipe, "needs: [setup-api]", "needs: setup-api", 1),
+		strings.Replace(validRecipe, "needs: [setup-api]", "timeout-minutes: '30'\n    needs: [setup-api]", 1),
 		strings.Replace(validRecipe, "run: make check", "run: 123", 1),
 		strings.SplitN(validRecipe, "jobs:", 2)[0] + "jobs: null\n",
 	}
@@ -148,6 +160,8 @@ func TestParseRejectsInvalidRecipeSemantics(t *testing.T) {
 		{"duplicate dependency", strings.Replace(validRecipe, "needs: [setup-api]", "needs: [setup-api, setup-api]", 1), "duplicate_dependency"},
 		{"escaping working directory", strings.Replace(validRecipe, "services/api", "../../outside", 1), "invalid_path"},
 		{"unclean working directory", strings.Replace(validRecipe, "services/api", "services/../api", 1), "invalid_path"},
+		{"zero timeout", strings.Replace(validRecipe, "needs: [setup-api]", "timeout-minutes: 0\n    needs: [setup-api]", 1), "invalid_range"},
+		{"excessive timeout", strings.Replace(validRecipe, "needs: [setup-api]", "timeout-minutes: 361\n    needs: [setup-api]", 1), "invalid_range"},
 		{"empty steps", strings.Replace(validRecipe, "steps:\n      - name: Install\n        run: make setup", "steps: []", 1), "required"},
 		{"empty command", strings.Replace(validRecipe, "run: make check", "run: '  '", 1), "required"},
 	}

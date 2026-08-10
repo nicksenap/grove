@@ -140,7 +140,7 @@ func formatRecipeErrors(validationErrors []recipe.ValidationError) string {
 func terminalSafe(value string) string {
 	var result strings.Builder
 	for _, char := range value {
-		if char < 0x20 || char == 0x7f {
+		if char < 0x20 || char == 0x7f || char >= 0x80 && char <= 0x9f {
 			fmt.Fprintf(&result, "\\x%02x", char)
 			continue
 		}

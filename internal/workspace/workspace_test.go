@@ -3,6 +3,7 @@ package workspace
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -156,6 +157,173 @@ func TestCreateSuccess(t *testing.T) {
 	branch := env.run(filepath.Join(env.wsDir, "test-ws", "api"), "git", "branch", "--show-current")
 	if branch != "feat/test" {
 		t.Errorf("expected branch feat/test, got %s", branch)
+	}
+}
+
+func TestCreateWithPreparationUsesExactCommitOutsideLockAndSkipsSetup(t *testing.T) {
+	env := setupTestEnv(t)
+	repo := env.createRepo("api")
+	baseSHA := env.run(repo, "git", "rev-parse", "HEAD")
+	setupMarker := filepath.Join(env.dir, "legacy-setup-ran")
+	os.WriteFile(filepath.Join(repo, ".grove.toml"), []byte("setup = \"touch "+setupMarker+"\"\n"), 0o644)
+	os.WriteFile(filepath.Join(repo, "later.txt"), []byte("later"), 0o644)
+	env.run(repo, "git", "add", ".")
+	env.run(repo, "git", "commit", "-q", "-m", "later")
+
+	var preparedPath string
+	err := env.svc.CreateWithPreparation("prepared", PreparationOpts{
+		CreateOpts:  CreateOpts{Branch: "feat/prepared", Repos: []string{"api"}, RepoMap: env.repoMap, Cfg: env.cfg},
+		BaseCommits: map[string]string{"api": baseSHA},
+	}, func(ws models.Workspace) error {
+		if err := env.svc.State.WithLock(func() error { return nil }); err != nil {
+			return fmt.Errorf("acquiring state lock from preparation: %w", err)
+		}
+		preparedPath = ws.Repos[0].WorktreePath
+		if got := env.run(preparedPath, "git", "rev-parse", "HEAD"); got != baseSHA {
+			return fmt.Errorf("worktree HEAD = %s, want %s", got, baseSHA)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if preparedPath == "" {
+		t.Fatal("preparation callback did not run")
+	}
+	if _, err := os.Stat(setupMarker); !os.IsNotExist(err) {
+		t.Fatalf("legacy setup hook ran during Recipe creation: %v", err)
+	}
+}
+
+func TestCreateWithPreparationFailurePreservesPreexistingBranch(t *testing.T) {
+	env := setupTestEnv(t)
+	repo := env.createRepo("api")
+	baseSHA := env.run(repo, "git", "rev-parse", "HEAD")
+	env.run(repo, "git", "branch", "feat/existing", baseSHA)
+	boom := errors.New("prepare failed")
+
+	err := env.svc.CreateWithPreparation("prepared", PreparationOpts{
+		CreateOpts:  CreateOpts{Branch: "feat/existing", Repos: []string{"api"}, RepoMap: env.repoMap, Cfg: env.cfg},
+		BaseCommits: map[string]string{"api": baseSHA},
+	}, func(models.Workspace) error { return boom })
+	var preparationErr *PreparationError
+	if !errors.As(err, &preparationErr) || !errors.Is(err, boom) {
+		t.Fatalf("error = %v, want PreparationError wrapping callback failure", err)
+	}
+	if !gitops.BranchExists(repo, "feat/existing") {
+		t.Fatal("pre-existing branch was deleted")
+	}
+	if ws, _ := env.svc.State.GetWorkspace("prepared"); ws != nil {
+		t.Fatalf("failed preparation remained in state: %+v", ws)
+	}
+	if _, err := os.Stat(filepath.Join(env.wsDir, "prepared")); !os.IsNotExist(err) {
+		t.Fatalf("workspace directory remained after rollback: %v", err)
+	}
+}
+
+func TestDeletePreparedWorkspacePreservesPreexistingBranch(t *testing.T) {
+	env := setupTestEnv(t)
+	repo := env.createRepo("api")
+	baseSHA := env.run(repo, "git", "rev-parse", "HEAD")
+	env.run(repo, "git", "branch", "feat/existing", baseSHA)
+
+	if err := env.svc.CreateWithPreparation("prepared", PreparationOpts{
+		CreateOpts:  CreateOpts{Branch: "feat/existing", Repos: []string{"api"}, RepoMap: env.repoMap, Cfg: env.cfg},
+		BaseCommits: map[string]string{"api": baseSHA},
+	}, func(models.Workspace) error { return nil }); err != nil {
+		t.Fatal(err)
+	}
+	if err := env.svc.DeleteWithOptions("prepared", RemoveOptions{Force: true}); err != nil {
+		t.Fatal(err)
+	}
+	if !gitops.BranchExists(repo, "feat/existing") {
+		t.Fatal("normal workspace deletion removed pre-existing Recipe branch")
+	}
+}
+
+func TestCreateWithPreparationFailureRemovesOwnedBranch(t *testing.T) {
+	env := setupTestEnv(t)
+	repo := env.createRepo("api")
+	baseSHA := env.run(repo, "git", "rev-parse", "HEAD")
+
+	_ = env.svc.CreateWithPreparation("prepared", PreparationOpts{
+		CreateOpts:  CreateOpts{Branch: "feat/owned", Repos: []string{"api"}, RepoMap: env.repoMap, Cfg: env.cfg},
+		BaseCommits: map[string]string{"api": baseSHA},
+	}, func(models.Workspace) error { return errors.New("prepare failed") })
+	if gitops.BranchExists(repo, "feat/owned") {
+		t.Fatal("branch created by failed preparation was preserved")
+	}
+}
+
+func TestCreateWithPreparationRejectsSuccessfulIdentityChange(t *testing.T) {
+	env := setupTestEnv(t)
+	repo := env.createRepo("api")
+	baseSHA := env.run(repo, "git", "rev-parse", "HEAD")
+
+	err := env.svc.CreateWithPreparation("prepared", PreparationOpts{
+		CreateOpts:  CreateOpts{Branch: "feat/prepared", Repos: []string{"api"}, RepoMap: env.repoMap, Cfg: env.cfg},
+		BaseCommits: map[string]string{"api": baseSHA},
+	}, func(ws models.Workspace) error {
+		env.run(ws.Repos[0].WorktreePath, "git", "checkout", "--detach")
+		return nil
+	})
+	var preparationErr *PreparationError
+	if !errors.As(err, &preparationErr) || preparationErr.CleanupErr == nil {
+		t.Fatalf("error = %v, want identity verification failure", err)
+	}
+	if ws, _ := env.svc.State.GetWorkspace("prepared"); ws == nil {
+		t.Fatal("changed worktree state should remain recoverable")
+	}
+}
+
+func TestCreateWithPreparationRefusesRollbackAfterWorktreeIdentityChanges(t *testing.T) {
+	env := setupTestEnv(t)
+	repo := env.createRepo("api")
+	baseSHA := env.run(repo, "git", "rev-parse", "HEAD")
+
+	err := env.svc.CreateWithPreparation("prepared", PreparationOpts{
+		CreateOpts:  CreateOpts{Branch: "feat/prepared", Repos: []string{"api"}, RepoMap: env.repoMap, Cfg: env.cfg},
+		BaseCommits: map[string]string{"api": baseSHA},
+	}, func(ws models.Workspace) error {
+		env.run(ws.Repos[0].WorktreePath, "git", "checkout", "--detach")
+		return errors.New("prepare failed")
+	})
+	var preparationErr *PreparationError
+	if !errors.As(err, &preparationErr) || preparationErr.CleanupErr == nil {
+		t.Fatalf("error = %v, want identity cleanup refusal", err)
+	}
+	if ws, _ := env.svc.State.GetWorkspace("prepared"); ws == nil {
+		t.Fatal("workspace state was removed after worktree identity changed")
+	}
+	if _, err := os.Stat(filepath.Join(env.wsDir, "prepared", "api")); err != nil {
+		t.Fatalf("changed worktree was removed: %v", err)
+	}
+}
+
+func TestCreateWithPreparationRefusesRollbackAfterStateChanges(t *testing.T) {
+	env := setupTestEnv(t)
+	repo := env.createRepo("api")
+	baseSHA := env.run(repo, "git", "rev-parse", "HEAD")
+
+	err := env.svc.CreateWithPreparation("prepared", PreparationOpts{
+		CreateOpts:  CreateOpts{Branch: "feat/prepared", Repos: []string{"api"}, RepoMap: env.repoMap, Cfg: env.cfg},
+		BaseCommits: map[string]string{"api": baseSHA},
+	}, func(ws models.Workspace) error {
+		ws.Branch = "concurrently-changed"
+		if err := env.svc.State.UpdateWorkspace(ws); err != nil {
+			return err
+		}
+		return errors.New("prepare failed")
+	})
+	var preparationErr *PreparationError
+	if !errors.As(err, &preparationErr) || preparationErr.CleanupErr == nil {
+		t.Fatalf("error = %v, want cleanup refusal", err)
+	}
+	if ws, _ := env.svc.State.GetWorkspace("prepared"); ws == nil || ws.Branch != "concurrently-changed" {
+		t.Fatalf("changed workspace state was removed: %+v", ws)
+	}
+	if _, err := os.Stat(filepath.Join(env.wsDir, "prepared", "api")); err != nil {
+		t.Fatalf("worktree was removed despite changed state: %v", err)
 	}
 }
 

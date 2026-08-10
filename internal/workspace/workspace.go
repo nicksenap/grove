@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 
@@ -53,6 +54,27 @@ type CreateOpts struct {
 	Source *models.WorkspaceSource
 }
 
+// PreparationOpts configures a workspace whose exact bases are already resolved.
+type PreparationOpts struct {
+	CreateOpts
+	BaseCommits map[string]string
+}
+
+// PreparationError preserves the original preparation failure and any cleanup failure.
+type PreparationError struct {
+	Cause      error
+	CleanupErr error
+}
+
+func (e *PreparationError) Error() string {
+	if e.CleanupErr != nil {
+		return fmt.Sprintf("preparing workspace: %s; cleanup failed: %s", e.Cause, e.CleanupErr)
+	}
+	return fmt.Sprintf("preparing workspace: %s", e.Cause)
+}
+
+func (e *PreparationError) Unwrap() error { return e.Cause }
+
 // Create creates a new workspace with worktrees for the given repos.
 // repoMap is name→source_path. It preserves the historical positional signature
 // by delegating to CreateWithOpts.
@@ -84,19 +106,64 @@ func (s *Service) CreateWithOpts(name string, opts CreateOpts) error {
 		console.Infof("running setup hooks...")
 	}
 	s.runSetupHooks(ws)
-
-	s.Stats.RecordCreated(ws)
-	logging.Info("workspace %q created at %s", name, ws.Path)
-	console.Successf("Workspace %s created at %s", name, ws.Path)
-
-	if cdFile := os.Getenv("GROVE_CD_FILE"); cdFile != "" {
-		os.WriteFile(cdFile, []byte(ws.Path), 0o644)
-	}
-
+	s.finishCreate(ws)
 	return nil
 }
 
+// CreateWithPreparation provisions exact Recipe bases, runs prepare outside the
+// mutation lock, and rolls back only resources owned by this invocation.
+func (s *Service) CreateWithPreparation(name string, opts PreparationOpts, prepare func(models.Workspace) error) error {
+	var created creationResult
+	if err := s.State.WithLock(func() error {
+		var err error
+		created, err = s.createWithOptsLockedDetailed(name, opts.CreateOpts, creationSettings{
+			skipFetch:   true,
+			baseCommits: opts.BaseCommits,
+		})
+		return err
+	}); err != nil {
+		return err
+	}
+
+	if err := prepare(created.workspace); err != nil {
+		cleanupErr := s.rollbackPreparation(created)
+		return &PreparationError{Cause: err, CleanupErr: cleanupErr}
+	}
+	if err := s.verifyPreparationState(created.workspace); err != nil {
+		return &PreparationError{Cause: err, CleanupErr: err}
+	}
+	if err := verifyProvisionedWorktreeIdentity(created.provisioned); err != nil {
+		return &PreparationError{Cause: err, CleanupErr: err}
+	}
+	s.finishCreate(created.workspace)
+	return nil
+}
+
+func (s *Service) finishCreate(ws models.Workspace) {
+	s.Stats.RecordCreated(ws)
+	logging.Info("workspace %q created at %s", ws.Name, ws.Path)
+	console.Successf("Workspace %s created at %s", ws.Name, ws.Path)
+	if cdFile := os.Getenv("GROVE_CD_FILE"); cdFile != "" {
+		_ = os.WriteFile(cdFile, []byte(ws.Path), 0o644)
+	}
+}
+
+type creationSettings struct {
+	skipFetch   bool
+	baseCommits map[string]string
+}
+
+type creationResult struct {
+	workspace   models.Workspace
+	provisioned []provisionedRepo
+}
+
 func (s *Service) createWithOptsLocked(name string, opts CreateOpts) (models.Workspace, error) {
+	created, err := s.createWithOptsLockedDetailed(name, opts, creationSettings{})
+	return created.workspace, err
+}
+
+func (s *Service) createWithOptsLockedDetailed(name string, opts CreateOpts, settings creationSettings) (creationResult, error) {
 	branch := opts.Branch
 	repoNames := opts.Repos
 	repoMap := opts.RepoMap
@@ -104,51 +171,65 @@ func (s *Service) createWithOptsLocked(name string, opts CreateOpts) (models.Wor
 
 	existing, err := s.State.GetWorkspace(name)
 	if err != nil {
-		return models.Workspace{}, err
+		return creationResult{}, err
 	}
 	if existing != nil {
-		return models.Workspace{}, fmt.Errorf("workspace %s already exists", name)
+		return creationResult{}, fmt.Errorf("workspace %s already exists", name)
 	}
 
 	logging.Info("creating workspace %q (branch=%s, repos=%v)", name, branch, repoNames)
 
 	if err := os.MkdirAll(cfg.WorkspaceDir, 0o755); err != nil {
-		return models.Workspace{}, fmt.Errorf("creating workspace parent: %w", err)
+		return creationResult{}, fmt.Errorf("creating workspace parent: %w", err)
 	}
 	wsPath := filepath.Join(cfg.WorkspaceDir, name)
 	if err := os.Mkdir(wsPath, 0o755); err != nil {
-		return models.Workspace{}, fmt.Errorf("creating workspace dir: %w", err)
+		return creationResult{}, fmt.Errorf("creating workspace dir: %w", err)
 	}
 
 	ws := models.NewWorkspace(name, wsPath, branch)
 	ws.Source = opts.Source
 
-	// Validate all repo names first
+	// Validate all repo names and exact bases before provisioning.
 	sourcePaths := make([]string, len(repoNames))
+	baseCommits := make([]string, len(repoNames))
 	for i, repoName := range repoNames {
 		sourcePath, ok := repoMap[repoName]
 		if !ok {
-			return models.Workspace{}, errors.Join(
+			return creationResult{}, errors.Join(
 				fmt.Errorf("repo %s not found", repoName),
 				removeEmptyDir(wsPath),
 			)
 		}
 		sourcePaths[i] = sourcePath
+		if settings.baseCommits != nil {
+			base, ok := settings.baseCommits[repoName]
+			if !ok || base == "" {
+				return creationResult{}, errors.Join(
+					fmt.Errorf("repo %s has no resolved base commit", repoName),
+					removeEmptyDir(wsPath),
+				)
+			}
+			baseCommits[i] = base
+		}
 	}
 
-	// Phase 1: parallel fetch (the slow network part)
-	console.Infof("fetching %d repos...", len(repoNames))
-	var fetchWg sync.WaitGroup
-	for i, repoName := range repoNames {
-		fetchWg.Add(1)
-		go func(source, name string) {
-			defer fetchWg.Done()
-			if err := gitops.Fetch(source); err != nil {
-				console.Warningf("  %s: fetch failed, using local state", name)
-			}
-		}(sourcePaths[i], repoName)
+	// Phase 1: parallel fetch (the slow network part). Recipe creation resolves
+	// and fetches exact commits before acquiring the mutation lock.
+	if !settings.skipFetch {
+		console.Infof("fetching %d repos...", len(repoNames))
+		var fetchWg sync.WaitGroup
+		for i, repoName := range repoNames {
+			fetchWg.Add(1)
+			go func(source, name string) {
+				defer fetchWg.Done()
+				if err := gitops.Fetch(source); err != nil {
+					console.Warningf("  %s: fetch failed, using local state", name)
+				}
+			}(sourcePaths[i], repoName)
+		}
+		fetchWg.Wait()
 	}
-	fetchWg.Wait()
 
 	// Phase 2: sequential worktree creation (for rollback safety)
 	var created []provisionedRepo
@@ -158,10 +239,10 @@ func (s *Service) createWithOptsLocked(name string, opts CreateOpts) (models.Wor
 		if opts.TrackBranchRepo != "" && repoName != opts.TrackBranchRepo {
 			mode = BranchModeCreate
 		}
-		provisioned, err := provisionWorktreeNoFetch(sourcePaths[i], repoName, wsPath, branch, mode)
+		provisioned, err := provisionWorktreeNoFetch(sourcePaths[i], repoName, wsPath, branch, mode, baseCommits[i])
 		if err != nil {
 			logging.Error("workspace creation failed for %q — rolling back", name)
-			return models.Workspace{}, errors.Join(
+			return creationResult{}, errors.Join(
 				fmt.Errorf("provisioning %s: %w", repoName, err),
 				s.rollback(created),
 				removeEmptyDir(wsPath),
@@ -172,11 +253,11 @@ func (s *Service) createWithOptsLocked(name string, opts CreateOpts) (models.Wor
 	}
 
 	if err := s.State.AddWorkspace(ws); err != nil {
-		return models.Workspace{}, errors.Join(err, s.rollback(created), removeEmptyDir(wsPath))
+		return creationResult{}, errors.Join(err, s.rollback(created), removeEmptyDir(wsPath))
 	}
 
 	writeMCPConfig(ws)
-	return ws, nil
+	return creationResult{workspace: ws, provisioned: created}, nil
 }
 
 type provisionedRepo struct {
@@ -186,10 +267,10 @@ type provisionedRepo struct {
 
 func provisionWorktree(sourcePath, repoName, wsPath, branch string) (*provisionedRepo, error) {
 	_ = gitops.Fetch(sourcePath)
-	return provisionWorktreeNoFetch(sourcePath, repoName, wsPath, branch, BranchModeCreate)
+	return provisionWorktreeNoFetch(sourcePath, repoName, wsPath, branch, BranchModeCreate, "")
 }
 
-func provisionWorktreeNoFetch(sourcePath, repoName, wsPath, branch string, mode BranchMode) (*provisionedRepo, error) {
+func provisionWorktreeNoFetch(sourcePath, repoName, wsPath, branch string, mode BranchMode, exactBase string) (*provisionedRepo, error) {
 	wtPath := filepath.Join(wsPath, repoName)
 
 	hasWT, _ := gitops.WorktreeHasBranch(sourcePath, branch)
@@ -223,22 +304,9 @@ func provisionWorktreeNoFetch(sourcePath, repoName, wsPath, branch string, mode 
 		console.Warningf("%s: remote branch %s not found — creating a new branch from base instead", repoName, branch)
 	}
 
-	branchCreated := false
-	if !gitops.BranchExists(sourcePath, branch) {
-		base, err := gitops.ResolveBaseBranch(sourcePath)
-		if err != nil {
-			base = "HEAD"
-		}
-		logging.Info("creating branch %q in %s from %s", branch, repoName, base)
-		if err := gitops.CreateBranch(sourcePath, branch, base); err != nil {
-			plainBase := strings.TrimPrefix(base, "origin/")
-			if err2 := gitops.CreateBranch(sourcePath, branch, plainBase); err2 != nil {
-				if err3 := gitops.CreateBranch(sourcePath, branch, "HEAD"); err3 != nil {
-					return nil, fmt.Errorf("creating branch: %w", err)
-				}
-			}
-		}
-		branchCreated = true
+	branchCreated, err := ensureWorkspaceBranch(sourcePath, repoName, branch, exactBase)
+	if err != nil {
+		return nil, err
 	}
 
 	if err := gitops.WorktreeAdd(sourcePath, wtPath, branch); err != nil {
@@ -253,13 +321,49 @@ func provisionWorktreeNoFetch(sourcePath, repoName, wsPath, branch string, mode 
 
 	return &provisionedRepo{
 		worktree: models.RepoWorktree{
-			RepoName:     repoName,
-			SourceRepo:   sourcePath,
-			WorktreePath: wtPath,
-			Branch:       branch,
+			RepoName:       repoName,
+			SourceRepo:     sourcePath,
+			WorktreePath:   wtPath,
+			Branch:         branch,
+			PreserveBranch: exactBase != "" && !branchCreated,
 		},
 		branchCreated: branchCreated,
 	}, nil
+}
+
+func ensureWorkspaceBranch(sourcePath, repoName, branch, exactBase string) (bool, error) {
+	if gitops.BranchExists(sourcePath, branch) {
+		if exactBase == "" {
+			return false, nil
+		}
+		branchCommit, err := gitops.LocalBranchCommit(sourcePath, branch)
+		if err != nil || branchCommit != exactBase {
+			return false, fmt.Errorf("branch %s already exists at a different commit", branch)
+		}
+		return false, nil
+	}
+
+	base := exactBase
+	if base == "" {
+		var err error
+		base, err = gitops.ResolveBaseBranch(sourcePath)
+		if err != nil {
+			base = "HEAD"
+		}
+	}
+	logging.Info("creating branch %q in %s from %s", branch, repoName, base)
+	if err := gitops.CreateBranch(sourcePath, branch, base); err != nil {
+		if exactBase != "" {
+			return false, fmt.Errorf("creating branch from exact base %s: %w", exactBase, err)
+		}
+		plainBase := strings.TrimPrefix(base, "origin/")
+		if err2 := gitops.CreateBranch(sourcePath, branch, plainBase); err2 != nil {
+			if err3 := gitops.CreateBranch(sourcePath, branch, "HEAD"); err3 != nil {
+				return false, fmt.Errorf("creating branch: %w", err)
+			}
+		}
+	}
+	return true, nil
 }
 
 func (s *Service) rollback(repos []provisionedRepo) error {
@@ -274,6 +378,107 @@ func (s *Service) rollback(repos []provisionedRepo) error {
 			if err := gitops.DeleteBranch(repo.worktree.SourceRepo, repo.worktree.Branch, true); err != nil {
 				errs = append(errs, fmt.Errorf("%s: rolling back branch: %w", repo.worktree.RepoName, err))
 			}
+		}
+	}
+	return errors.Join(errs...)
+}
+
+func (s *Service) verifyPreparationState(expected models.Workspace) error {
+	return s.State.WithLock(func() error {
+		current, err := s.State.GetWorkspace(expected.Name)
+		if err != nil {
+			return err
+		}
+		if current == nil || !reflect.DeepEqual(*current, expected) {
+			return fmt.Errorf("workspace state changed during preparation")
+		}
+		return nil
+	})
+}
+
+func (s *Service) rollbackPreparation(created creationResult) error {
+	return s.State.WithLock(func() error {
+		current, err := s.State.GetWorkspace(created.workspace.Name)
+		if err != nil {
+			return err
+		}
+		if current == nil || !reflect.DeepEqual(*current, created.workspace) {
+			return fmt.Errorf("workspace state changed during preparation; refusing automatic cleanup")
+		}
+		if err := verifyProvisionedWorktreeIdentity(created.provisioned); err != nil {
+			return err
+		}
+
+		failedWorktrees := make(map[string]bool)
+		var cleanupErrs []error
+		for i := len(created.provisioned) - 1; i >= 0; i-- {
+			repo := created.provisioned[i]
+			if err := s.removeWorktree(repo.worktree.SourceRepo, repo.worktree.WorktreePath, true); err != nil {
+				failedWorktrees[repo.worktree.WorktreePath] = true
+				cleanupErrs = append(cleanupErrs, fmt.Errorf("%s: rolling back worktree: %w", repo.worktree.RepoName, err))
+				continue
+			}
+			if repo.branchCreated {
+				if err := gitops.DeleteBranch(repo.worktree.SourceRepo, repo.worktree.Branch, true); err != nil {
+					cleanupErrs = append(cleanupErrs, fmt.Errorf("%s: rolling back branch: %w", repo.worktree.RepoName, err))
+				}
+			}
+		}
+
+		if len(failedWorktrees) > 0 {
+			remaining := make([]models.RepoWorktree, 0, len(failedWorktrees))
+			for _, repo := range current.Repos {
+				if failedWorktrees[repo.WorktreePath] {
+					remaining = append(remaining, repo)
+				}
+			}
+			current.Repos = remaining
+			if err := s.State.UpdateWorkspace(*current); err != nil {
+				cleanupErrs = append(cleanupErrs, fmt.Errorf("updating state after cleanup failure: %w", err))
+			}
+			return errors.Join(cleanupErrs...)
+		}
+
+		removeMCPConfig(*current)
+		if err := os.Remove(current.Path); err != nil && !os.IsNotExist(err) {
+			current.Repos = nil
+			cleanupErrs = append(cleanupErrs, fmt.Errorf("removing workspace root %s: %w", current.Path, err))
+			if stateErr := s.State.UpdateWorkspace(*current); stateErr != nil {
+				cleanupErrs = append(cleanupErrs, fmt.Errorf("updating state after root cleanup failure: %w", stateErr))
+			}
+			return errors.Join(cleanupErrs...)
+		}
+		if err := s.State.RemoveWorkspace(current.Name); err != nil {
+			cleanupErrs = append(cleanupErrs, err)
+		}
+		return errors.Join(cleanupErrs...)
+	})
+}
+
+func verifyProvisionedWorktreeIdentity(repos []provisionedRepo) error {
+	var errs []error
+	for _, provisioned := range repos {
+		repo := provisioned.worktree
+		entries, err := gitops.WorktreeList(repo.SourceRepo)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("%s: reading worktree registration: %w", repo.RepoName, err))
+			continue
+		}
+		expectedPath := canonicalPath(repo.WorktreePath)
+		registered := false
+		for _, entry := range entries {
+			if canonicalPath(entry.Path) == expectedPath && entry.Branch == repo.Branch {
+				registered = true
+				break
+			}
+		}
+		if !registered {
+			errs = append(errs, fmt.Errorf("%s: worktree identity changed; refusing automatic cleanup", repo.RepoName))
+			continue
+		}
+		branch, err := gitops.CurrentBranch(repo.WorktreePath)
+		if err != nil || branch != repo.Branch {
+			errs = append(errs, fmt.Errorf("%s: current branch changed; refusing automatic cleanup", repo.RepoName))
 		}
 	}
 	return errors.Join(errs...)
@@ -501,6 +706,10 @@ func (s *Service) removeWorktree(repo, path string, force bool) error {
 }
 
 func (s *Service) deleteBranch(repo models.RepoWorktree, force bool) {
+	if repo.PreserveBranch {
+		logging.Info("preserving pre-existing branch %q in %s", repo.Branch, repo.RepoName)
+		return
+	}
 	if err := gitops.DeleteBranch(repo.SourceRepo, repo.Branch, force); err != nil {
 		logging.Warn("failed to delete branch %q in %s: %s", repo.Branch, repo.RepoName, err)
 		console.Warningf("%s: failed to delete branch %s: %s", repo.RepoName, repo.Branch, err)

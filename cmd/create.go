@@ -26,6 +26,8 @@ var (
 	createReplace       bool
 	createForce         bool
 	createTrack         bool
+	createRecipe        string
+	createJSON          bool
 	createSourceURL     string
 	createSourceProvide string
 	createSourceRef     string
@@ -37,6 +39,16 @@ var createCmd = &cobra.Command{
 	Short: "Create a new workspace",
 	Args:  cobra.MaximumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
+		if createRecipe != "" {
+			if err := runRecipeCreate(cmd, args); err != nil {
+				exitError(terminalSafe(err.Error()))
+			}
+			return
+		}
+		if createJSON {
+			exitError("--json requires --recipe")
+		}
+
 		cfg := config.RequireConfig()
 		repos := discover.FindAllRepos(cfg.RepoDirs)
 		repoMap := discover.RepoMap(repos)
@@ -259,6 +271,8 @@ func init() {
 	createCmd.Flags().BoolVar(&createReplace, "replace", false, "Delete the current workspace (detected from cwd) before creating the new one")
 	createCmd.Flags().BoolVarP(&createForce, "force", "f", false, "Skip --replace confirmation prompt")
 	createCmd.Flags().BoolVar(&createTrack, "track", false, "Check out an existing remote branch (e.g. a PR head) instead of creating a new one")
+	createCmd.Flags().StringVar(&createRecipe, "recipe", "", "Create from a Recipe YAML file")
+	createCmd.Flags().BoolVarP(&createJSON, "json", "j", false, "Output Recipe creation result as JSON")
 	createCmd.Flags().StringVar(&createSourceURL, "source-url", "", "Record the source URL this workspace was seeded from")
 	createCmd.Flags().StringVar(&createSourceProvide, "source-provider", "", "Source provider label (e.g. github, notion, slack)")
 	createCmd.Flags().StringVar(&createSourceRef, "source-ref", "", "Source ref (PR number, page id, message ts)")

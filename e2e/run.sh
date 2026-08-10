@@ -922,6 +922,105 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# Test: Recipe workspace creation
+# ---------------------------------------------------------------------------
+section "Recipe create"
+
+RECIPE_AUTH_ORIGIN="${GROVE_HOME}/recipe-auth.git"
+RECIPE_API_ORIGIN="${GROVE_HOME}/recipe-api.git"
+git clone -q --bare "${REPOS_DIR}/svc-auth" "${RECIPE_AUTH_ORIGIN}"
+git clone -q --bare "${REPOS_DIR}/svc-api" "${RECIPE_API_ORIGIN}"
+git -C "${REPOS_DIR}/svc-auth" remote add origin "file://${RECIPE_AUTH_ORIGIN}"
+git -C "${REPOS_DIR}/svc-api" remote add origin "file://${RECIPE_API_ORIGIN}"
+git -C "${REPOS_DIR}/svc-auth" fetch -q origin
+git -C "${REPOS_DIR}/svc-api" fetch -q origin
+
+RECIPE_FILE="${GROVE_HOME}/recipe.yaml"
+cat > "${RECIPE_FILE}" <<EOF
+version: 1
+name: e2e-recipe
+repositories:
+  auth:
+    url: file://${RECIPE_AUTH_ORIGIN}
+    ref: main
+  api:
+    url: file://${RECIPE_API_ORIGIN}
+    ref: main
+jobs:
+  setup-auth:
+    repository: auth
+    steps:
+      - run: touch .recipe-ran
+  setup-api:
+    repository: api
+    steps:
+      - run: touch .recipe-ran
+  verify:
+    repository: auth
+    needs: [setup-auth, setup-api]
+    steps:
+      - run: test -f .recipe-ran && test -f ../api/.recipe-ran
+EOF
+
+recipe_json=$(gw create recipe-ws --branch feat/recipe-e2e --recipe "${RECIPE_FILE}" --json 2>/dev/null)
+if echo "${recipe_json}" | jq -e '.created == true and .name == "recipe-ws" and (.jobs | length) == 3' >/dev/null; then
+    pass "create --recipe returns successful JSON"
+else
+    fail "create --recipe JSON failed: ${recipe_json}"
+fi
+
+RECIPE_WS="${GROVE_HOME}/.grove/workspaces/recipe-ws"
+if [ -f "${RECIPE_WS}/auth/.recipe-ran" ] && [ -f "${RECIPE_WS}/api/.recipe-ran" ]; then
+    pass "Recipe jobs prepared aliased repository worktrees"
+else
+    fail "Recipe job outputs missing"
+fi
+if [ ! -f "${RECIPE_WS}/auth/.grove-setup-ran" ]; then
+    pass "Recipe create skipped legacy .grove.toml setup"
+else
+    fail "Recipe create unexpectedly ran legacy setup"
+fi
+
+gw delete recipe-ws --force >/dev/null 2>&1
+pass "Recipe workspace cleaned up normally"
+
+FAIL_RECIPE="${GROVE_HOME}/recipe-fail.yaml"
+cat > "${FAIL_RECIPE}" <<EOF
+version: 1
+repositories:
+  api:
+    url: file://${RECIPE_API_ORIGIN}
+    ref: main
+jobs:
+  fail:
+    repository: api
+    steps:
+      - name: Fail deliberately
+        run: touch generated.txt; exit 7
+EOF
+
+if failed_json=$(gw create failed-recipe --branch feat/recipe-fail --recipe "${FAIL_RECIPE}" --json 2>/dev/null); then
+    fail "failing Recipe unexpectedly succeeded"
+else
+    if echo "${failed_json}" | jq -e '.created == false and .error.code == "recipe_step_failed" and .error.job == "fail" and .error.step == 1' >/dev/null; then
+        pass "Recipe failure identifies job and step in JSON"
+    else
+        fail "Recipe failure JSON was not actionable: ${failed_json}"
+    fi
+fi
+if [ ! -d "${GROVE_HOME}/.grove/workspaces/failed-recipe" ] && ! git -C "${REPOS_DIR}/svc-api" show-ref --verify --quiet refs/heads/feat/recipe-fail; then
+    pass "failed Recipe rolled back workspace and owned branch"
+else
+    fail "failed Recipe rollback left workspace or branch"
+fi
+
+if gw create conflict-recipe --branch feat/conflict --recipe "${RECIPE_FILE}" --repos svc-api >/dev/null 2>&1; then
+    fail "--recipe accepted conflicting --repos"
+else
+    pass "--recipe rejects existing repository selectors"
+fi
+
+# ---------------------------------------------------------------------------
 # Test: stats
 # ---------------------------------------------------------------------------
 section "Stats"
