@@ -870,10 +870,14 @@ func TestAddReposAlreadyPresent(t *testing.T) {
 	env.createRepo("api")
 	env.svc.Create("dup-ws", "feat/dup", []string{"api"}, env.repoMap, env.cfg)
 
-	// Adding same repo again should be a no-op
-	err := env.svc.AddRepos("dup-ws", []string{"api"}, env.repoMap)
-	if err != nil {
-		t.Fatalf("add duplicate: %v", err)
+	// Adding same repo again should be a no-op without wait progress.
+	output := captureStderr(t, func() {
+		if err := env.svc.AddRepos("dup-ws", []string{"api"}, env.repoMap); err != nil {
+			t.Fatalf("add duplicate: %v", err)
+		}
+	})
+	if strings.Contains(output, "Adding") {
+		t.Errorf("no-op addition should not show wait progress, got: %q", output)
 	}
 
 	ws, _ := env.svc.State.GetWorkspace("dup-ws")
@@ -1035,10 +1039,14 @@ func TestRemoveReposNonexistent(t *testing.T) {
 	env.createRepo("api")
 	env.svc.Create("rm-ne", "feat/rm-ne", []string{"api"}, env.repoMap, env.cfg)
 
-	// Removing a repo not in workspace should be a no-op
-	err := env.svc.RemoveRepos("rm-ne", []string{"nonexistent"})
-	if err != nil {
-		t.Fatalf("remove nonexistent: %v", err)
+	// Removing a repo not in workspace should be a silent no-op.
+	output := captureStderr(t, func() {
+		if err := env.svc.RemoveRepos("rm-ne", []string{"nonexistent"}); err != nil {
+			t.Fatalf("remove nonexistent: %v", err)
+		}
+	})
+	if output != "" {
+		t.Errorf("no-op removal should be silent, got: %q", output)
 	}
 }
 
@@ -1790,6 +1798,101 @@ func TestRemoveReposWorkspaceNotFound(t *testing.T) {
 // ---------------------------------------------------------------------------
 // Progress output tests
 // ---------------------------------------------------------------------------
+
+func captureStderr(t *testing.T, fn func()) string {
+	t.Helper()
+
+	oldStderr := os.Stderr
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("capture stderr: %v", err)
+	}
+	os.Stderr = w
+	defer func() {
+		os.Stderr = oldStderr
+		w.Close()
+		r.Close()
+	}()
+
+	fn()
+	if err := w.Close(); err != nil {
+		t.Fatalf("close stderr writer: %v", err)
+	}
+
+	var buf bytes.Buffer
+	if _, err := buf.ReadFrom(r); err != nil {
+		t.Fatalf("read stderr: %v", err)
+	}
+	return buf.String()
+}
+
+func TestAddReposShowsProgressOnStderr(t *testing.T) {
+	tests := []struct {
+		name     string
+		toAdd    []string
+		expected string
+	}{
+		{name: "singular", toAdd: []string{"web"}, expected: "Adding 1 repo to add-progress-singular. Please wait."},
+		{name: "plural", toAdd: []string{"web", "worker"}, expected: "Adding 2 repos to add-progress-plural. Please wait."},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			env := setupTestEnv(t)
+			env.createRepo("api")
+			env.createRepo("web")
+			env.createRepo("worker")
+
+			wsName := "add-progress-" + tt.name
+			if err := env.svc.Create(wsName, "feat/"+wsName, []string{"api"}, env.repoMap, env.cfg); err != nil {
+				t.Fatalf("create: %v", err)
+			}
+
+			output := captureStderr(t, func() {
+				if err := env.svc.AddRepos(wsName, tt.toAdd, env.repoMap); err != nil {
+					t.Fatalf("add repos: %v", err)
+				}
+			})
+			if !strings.Contains(output, tt.expected) {
+				t.Errorf("expected %q in stderr, got: %q", tt.expected, output)
+			}
+		})
+	}
+}
+
+func TestRemoveReposShowsProgressOnStderr(t *testing.T) {
+	tests := []struct {
+		name     string
+		toRemove []string
+		expected string
+	}{
+		{name: "singular", toRemove: []string{"web"}, expected: "Removing 1 repo from remove-progress-singular. Please wait."},
+		{name: "plural", toRemove: []string{"web", "worker"}, expected: "Removing 2 repos from remove-progress-plural. Please wait."},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			env := setupTestEnv(t)
+			env.createRepo("api")
+			env.createRepo("web")
+			env.createRepo("worker")
+
+			wsName := "remove-progress-" + tt.name
+			if err := env.svc.Create(wsName, "feat/"+wsName, []string{"api", "web", "worker"}, env.repoMap, env.cfg); err != nil {
+				t.Fatalf("create: %v", err)
+			}
+
+			output := captureStderr(t, func() {
+				if err := env.svc.RemoveRepos(wsName, tt.toRemove); err != nil {
+					t.Fatalf("remove repos: %v", err)
+				}
+			})
+			if !strings.Contains(output, tt.expected) {
+				t.Errorf("expected %q in stderr, got: %q", tt.expected, output)
+			}
+		})
+	}
+}
 
 func TestCreateShowsProgressOnStderr(t *testing.T) {
 	env := setupTestEnv(t)
