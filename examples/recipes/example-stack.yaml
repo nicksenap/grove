@@ -1,30 +1,34 @@
 version: 1
-name: example-stack
+name: grove-tools
 
 repositories:
-  api:
-    url: https://github.com/acme/example-api.git
-    ref: main
-  web:
-    url: https://github.com/acme/example-web.git
-    ref: main
+  grove:
+    url: https://github.com/nicksenap/grove.git
+    ref: master
+  zellij:
+    url: https://github.com/nicksenap/gw-zellij.git
+    ref: master
 
 jobs:
-  setup-api:
-    repository: api
+  test-grove:
+    repository: grove
+    timeout-minutes: 10
     steps:
-      - name: Install API dependencies
-        run: make setup
+      - name: Test Grove
+        run: go test ./...
 
-  setup-web:
-    repository: web
+  test-zellij:
+    repository: zellij
+    timeout-minutes: 10
     steps:
-      - name: Install web dependencies
-        run: make setup
+      - name: Test Zellij plugin
+        run: go test ./...
 
-  verify-api:
-    repository: api
-    needs: [setup-api, setup-web]
+  verify:
+    repository: grove
+    needs: [test-grove, test-zellij]
     steps:
-      - name: Verify API
-        run: make check
+      - name: Confirm clean worktrees
+        run: |
+          test -z "$(git status --short)"
+          test -z "$(git -C ../zellij status --short)"

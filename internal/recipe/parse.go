@@ -232,6 +232,7 @@ func validateJobTypes(job *yaml.Node, basePath string, errors *[]ValidationError
 	}
 	validateScalarField(job, "repository", basePath, "!!str", "string", errors)
 	validateScalarField(job, "working-directory", basePath, "!!str", "string", errors)
+	validateScalarField(job, "timeout-minutes", basePath, "!!int", "integer", errors)
 
 	needs := mappingValue(job, "needs")
 	if needs != nil && requireNodeType(needs, basePath+".needs", yaml.SequenceNode, "sequence", errors) {
@@ -304,7 +305,7 @@ func validateKnownFields(root *yaml.Node, locations map[string]location) []Valid
 			id := jobs.Content[i].Value
 			jobPath := "jobs." + id
 			jobNode := jobs.Content[i+1]
-			checkAllowedFields(jobNode, jobPath, set("repository", "working-directory", "needs", "steps"), &errors)
+			checkAllowedFields(jobNode, jobPath, set("repository", "working-directory", "timeout-minutes", "needs", "steps"), &errors)
 			if steps := mappingValue(jobNode, "steps"); steps != nil && steps.Kind == yaml.SequenceNode {
 				for index, step := range steps.Content {
 					checkAllowedFields(step, fmt.Sprintf("%s.steps[%d]", jobPath, index), set("name", "run"), &errors)

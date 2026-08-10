@@ -5,6 +5,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -371,6 +372,81 @@ func TestCommitsAheadBehind(t *testing.T) {
 	WorktreeRemove(repo, wtPath, true)
 }
 
+func TestCanonicalRemoteIdentity(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{"https://GitHub.com/Acme/example.git", "github.com/Acme/example"},
+		{"git@github.com:Acme/example.git", "github.com/Acme/example"},
+		{"ssh://git@github.com/Acme/example.git", "github.com/Acme/example"},
+		{"git://github.com/Acme/example", "github.com/Acme/example"},
+	}
+	for _, tt := range tests {
+		got, err := CanonicalRemoteIdentity(tt.input)
+		if err != nil {
+			t.Fatalf("CanonicalRemoteIdentity(%q): %v", tt.input, err)
+		}
+		if got != tt.want {
+			t.Errorf("CanonicalRemoteIdentity(%q) = %q, want %q", tt.input, got, tt.want)
+		}
+	}
+}
+
+func TestResolveCommitPrefersRemoteBranch(t *testing.T) {
+	repo := initTestRepo(t)
+	branch := currentBranch(t, repo)
+	remoteSHA := run(t, repo, "git", "rev-parse", "origin/"+branch)
+
+	os.WriteFile(filepath.Join(repo, "local.txt"), []byte("local"), 0o644)
+	run(t, repo, "git", "add", "local.txt")
+	run(t, repo, "git", "commit", "-m", "local only")
+	localSHA := run(t, repo, "git", "rev-parse", "HEAD")
+	if localSHA == remoteSHA {
+		t.Fatal("test setup did not create a local-only commit")
+	}
+
+	got, err := ResolveCommit(repo, branch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != remoteSHA {
+		t.Fatalf("ResolveCommit(%q) = %s, want remote SHA %s", branch, got, remoteSHA)
+	}
+}
+
+func TestResolveCommitRejectsUnknownRef(t *testing.T) {
+	repo := initTestRepo(t)
+	if _, err := ResolveCommit(repo, "missing-ref"); err == nil {
+		t.Fatal("expected unknown ref error")
+	}
+}
+
+func TestResolveCommitRejectsRevisionExpressionsAndLocalFallback(t *testing.T) {
+	repo := initTestRepo(t)
+	run(t, repo, "git", "branch", "local-only")
+	run(t, repo, "git", "branch", "deadbee")
+	for _, ref := range []string{"HEAD~1", "HEAD^", "HEAD@{1}", "local-only", "refs/heads/local-only", "deadbee"} {
+		t.Run(ref, func(t *testing.T) {
+			if _, err := ResolveCommit(repo, ref); err == nil {
+				t.Fatalf("ResolveCommit(%q) should fail", ref)
+			}
+		})
+	}
+}
+
+func TestResolveCommitAcceptsExactTagAndObjectID(t *testing.T) {
+	repo := initTestRepo(t)
+	sha := run(t, repo, "git", "rev-parse", "HEAD")
+	run(t, repo, "git", "tag", "v1.0.0")
+	for _, ref := range []string{"v1.0.0", sha} {
+		got, err := ResolveCommit(repo, ref)
+		if err != nil || got != sha {
+			t.Fatalf("ResolveCommit(%q) = %q, %v; want %s", ref, got, err, sha)
+		}
+	}
+}
+
 func TestRemoteURL(t *testing.T) {
 	repo := initTestRepo(t)
 
@@ -609,6 +685,61 @@ func TestClone(t *testing.T) {
 	}
 	if clonedPath != clonedPath2 {
 		t.Errorf("expected same path, got %q vs %q", clonedPath, clonedPath2)
+	}
+}
+
+func TestCloneConcurrentCallsShareCompletedClone(t *testing.T) {
+	dir := t.TempDir()
+	bare := filepath.Join(dir, "origin.git")
+	run(t, dir, "git", "init", "--bare", bare)
+	seed := filepath.Join(dir, "seed")
+	run(t, dir, "git", "clone", bare, seed)
+	run(t, seed, "git", "config", "user.email", "test@test.com")
+	run(t, seed, "git", "config", "user.name", "Test")
+	os.WriteFile(filepath.Join(seed, "README.md"), []byte("test"), 0o644)
+	run(t, seed, "git", "add", ".")
+	run(t, seed, "git", "commit", "-m", "initial")
+	run(t, seed, "git", "push", "origin", "HEAD")
+	destDir := filepath.Join(dir, "repos")
+	os.MkdirAll(destDir, 0o755)
+
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	errs := make([]error, 2)
+	paths := make([]string, 2)
+	for i := range errs {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			<-start
+			paths[i], _, errs[i] = Clone(bare, destDir)
+		}(i)
+	}
+	close(start)
+	wg.Wait()
+	for i, err := range errs {
+		if err != nil {
+			t.Fatalf("Clone[%d]: %v", i, err)
+		}
+	}
+	if paths[0] != paths[1] || !IsGitRepo(paths[0]) {
+		t.Fatalf("paths = %v, want one valid clone", paths)
+	}
+	matches, err := filepath.Glob(filepath.Join(destDir, ".grove-clone-*"))
+	if err != nil || len(matches) != 0 {
+		t.Fatalf("temporary clones remained: %v, err=%v", matches, err)
+	}
+}
+
+func TestCloneExistingRepoWithoutOrigin(t *testing.T) {
+	dir := t.TempDir()
+	destDir := filepath.Join(dir, "repos")
+	os.MkdirAll(destDir, 0o755)
+	existing := filepath.Join(destDir, "example")
+	run(t, destDir, "git", "init", existing)
+
+	if _, _, err := Clone("https://github.com/acme/example.git", destDir); err == nil || !strings.Contains(err.Error(), "no origin") {
+		t.Fatalf("error = %v, want missing origin rejection", err)
 	}
 }
 

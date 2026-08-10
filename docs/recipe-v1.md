@@ -2,7 +2,7 @@
 
 ## Objective
 
-Define a strict YAML description of repositories and local preparation jobs. This first slice only parses and validates Recipes; it does not execute them or change existing workspace creation.
+Define a strict YAML description of repositories and local preparation jobs. Validation is independently available before [workspace creation and execution](recipe-execution.md).
 
 Recipe uses GitHub Actions-inspired vocabulary (`jobs`, `needs`, `steps`, `name`, and `run`) to reduce the learning curve. It is a Grove-specific schema and is not syntactically, semantically, or tooling-compatible with GitHub Actions.
 
@@ -63,6 +63,7 @@ See [`examples/recipes/example-stack.yaml`](../examples/recipes/example-stack.ya
 - `jobs` — optional map of job IDs; an omitted or empty map creates a repository-only Recipe. Each job contains:
   - `repository` — required repository ID.
   - `working-directory` — optional relative path inside the repository; defaults to its root.
+  - `timeout-minutes` — optional integer from 1–360; execution defaults to 360 minutes.
   - `needs` — optional list of job IDs that must complete first.
   - `steps` — required non-empty ordered list of steps.
 - Step fields:
@@ -124,4 +125,4 @@ Validation errors use stable `code`, `path`, `line`, `column`, and `message` fie
 
 ## Non-goals
 
-Execution, `gw create --recipe`, Oven, TOML, includes, templates, expressions, triggers, runners, actions, variables, environment maps, cache declarations, conditions, matrices, retries, services, containers, remote files, or credential-provider machinery.
+Oven, TOML, includes, templates, expressions, triggers, runners, actions, variables, environment maps, cache declarations, conditions, matrices, retries, services, containers, remote files, or credential-provider machinery.

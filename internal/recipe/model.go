@@ -30,6 +30,7 @@ type Repository struct {
 type Job struct {
 	Repository       string   `yaml:"repository" json:"repository"`
 	WorkingDirectory string   `yaml:"working-directory,omitempty" json:"working_directory,omitempty"`
+	TimeoutMinutes   int      `yaml:"timeout-minutes,omitempty" json:"timeout_minutes,omitempty"`
 	Needs            []string `yaml:"needs,omitempty" json:"needs,omitempty"`
 	Steps            []Step   `yaml:"steps" json:"steps"`
 }

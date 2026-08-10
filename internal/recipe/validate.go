@@ -81,6 +81,9 @@ func validateJob(id string, job Job, recipe *Recipe, validator *validator) {
 	if !validWorkingDirectory(job.WorkingDirectory) {
 		validator.add("invalid_path", basePath+".working-directory", "working-directory must be a relative path inside the repository")
 	}
+	if _, present := validator.locations[basePath+".timeout-minutes"]; present && (job.TimeoutMinutes < 1 || job.TimeoutMinutes > 360) {
+		validator.add("invalid_range", basePath+".timeout-minutes", "timeout-minutes must be between 1 and 360")
+	}
 	validateSteps(job.Steps, basePath, validator)
 	validateDependencies(id, job.Needs, recipe.Jobs, basePath, validator)
 }
