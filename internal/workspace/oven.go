@@ -90,6 +90,7 @@ func (service *Service) BakeOvenSlot(options OvenBakeOptions, prepare func(map[s
 		if err := errors.Join(
 			service.verifyOvenBackingPath(*current),
 			verifyDetachedOvenRepositories(*current, current.Repositories),
+			validatePreparedTrees(*current),
 			verifyNoOvenCredentialResidue(*current),
 		); err != nil {
 			current.Status = oven.StatusQuarantined

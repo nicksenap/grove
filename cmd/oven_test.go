@@ -204,3 +204,19 @@ func TestCreateOvenFlagRequiresRecipe(t *testing.T) {
 		t.Fatal("expected --oven without --recipe to fail")
 	}
 }
+
+func TestCreateRecipeAndOvenFlagShorthands(t *testing.T) {
+	tests := map[string]string{
+		"recipe": "R",
+		"oven":   "O",
+	}
+	for name, shorthand := range tests {
+		flag := createCmd.Flags().Lookup(name)
+		if flag == nil {
+			t.Fatalf("--%s flag is not registered", name)
+		}
+		if flag.Shorthand != shorthand {
+			t.Errorf("--%s shorthand = %q, want %q", name, flag.Shorthand, shorthand)
+		}
+	}
+}

@@ -103,15 +103,10 @@ func (service *Service) looksOvenBacked(workspace models.Workspace) (bool, error
 	} else if err != nil && !os.IsNotExist(err) {
 		return false, err
 	}
+	ovenRoot := canonicalPath(service.Oven.Root)
 	for _, repository := range workspace.Repos {
-		entries, err := gitops.WorktreeList(repository.SourceRepo)
-		if err != nil {
-			return false, err
-		}
-		for _, entry := range entries {
-			if ovenPathWithin(service.Oven.Root, entry.Path) {
-				return true, nil
-			}
+		if ovenPathWithin(ovenRoot, canonicalPath(repository.WorktreePath)) {
+			return true, nil
 		}
 	}
 	return false, nil
@@ -325,16 +320,34 @@ func (service *Service) finalizeDeletedOvenClaim(expected oven.Slot) error {
 	if slot == nil || slot.Claim == nil || expected.Claim == nil || slot.Claim.Nonce != expected.Claim.Nonce {
 		return fmt.Errorf("oven claim changed before backing cleanup")
 	}
-	if err := os.Remove(slot.BackingPath); err != nil && !os.IsNotExist(err) {
+	if err := service.removeOwnedOvenClaimRoot(*slot); err != nil {
 		slot.Status = oven.StatusCleanupError
-		slot.Failure = safeOvenFailure(fmt.Errorf("removing claimed backing root: %w", err))
+		slot.Failure = safeOvenFailure(err)
 		if saveErr := service.Oven.Save(inventory); saveErr != nil {
-			return fmt.Errorf("removing claimed backing root: %w; recording cleanup failure: %v", err, saveErr)
+			return fmt.Errorf("%w; recording cleanup failure: %v", err, saveErr)
 		}
-		return fmt.Errorf("removing claimed backing root: %w", err)
+		return err
 	}
 	inventory.RemoveSlot(slot.ID)
 	return service.Oven.Save(inventory)
+}
+
+func (service *Service) removeOwnedOvenClaimRoot(slot oven.Slot) error {
+	if slot.Claim == nil || slot.Claim.Alias == "" || filepath.Dir(slot.BackingPath) == "." {
+		return fmt.Errorf("removing claimed backing root: claim identity is incomplete")
+	}
+	if err := service.verifyOvenBackingPath(slot); err != nil {
+		return fmt.Errorf("removing claimed backing root: %w", err)
+	}
+	for _, repository := range slot.Repositories {
+		if _, err := os.Lstat(repository.WorktreePath); !os.IsNotExist(err) {
+			return fmt.Errorf("removing claimed backing root: repository path %s remains", repository.Name)
+		}
+	}
+	if err := os.RemoveAll(slot.BackingPath); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("removing claimed backing root: %w", err)
+	}
+	return nil
 }
 
 func verifyClaimedOvenRepository(prepared oven.Repository, claimed oven.ClaimRepository) error {
