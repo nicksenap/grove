@@ -14,6 +14,7 @@ import (
 	"github.com/nicksenap/grove/internal/gitops"
 	"github.com/nicksenap/grove/internal/logging"
 	"github.com/nicksenap/grove/internal/models"
+	"github.com/nicksenap/grove/internal/oven"
 )
 
 // BranchMode determines how a worktree's branch is provisioned.
@@ -615,6 +616,10 @@ func (s *Service) DeleteWithOptions(name string, opts RemoveOptions) error {
 	if ws == nil {
 		return fmt.Errorf("workspace %s not found", name)
 	}
+	ovenSlot, err := s.verifyOvenWorkspaceIfClaimed(*ws)
+	if err != nil {
+		return err
+	}
 
 	if err := preflightRemovals(ws.Repos, opts.Force); err != nil {
 		return err
@@ -622,7 +627,11 @@ func (s *Service) DeleteWithOptions(name string, opts RemoveOptions) error {
 
 	// Teardown commands are user-owned and may invoke gw. Run them before the
 	// mutation lock, then reload and preflight state again while locked.
-	s.runTeardownHooks(ws.Repos)
+	operationWorkspace := *ws
+	if ovenSlot != nil {
+		applyOvenPhysicalPaths(&operationWorkspace, *ovenSlot)
+	}
+	s.runTeardownHooks(operationWorkspace.Repos)
 
 	var deleted *models.Workspace
 	if err := s.State.WithLock(func() error {
@@ -647,30 +656,25 @@ func (s *Service) deleteLocked(name string, opts RemoveOptions) (*models.Workspa
 	if ws == nil {
 		return nil, fmt.Errorf("workspace %s not found", name)
 	}
+	ovenSlot, err := s.verifyOvenWorkspaceIfClaimed(*ws)
+	if err != nil {
+		return nil, err
+	}
 	if err := preflightRemovals(ws.Repos, opts.Force); err != nil {
 		return nil, err
+	}
+	if ovenSlot != nil {
+		ovenSlot, err = s.beginOvenCleanup(ovenSlot.ID, opts.Force)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	logging.Info("deleting workspace %q", name)
 	original := *ws
-	remaining := make([]models.RepoWorktree, 0, len(ws.Repos))
-	var cleanupErrs []error
-
-	for _, repo := range ws.Repos {
-		if err := s.removeWorktree(repo.SourceRepo, repo.WorktreePath, opts.Force); err != nil {
-			remaining = append(remaining, repo)
-			cleanupErrs = append(cleanupErrs, fmt.Errorf("%s: removing worktree: %w", repo.RepoName, err))
-			continue
-		}
-		s.deleteBranch(repo, opts.Force)
-	}
-
+	remaining, cleanupErrs := s.removeWorkspaceRepositories(ws.Repos, ovenSlot, opts.Force)
 	if len(remaining) > 0 {
-		ws.Repos = remaining
-		if err := s.State.UpdateWorkspace(*ws); err != nil {
-			cleanupErrs = append(cleanupErrs, fmt.Errorf("updating state: %w", err))
-		}
-		return nil, errors.Join(cleanupErrs...)
+		return nil, s.persistPartialDelete(ws, ovenSlot, remaining, cleanupErrs)
 	}
 
 	removeMCPConfig(*ws)
@@ -686,7 +690,61 @@ func (s *Service) deleteLocked(name string, opts RemoveOptions) (*models.Workspa
 	if err := s.State.RemoveWorkspace(name); err != nil {
 		return nil, err
 	}
+	if ovenSlot != nil {
+		if err := s.finalizeDeletedOvenClaim(*ovenSlot); err != nil {
+			return &original, err
+		}
+	}
 	return &original, nil
+}
+
+func (s *Service) removeWorkspaceRepositories(repositories []models.RepoWorktree, slot *oven.Slot, force bool) ([]models.RepoWorktree, []error) {
+	remaining := make([]models.RepoWorktree, 0, len(repositories))
+	var cleanupErrs []error
+	for _, repository := range repositories {
+		removePath, expectedBranch, err := deletionOwnership(repository, slot)
+		if err != nil {
+			remaining = append(remaining, repository)
+			cleanupErrs = append(cleanupErrs, err)
+			continue
+		}
+		if err := s.removeWorktree(repository.SourceRepo, removePath, force); err != nil {
+			remaining = append(remaining, repository)
+			cleanupErrs = append(cleanupErrs, fmt.Errorf("%s: removing worktree: %w", repository.RepoName, err))
+			continue
+		}
+		s.deleteBranchIfOwned(repository, force, expectedBranch)
+	}
+	return remaining, cleanupErrs
+}
+
+func deletionOwnership(repository models.RepoWorktree, slot *oven.Slot) (string, string, error) {
+	if slot != nil {
+		claimed := ovenClaimRepositoryByName(*slot.Claim, repository.RepoName)
+		return claimed.PhysicalPath, claimed.ExpectedBranchCommit, nil
+	}
+	if repository.PreserveBranch {
+		return repository.WorktreePath, "", nil
+	}
+	commit, err := gitops.LocalBranchCommit(repository.SourceRepo, repository.Branch)
+	if err != nil {
+		return "", "", fmt.Errorf("%s: reading branch ownership: %w", repository.RepoName, err)
+	}
+	return repository.WorktreePath, commit, nil
+}
+
+func (s *Service) persistPartialDelete(workspace *models.Workspace, slot *oven.Slot, remaining []models.RepoWorktree, cleanupErrs []error) error {
+	if slot != nil {
+		if _, err := s.updateOvenCleanupProgress(slot.ID, slot.Claim.Nonce, remaining); err != nil {
+			cleanupErrs = append(cleanupErrs, fmt.Errorf("recording Oven cleanup progress: %w", err))
+			return errors.Join(cleanupErrs...)
+		}
+	}
+	workspace.Repos = remaining
+	if err := s.State.UpdateWorkspace(*workspace); err != nil {
+		cleanupErrs = append(cleanupErrs, fmt.Errorf("updating state: %w", err))
+	}
+	return errors.Join(cleanupErrs...)
 }
 
 func (s *Service) runTeardownHooks(repos []models.RepoWorktree) {
@@ -706,11 +764,23 @@ func (s *Service) removeWorktree(repo, path string, force bool) error {
 }
 
 func (s *Service) deleteBranch(repo models.RepoWorktree, force bool) {
+	expected := ""
+	if !repo.PreserveBranch {
+		expected, _ = gitops.LocalBranchCommit(repo.SourceRepo, repo.Branch)
+	}
+	s.deleteBranchIfOwned(repo, force, expected)
+}
+
+func (s *Service) deleteBranchIfOwned(repo models.RepoWorktree, force bool, expected string) {
 	if repo.PreserveBranch {
 		logging.Info("preserving pre-existing branch %q in %s", repo.Branch, repo.RepoName)
 		return
 	}
-	if err := gitops.DeleteBranch(repo.SourceRepo, repo.Branch, force); err != nil {
+	if expected == "" {
+		logging.Warn("could not verify branch %q ownership in %s; preserving it", repo.Branch, repo.RepoName)
+		return
+	}
+	if err := gitops.DeleteBranchIfAt(repo.SourceRepo, repo.Branch, expected, force); err != nil {
 		logging.Warn("failed to delete branch %q in %s: %s", repo.Branch, repo.RepoName, err)
 		console.Warningf("%s: failed to delete branch %s: %s", repo.RepoName, repo.Branch, err)
 		return
@@ -797,6 +867,11 @@ func (s *Service) renameLocked(oldName, newName string) error {
 	if ws == nil {
 		return fmt.Errorf("workspace %s not found", oldName)
 	}
+	if slot, err := s.ovenClaimForWorkspace(oldName); err != nil {
+		return err
+	} else if slot != nil {
+		return fmt.Errorf("oven-backed workspaces cannot be renamed")
+	}
 
 	existing, err := s.State.GetWorkspace(newName)
 	if err != nil {
@@ -879,6 +954,11 @@ func (s *Service) addReposLocked(wsName string, repoNames []string, repoMap map[
 	if ws == nil {
 		return nil, fmt.Errorf("workspace %s not found", wsName)
 	}
+	if slot, err := s.ovenClaimForWorkspace(wsName); err != nil {
+		return nil, err
+	} else if slot != nil {
+		return nil, fmt.Errorf("repositories cannot be added to an Oven-backed workspace")
+	}
 
 	existing := make(map[string]bool)
 	for _, r := range ws.Repos {
@@ -943,6 +1023,11 @@ func (s *Service) RemoveReposWithOptions(wsName string, repoNames []string, opts
 	if ws == nil {
 		return fmt.Errorf("workspace %s not found", wsName)
 	}
+	if slot, err := s.ovenClaimForWorkspace(wsName); err != nil {
+		return err
+	} else if slot != nil {
+		return fmt.Errorf("repositories cannot be removed from an Oven-backed workspace")
+	}
 
 	selected := selectRepos(ws, repoNames)
 	if err := preflightRemovals(selected, opts.Force); err != nil {
@@ -979,6 +1064,11 @@ func (s *Service) removeReposLocked(wsName string, repoNames []string, opts Remo
 	}
 	if ws == nil {
 		return 0, fmt.Errorf("workspace %s not found", wsName)
+	}
+	if slot, err := s.ovenClaimForWorkspace(wsName); err != nil {
+		return 0, err
+	} else if slot != nil {
+		return 0, fmt.Errorf("repositories cannot be removed from an Oven-backed workspace")
 	}
 
 	items := selectRepos(ws, repoNames)
@@ -1083,6 +1173,13 @@ func (s *Service) Sync(wsName string) error {
 	}
 	if ws == nil {
 		return fmt.Errorf("workspace %s not found", wsName)
+	}
+	ovenSlot, err := s.verifyOvenWorkspaceIfClaimed(*ws)
+	if err != nil {
+		return err
+	}
+	if ovenSlot != nil {
+		applyOvenPhysicalPaths(ws, *ovenSlot)
 	}
 
 	logging.Info("syncing workspace %q", wsName)
@@ -1211,6 +1308,13 @@ func (s *Service) Status(wsName string, opts StatusOptions) error {
 	}
 	if ws == nil {
 		return fmt.Errorf("workspace %s not found", wsName)
+	}
+	ovenSlot, err := s.verifyOvenWorkspaceIfClaimed(*ws)
+	if err != nil {
+		return err
+	}
+	if ovenSlot != nil {
+		applyOvenPhysicalPaths(ws, *ovenSlot)
 	}
 
 	results := s.fetchStatusResults(ws.Repos, opts.PR)
@@ -1405,11 +1509,27 @@ func (s *Service) doctor(fix bool) ([]models.DoctorIssue, int, error) {
 	if err != nil {
 		return nil, 0, err
 	}
+	var ovenInventory oven.Inventory
+	if s.Oven != nil {
+		ovenInventory, err = s.Oven.Load()
+		if err != nil {
+			return nil, 0, err
+		}
+	}
 
 	var issues []models.DoctorIssue
 	fixed := 0
 
+	workspaceNames := make(map[string]bool, len(workspaces))
 	for _, ws := range workspaces {
+		workspaceNames[ws.Name] = true
+		if _, err := s.verifyOvenWorkspaceIfClaimed(ws); err != nil {
+			issues = append(issues, models.DoctorIssue{
+				Workspace: ws.Name, Issue: "Oven ownership mismatch: " + err.Error(),
+				SuggestedAction: "inspect with gw oven status; manual recovery required",
+			})
+			continue
+		}
 		f, iss := s.checkWorkspaceExists(ws, fix)
 		if f > 0 {
 			fixed += f
@@ -1422,6 +1542,15 @@ func (s *Service) doctor(fix bool) ([]models.DoctorIssue, int, error) {
 		f, iss = s.checkWorkspaceRepos(&ws, fix)
 		fixed += f
 		issues = append(issues, iss...)
+	}
+	for _, slot := range ovenInventory.Slots {
+		if slot.Claim != nil && !workspaceNames[slot.Claim.WorkspaceName] {
+			issues = append(issues, models.DoctorIssue{
+				Workspace:       slot.Claim.WorkspaceName,
+				Issue:           fmt.Sprintf("Oven claim %s has no workspace state", slot.ID),
+				SuggestedAction: "inspect with gw oven status; manual recovery required",
+			})
+		}
 	}
 
 	return issues, fixed, nil
