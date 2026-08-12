@@ -12,6 +12,8 @@ gw oven reconcile recipe.yaml
 gw oven status
 gw oven status --json
 gw oven clean [recipe.yaml]
+gw oven schedule-example recipe.yaml --every 30m
+gw oven schedule-example recipe.yaml --every 30m --format launchd|cron|systemd
 
 gw create cake --branch feat/cake --recipe recipe.yaml --oven
 ```
@@ -23,6 +25,68 @@ gw create cake --branch feat/cake --recipe recipe.yaml --oven
 - `create --oven` claims the newest ready generation known locally. A clean miss reports `Oven miss` and runs normal cold Recipe creation.
 
 Schedule `gw oven reconcile recipe.yaml` with cron, `launchd`, systemd, or another external scheduler. Grove does not install or run a daemon.
+
+## External scheduling
+
+Generate a scheduler example without installing anything:
+
+```bash
+# Defaults to launchd on macOS and systemd on Linux
+gw oven schedule-example /absolute/path/recipe.yaml --every 30m
+
+# Request another supported format
+gw oven schedule-example /absolute/path/recipe.yaml --every 30m --format cron
+gw oven schedule-example /absolute/path/recipe.yaml --every 30m --format systemd
+```
+
+The generated example contains canonical absolute paths for both the active `gw` executable and the Recipe, plus a stable Recipe-specific identifier in launchd/systemd names so multiple Recipes do not collide. Review the output before installing it. If you later switch between a Homebrew and source-built `gw`, regenerate the example so the scheduler invokes the intended binary.
+
+### macOS launchd
+
+```bash
+gw oven schedule-example recipe.yaml --every 30m --format launchd \
+  > ~/Library/LaunchAgents/com.grove.oven.<recipe-id>.plist
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.grove.oven.<recipe-id>.plist
+```
+
+Unload it with:
+
+```bash
+launchctl bootout gui/$(id -u) ~/Library/LaunchAgents/com.grove.oven.<recipe-id>.plist
+```
+
+`launchd` is preferred to cron on laptops because its interval jobs resume after sleep. The example also runs once when loaded.
+
+### cron
+
+```bash
+gw oven schedule-example recipe.yaml --every 30m --format cron
+crontab -e
+```
+
+Copy the generated entry into the crontab. Cron examples support intervals that evenly divide an hour or day.
+
+### Linux systemd user timer
+
+```bash
+gw oven schedule-example recipe.yaml --every 30m --format systemd
+```
+
+Split the generated service and timer sections into:
+
+```text
+~/.config/systemd/user/grove-oven.service
+~/.config/systemd/user/grove-oven.timer
+```
+
+Then enable the timer:
+
+```bash
+systemctl --user daemon-reload
+systemctl --user enable --now grove-oven.timer
+```
+
+Grove only prints examples. It does not write scheduler files, call `launchctl`, edit crontabs, enable systemd units, store scheduling state, or run a background process.
 
 ## Freshness and generations
 
