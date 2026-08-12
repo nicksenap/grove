@@ -53,6 +53,13 @@ func Run(wsName string) error {
 	if err != nil {
 		return err
 	}
+	ovenSlot, err := NewService().verifyOvenWorkspaceIfClaimed(*ws)
+	if err != nil {
+		return err
+	}
+	if ovenSlot != nil {
+		applyOvenPhysicalPaths(ws, *ovenSlot)
+	}
 
 	runnable := GetRunnable(ws)
 	if len(runnable) == 0 {

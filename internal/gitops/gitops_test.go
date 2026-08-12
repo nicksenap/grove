@@ -175,6 +175,27 @@ func TestRemoteBranchExists(t *testing.T) {
 	}
 }
 
+func TestWorktreeAddDetached(t *testing.T) {
+	repo := initTestRepo(t)
+	commit, err := HeadCommit(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	worktree := filepath.Join(t.TempDir(), "detached")
+	if err := WorktreeAddDetached(repo, worktree, commit); err != nil {
+		t.Fatal(err)
+	}
+	if branch, err := CurrentBranch(worktree); err != nil || branch != "" {
+		t.Fatalf("branch = %q, %v; want detached", branch, err)
+	}
+	if head, err := HeadCommit(worktree); err != nil || head != commit {
+		t.Fatalf("HEAD = %q, %v; want %q", head, err, commit)
+	}
+	if err := WorktreeRemove(repo, worktree, true); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestWorktreeAddTracking(t *testing.T) {
 	repo := initTestRepo(t)
 
@@ -797,4 +818,40 @@ func TestCloneRetryCleanup(t *testing.T) {
 func currentBranch(t *testing.T, repo string) string {
 	t.Helper()
 	return run(t, repo, "git", "branch", "--show-current")
+}
+
+func TestDeleteBranchIfAtUsesExpectedCommit(t *testing.T) {
+	repo := initTestRepo(t)
+	expected, err := HeadCommit(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := CreateBranch(repo, "feat/owned", expected); err != nil {
+		t.Fatal(err)
+	}
+	if err := DeleteBranchIfAt(repo, "feat/owned", expected, true); err != nil {
+		t.Fatal(err)
+	}
+	if BranchExists(repo, "feat/owned") {
+		t.Fatal("expected owned branch to be deleted")
+	}
+
+	if err := os.WriteFile(filepath.Join(repo, "changed.txt"), []byte("changed"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	run(t, repo, "git", "add", "changed.txt")
+	run(t, repo, "git", "commit", "-m", "changed")
+	changed, err := HeadCommit(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := CreateBranch(repo, "feat/changed", changed); err != nil {
+		t.Fatal(err)
+	}
+	if err := DeleteBranchIfAt(repo, "feat/changed", expected, true); err == nil {
+		t.Fatal("expected changed branch deletion to fail")
+	}
+	if !BranchExists(repo, "feat/changed") {
+		t.Fatal("changed branch was deleted")
+	}
 }

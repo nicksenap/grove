@@ -18,6 +18,7 @@ import (
 	"github.com/nicksenap/grove/internal/gitops"
 	"github.com/nicksenap/grove/internal/lifecycle"
 	"github.com/nicksenap/grove/internal/models"
+	"github.com/nicksenap/grove/internal/oven"
 	"github.com/nicksenap/grove/internal/recipe"
 	"github.com/nicksenap/grove/internal/workspace"
 	"github.com/spf13/cobra"
@@ -35,6 +36,7 @@ type recipeCreateOutput struct {
 	Name    string                   `json:"name"`
 	Path    string                   `json:"path,omitempty"`
 	Recipe  string                   `json:"recipe,omitempty"`
+	Oven    string                   `json:"oven,omitempty"`
 	Jobs    *[]recipe.JobResult      `json:"jobs,omitempty"`
 	Error   *recipeCreateErrorOutput `json:"error,omitempty"`
 }
@@ -71,7 +73,7 @@ func (e *recipeCreateRunError) Unwrap() error { return e.cause }
 func runRecipeCreate(cmd *cobra.Command, args []string) error {
 	options := recipeCreateOptions{
 		Recipe: createRecipe, Repos: createRepos, Preset: createPreset,
-		All: createAll, Replace: createReplace, Track: createTrack, Force: createForce,
+		All: createAll, Replace: createReplace, Track: createTrack, Force: createForce, Oven: createOven,
 	}
 	if err := validateRecipeCreateOptions(options); err != nil {
 		return writeRecipeCreateFailure(cmd, "", "", false, recipeCreateErrorOutput{Code: createErrorRecipeInvalid, Message: err.Error()}, err)
@@ -92,20 +94,47 @@ func runRecipeCreate(cmd *cobra.Command, args []string) error {
 	}
 
 	cfg := config.RequireConfig()
-	resolved, err := resolveRecipeRepositories(parsed.Recipe, cfg)
-	if err != nil {
-		return writeRecipeCreateFailure(cmd, name, parsed.Recipe.Name, false, recipeCreateErrorOutput{Code: createErrorResolutionFailed, Message: err.Error()}, err)
-	}
-
 	var source *models.WorkspaceSource
 	if createSourceURL != "" || createSourceProvide != "" {
 		source = &models.WorkspaceSource{Provider: createSourceProvide, URL: createSourceURL, Ref: createSourceRef, Title: createSourceTitle}
 	}
 
+	svc := workspace.NewService()
+	ovenResult := ""
+	if createOven {
+		if err := svc.RecoverOven(); err != nil {
+			failure := recipeCreateErrorOutput{Code: createErrorProvisionFailed, Message: err.Error()}
+			return writeRecipeCreateFailure(cmd, name, parsed.Recipe.Name, false, failure, err)
+		}
+		runner := oven.LocalRunnerIdentity()
+		recipeKey, identityErr := oven.RecipeIdentity(parsed.Recipe, runner)
+		if identityErr != nil {
+			return writeRecipeCreateFailure(cmd, name, parsed.Recipe.Name, false, recipeCreateErrorOutput{Code: createErrorRecipeInvalid, Message: identityErr.Error()}, identityErr)
+		}
+		claim, claimErr := svc.ClaimOvenSlot(workspace.OvenClaimOptions{
+			RecipeKey: recipeKey, Runner: runner, Name: name, Branch: branch, Config: cfg, Source: source,
+		})
+		if claimErr == nil {
+			if claim.Warning != nil {
+				console.Warningf("Oven claim completed with recovery warning: %s", terminalSafe(claim.Warning.Error()))
+			}
+			return finishRecipeCreate(cmd, name, branch, parsed.Recipe.Name, "hit", recipe.Report{Jobs: []recipe.JobResult{}}, source)
+		}
+		if !errors.Is(claimErr, workspace.ErrOvenMiss) {
+			failure := recipeCreateErrorOutput{Code: createErrorProvisionFailed, Message: claimErr.Error()}
+			return writeRecipeCreateFailure(cmd, name, parsed.Recipe.Name, false, failure, claimErr)
+		}
+		ovenResult = "miss"
+		console.Warningf("Oven miss for %s; creating cold", parsed.Recipe.Name)
+	}
+
+	resolved, err := resolveRecipeRepositories(parsed.Recipe, cfg)
+	if err != nil {
+		return writeRecipeCreateFailure(cmd, name, parsed.Recipe.Name, false, recipeCreateErrorOutput{Code: createErrorResolutionFailed, Message: err.Error()}, err)
+	}
 	ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	var report recipe.Report
-	svc := workspace.NewService()
 	err = svc.CreateWithPreparation(name, workspace.PreparationOpts{
 		CreateOpts: workspace.CreateOpts{
 			Branch: branch, Repos: resolved.Names, RepoMap: resolved.RepoMap, Cfg: cfg, Source: source,
@@ -120,12 +149,16 @@ func runRecipeCreate(cmd *cobra.Command, args []string) error {
 		report, executeErr = (recipe.Executor{Output: cmd.ErrOrStderr()}).Execute(ctx, parsed.Recipe, worktrees)
 		return executeErr
 	})
-	wsPath := filepath.Join(cfg.WorkspaceDir, name)
 	if err != nil {
 		failure := recipeCreateFailureFromError(err)
 		return writeRecipeCreateFailure(cmd, name, parsed.Recipe.Name, false, failure, err)
 	}
+	return finishRecipeCreate(cmd, name, branch, parsed.Recipe.Name, ovenResult, report, source)
+}
 
+func finishRecipeCreate(cmd *cobra.Command, name, branch, recipeName, ovenResult string, report recipe.Report, source *models.WorkspaceSource) error {
+	cfg := config.RequireConfig()
+	wsPath := filepath.Join(cfg.WorkspaceDir, name)
 	vars := lifecycle.Vars{Name: name, Path: wsPath, Branch: branch}
 	if source != nil {
 		vars.SourceURL, vars.SourceRef, vars.SourceTitle = source.URL, source.Ref, source.Title
@@ -135,7 +168,7 @@ func runRecipeCreate(cmd *cobra.Command, args []string) error {
 			failure := recipeCreateErrorOutput{Code: createErrorPostCreateFailed, Message: hookErr.Error()}
 			if createJSON {
 				if err := json.NewEncoder(cmd.OutOrStdout()).Encode(recipeCreateOutput{
-					Created: true, Name: name, Path: wsPath, Recipe: parsed.Recipe.Name, Jobs: &report.Jobs, Error: &failure,
+					Created: true, Name: name, Path: wsPath, Recipe: recipeName, Oven: ovenResult, Jobs: &report.Jobs, Error: &failure,
 				}); err != nil {
 					return err
 				}
@@ -144,10 +177,9 @@ func runRecipeCreate(cmd *cobra.Command, args []string) error {
 		}
 		console.Warning(hookErr.Error())
 	}
-
 	if createJSON {
 		return json.NewEncoder(cmd.OutOrStdout()).Encode(recipeCreateOutput{
-			Created: true, Name: name, Path: wsPath, Recipe: parsed.Recipe.Name, Jobs: &report.Jobs,
+			Created: true, Name: name, Path: wsPath, Recipe: recipeName, Oven: ovenResult, Jobs: &report.Jobs,
 		})
 	}
 	return nil
@@ -211,10 +243,14 @@ type recipeCreateOptions struct {
 	Replace bool
 	Track   bool
 	Force   bool
+	Oven    bool
 }
 
 func validateRecipeCreateOptions(options recipeCreateOptions) error {
 	if options.Recipe == "" {
+		if options.Oven {
+			return errors.New("--oven requires --recipe")
+		}
 		return nil
 	}
 	var conflicts []string
