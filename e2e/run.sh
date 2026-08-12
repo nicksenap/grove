@@ -1049,10 +1049,25 @@ else
 fi
 
 gw delete oven-hit --force >/dev/null 2>&1
-if echo "$(gw oven status --json 2>/dev/null)" | jq -e 'length == 0' >/dev/null; then
-    pass "deleting an Oven workspace cleans its backing slot"
+if echo "$(gw oven status --json 2>/dev/null)" | jq -e 'length == 1 and .[0].status == "ready"' >/dev/null; then
+    pass "deleting an Oven workspace preserves its reusable template"
 else
-    fail "claimed Oven slot remained after delete"
+    fail "reusable Oven template disappeared after delete"
+fi
+
+oven_reuse_json=$(gw create oven-reuse --branch feat/oven-reuse --recipe "${RECIPE_FILE}" --oven --json 2>/dev/null)
+if echo "${oven_reuse_json}" | jq -e '.created == true and .oven == "hit" and (.jobs | length) == 0' >/dev/null; then
+    pass "one prepared template serves another independent claim"
+else
+    fail "reusable Oven claim failed: ${oven_reuse_json}"
+fi
+gw delete oven-reuse --force >/dev/null 2>&1
+
+oven_clean_before_miss_json=$(gw oven clean "${RECIPE_FILE}" --json 2>/dev/null)
+if echo "${oven_clean_before_miss_json}" | jq -e '.removed == 1 and (.blocked | length) == 0' >/dev/null; then
+    pass "oven clean removes the reusable template"
+else
+    fail "oven clean before miss failed: ${oven_clean_before_miss_json}"
 fi
 
 oven_miss_json=$(gw create oven-miss --branch feat/oven-miss --recipe "${RECIPE_FILE}" --oven --json 2>/dev/null)
