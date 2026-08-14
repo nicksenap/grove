@@ -13,6 +13,8 @@ gw plugin install github.com/user/gw-something
 
 This downloads the latest release binary for your OS/architecture from the repo's GitHub Releases. The naming convention follows [goreleaser](https://goreleaser.com/) defaults: `gw-dash_0.1.0_darwin_arm64.tar.gz`.
 
+Public releases require no token: Grove uses GitHub's public `releases/latest` redirect and downloads conventionally named assets directly without consuming the REST API quota.
+
 ### Manual
 
 Drop any executable named `gw-<name>` into `~/.grove/plugins/`:
