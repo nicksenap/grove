@@ -1,6 +1,6 @@
 # Local Oven
 
-The local Oven is an opt-in pool of prepared Recipe workspaces. It keeps one detached, reusable template per reconciled Recipe generation so workspace creation can materialize prepared dependencies without rerunning Recipe jobs.
+The local Oven is an opt-in pool of prepared Recipe workspaces. It keeps one detached, ready slot per reconciled Recipe generation so workspace creation can claim prepared dependencies without rerunning Recipe jobs.
 
 Cold Recipe creation remains unchanged and is always the fallback.
 
@@ -19,10 +19,10 @@ gw create cake --branch feat/cake --recipe recipe.yaml --oven
 ```
 
 - `bake` resolves the Recipe's refs and prepares a slot for the current generation if one is not already ready.
-- `reconcile` fetches refs, resolves a fresh generation, ensures one reusable ready template, and only then removes older ready/failed templates. Active workspaces remain independent.
-- `status` shows reusable templates plus active, failed, quarantined, and cleanup-blocked materializations. Failure summaries never contain captured command output.
-- `clean` removes safe ready/failed templates. It refuses active, claimed, or quarantined materializations.
-- `create --oven` materializes an independent workspace from the newest reusable template known locally. The template remains ready, so unchanged upstream commits support repeated instant creates without another reconcile. A clean miss reports `Oven miss` and runs normal cold Recipe creation.
+- `reconcile` fetches refs, resolves a fresh generation, ensures one ready slot, and only then removes older unclaimed ready/failed generations.
+- `status` shows ready, active, failed, quarantined, and cleanup-blocked slots. Failure summaries never contain captured command output.
+- `clean` removes safe unclaimed ready and failed slots. It refuses active, claimed, or quarantined slots.
+- `create --oven` claims the newest ready generation known locally. A clean miss reports `Oven miss` and runs normal cold Recipe creation.
 
 Schedule `gw oven reconcile recipe.yaml` with cron, `launchd`, systemd, or another external scheduler. Grove does not install or run a daemon.
 
@@ -92,9 +92,9 @@ Grove only prints examples. It does not write scheduler files, call `launchctl`,
 
 A Recipe key hashes the normalized Recipe plus local runner identity. A generation additionally hashes every resolved repository commit SHA. Map ordering and `needs` ordering do not affect identity; sequential step ordering does.
 
-Only `bake` and `reconcile` fetch refs. An Oven hit intentionally does not contact remotes: it materializes from the newest generation previously made ready by reconciliation. This keeps the hit path fast and makes freshness an explicit scheduling policy.
+Only `bake` and `reconcile` fetch refs. An Oven hit intentionally does not contact remotes: it claims the newest generation previously made ready by reconciliation. This keeps the hit path fast and makes freshness an explicit scheduling policy.
 
-Reconciliation bakes a replacement before removing the previous ready template. If replacement preparation fails, the previous generation remains available, while `create --oven` falls back cold when no ready template matches the current normalized Recipe key.
+Reconciliation bakes a replacement before removing the previous ready generation. If replacement preparation fails, the previous generation remains available for inspection, while `create --oven` falls back cold when no ready slot matches the current normalized Recipe key.
 
 ## Storage and visibility
 
@@ -106,25 +106,23 @@ Oven state is separate from normal workspace state:
 └── generations/<generation>/slots/<slot>/...
 ```
 
-The Oven root is mode `0700`; its atomic inventory is mode `0600`. Templates and claims use separate immutable backing paths. A claim creates exact-commit worktrees, materializes the template with native copy-on-write cloning when available (safe recursive copy otherwise), preserves each new worktree's Git administration, creates a named symlink in `workspace_dir`, attaches the requested branches, and writes ordinary workspace state last. `state.json`, not directory existence, is the user-visible readiness authority.
+The Oven root is mode `0700`; its atomic inventory is mode `0600`. Slots use immutable physical backing paths. Claim creates a named symlink in `workspace_dir`, attaches the requested branches, and writes ordinary workspace state last. `state.json`, not directory existence, is the user-visible readiness authority.
 
-Normal deletion verifies the external claim record, removes only that claim's Git worktrees and alias, and then removes its backing root and inventory record. The reusable template remains ready.
+Normal deletion verifies the external claim record, removes Git worktrees through the alias, removes the alias, and then removes the empty backing root and inventory record.
 
 ## Lifecycle and recovery
 
 Slots use a bounded lifecycle:
 
 ```text
-template: baking → ready ───────────────→ removed when stale/cleaned
-                    ├→ claiming → claimed
-                    ├→ claiming → claimed
-                    └→ claiming → claimed
-claim:              └→ quarantined/cleanup_failed
+baking → ready → claiming → claimed
+   └────→ failed/quarantined
+claimed ─→ cleanup_failed
 ```
 
 - Partial or interrupted bakes are never ready.
 - A live bake carries its local process owner so concurrent reconciliation does not remove worktrees under preparation.
-- Interrupted unmodified claim materializations are rolled back and removed; their reusable template remains `ready`.
+- Interrupted unmodified claims return to `ready`.
 - A claim with complete matching workspace state finishes as `claimed`.
 - Ambiguous aliases, branches, paths, state, or Git registrations become `quarantined`; Grove never guesses ownership.
 - Sequential cleanup can be partial. Remaining records stay visible for deterministic reconciliation or explicit repair.

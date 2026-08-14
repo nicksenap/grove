@@ -50,13 +50,10 @@ func (service *Service) RecoverOven() error {
 				slot.UpdatedAt = time.Now().UTC().Format(time.RFC3339Nano)
 				changed = true
 			case oven.StatusClaiming:
-				claimChanged, remove, err := service.recoverInterruptedClaim(slot)
+				claimChanged, err := service.recoverInterruptedClaim(slot)
 				if err != nil {
 					slot.Status = oven.StatusQuarantined
 					slot.Failure = safeOvenFailure(err)
-					changed = true
-				} else if remove {
-					removeSlots = append(removeSlots, slot.ID)
 					changed = true
 				} else if claimChanged {
 					changed = true
@@ -188,7 +185,7 @@ func (service *Service) recoverOvenCleanup(slot *oven.Slot, workspace *models.Wo
 	if err := service.removeWorkspaceState(workspace.Name); err != nil {
 		return false, err
 	}
-	if err := service.removeOwnedOvenClaimRoot(*slot); err != nil {
+	if err := os.Remove(slot.BackingPath); err != nil && !os.IsNotExist(err) {
 		return false, err
 	}
 	return true, nil
@@ -330,156 +327,83 @@ func (service *Service) recoverDeletedClaim(slot *oven.Slot) (bool, error) {
 			return false, fmt.Errorf("%s: claimed worktree path remains without workspace state", repository.Name)
 		}
 	}
-	if err := service.removeOwnedOvenClaimRoot(*slot); err != nil {
+	if err := os.Remove(slot.BackingPath); err != nil && !os.IsNotExist(err) {
 		return false, fmt.Errorf("removing orphaned claimed backing root: %w", err)
 	}
 	return true, nil
 }
 
-func (service *Service) recoverInterruptedClaim(slot *oven.Slot) (bool, bool, error) {
+func (service *Service) recoverInterruptedClaim(slot *oven.Slot) (bool, error) {
 	if slot.Claim == nil {
-		return false, false, fmt.Errorf("claiming slot has no claim record")
+		return false, fmt.Errorf("claiming slot has no claim record")
 	}
 	workspace, err := service.State.GetWorkspace(slot.Claim.WorkspaceName)
 	if err != nil {
-		return false, false, err
+		return false, err
 	}
 	if workspace != nil {
 		if err := service.verifyOvenWorkspaceOwnership(*workspace, *slot); err != nil {
-			return false, false, err
+			return false, err
 		}
 		slot.Status = oven.StatusClaimed
 		slot.Failure = ""
 		slot.UpdatedAt = time.Now().UTC().Format(time.RFC3339Nano)
-		return true, false, nil
+		return true, nil
 	}
 	if err := service.rollbackInterruptedClaim(*slot); err != nil {
-		return false, false, err
-	}
-	if slot.TemplateSlotID != "" {
-		return true, true, nil
+		return false, err
 	}
 	slot.Status = oven.StatusReady
 	slot.Claim = nil
 	slot.Failure = ""
 	slot.UpdatedAt = time.Now().UTC().Format(time.RFC3339Nano)
-	return true, false, nil
+	return true, nil
 }
 
 func (service *Service) rollbackInterruptedClaim(slot oven.Slot) error {
-	if err := service.verifyInterruptedClaimBacking(slot); err != nil {
+	if err := service.verifyOvenBackingPath(slot); err != nil {
 		return err
 	}
-	aliasExists, err := inspectInterruptedClaimAlias(slot)
-	if err != nil {
-		return err
+	aliasExists := false
+	if target, err := os.Readlink(slot.Claim.Alias); err == nil {
+		if canonicalPath(target) != canonicalPath(slot.BackingPath) {
+			return fmt.Errorf("interrupted claim alias target changed")
+		}
+		aliasExists = true
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("interrupted claim alias is not owned: %w", err)
 	}
-	present, assigned, err := inspectInterruptedClaimRepositories(slot)
-	if err != nil {
-		return err
+
+	assigned := make([]oven.ClaimRepository, 0, len(slot.Claim.Repositories))
+	for _, claimed := range slot.Claim.Repositories {
+		prepared := ovenRepositoryByName(slot, claimed.Name)
+		branch, err := gitops.CurrentBranch(claimed.PhysicalPath)
+		if err != nil {
+			return fmt.Errorf("%s: reading interrupted claim branch: %w", claimed.Name, err)
+		}
+		head, err := gitops.HeadCommit(claimed.PhysicalPath)
+		if err != nil || head != prepared.Commit {
+			return fmt.Errorf("%s: interrupted claim commit changed", claimed.Name)
+		}
+		status, err := gitops.TrackedStatus(claimed.PhysicalPath)
+		if err != nil || status != "" {
+			return fmt.Errorf("%s: interrupted claim has tracked changes", claimed.Name)
+		}
+		switch branch {
+		case "":
+			continue
+		case claimed.Branch:
+			assigned = append(assigned, claimed)
+		default:
+			return fmt.Errorf("%s: interrupted claim branch changed", claimed.Name)
+		}
 	}
+
 	if aliasExists {
 		if err := os.Remove(slot.Claim.Alias); err != nil {
 			return err
 		}
 	}
-	if err := rollbackInterruptedClaimBranches(slot, assigned); err != nil {
-		return err
-	}
-	if err := verifyDetachedOvenRepositories(slot, present); err != nil {
-		return fmt.Errorf("interrupted claim recovery did not restore readiness: %w", err)
-	}
-	if slot.TemplateSlotID != "" {
-		return service.removeInterruptedMaterialization(slot, present)
-	}
-	return nil
-}
-
-func inspectInterruptedClaimAlias(slot oven.Slot) (bool, error) {
-	target, err := os.Readlink(slot.Claim.Alias)
-	if os.IsNotExist(err) {
-		return false, nil
-	}
-	if err != nil {
-		return false, fmt.Errorf("interrupted claim alias is not owned: %w", err)
-	}
-	if canonicalPath(target) != canonicalPath(slot.BackingPath) {
-		return false, fmt.Errorf("interrupted claim alias target changed")
-	}
-	return true, nil
-}
-
-func inspectInterruptedClaimRepositories(slot oven.Slot) ([]oven.Repository, []oven.ClaimRepository, error) {
-	present := make([]oven.Repository, 0, len(slot.Repositories))
-	assigned := make([]oven.ClaimRepository, 0, len(slot.Claim.Repositories))
-	for _, claimed := range slot.Claim.Repositories {
-		prepared, exists, attached, err := inspectInterruptedClaimRepository(slot, claimed)
-		if err != nil {
-			return nil, nil, err
-		}
-		if !exists {
-			continue
-		}
-		present = append(present, prepared)
-		if attached {
-			assigned = append(assigned, claimed)
-		}
-	}
-	return present, assigned, nil
-}
-
-func inspectInterruptedClaimRepository(
-	slot oven.Slot,
-	claimed oven.ClaimRepository,
-) (oven.Repository, bool, bool, error) {
-	prepared := ovenRepositoryByName(slot, claimed.Name)
-	if prepared.Name == "" {
-		return oven.Repository{}, false, false, fmt.Errorf("%s: interrupted claim repository is missing", claimed.Name)
-	}
-	pathExists, registered, err := inspectInterruptedClaimPath(claimed)
-	if err != nil {
-		return oven.Repository{}, false, false, err
-	}
-	if !pathExists && !registered {
-		if slot.TemplateSlotID == "" {
-			return oven.Repository{}, false, false, fmt.Errorf("%s: interrupted legacy claim worktree is missing", claimed.Name)
-		}
-		return prepared, false, false, nil
-	}
-	if !pathExists && registered && slot.TemplateSlotID != "" {
-		if err := restoreInterruptedMaterializationCheckout(claimed.PhysicalPath); err != nil {
-			return oven.Repository{}, false, false,
-				fmt.Errorf("%s: restoring interrupted materialization checkout: %w", claimed.Name, err)
-		}
-		pathExists = true
-	}
-	if !pathExists || !registered {
-		return oven.Repository{}, false, false,
-			fmt.Errorf("%s: interrupted claim path and Git registration disagree", claimed.Name)
-	}
-	branch, err := gitops.CurrentBranch(claimed.PhysicalPath)
-	if err != nil {
-		return oven.Repository{}, false, false, fmt.Errorf("%s: reading interrupted claim branch: %w", claimed.Name, err)
-	}
-	head, err := gitops.HeadCommit(claimed.PhysicalPath)
-	if err != nil || head != prepared.Commit {
-		return oven.Repository{}, false, false, fmt.Errorf("%s: interrupted claim commit changed", claimed.Name)
-	}
-	status, err := gitops.TrackedStatus(claimed.PhysicalPath)
-	if err != nil || status != "" {
-		return oven.Repository{}, false, false, fmt.Errorf("%s: interrupted claim has tracked changes", claimed.Name)
-	}
-	switch branch {
-	case "":
-		return prepared, true, false, nil
-	case claimed.Branch:
-		return prepared, true, true, nil
-	default:
-		return oven.Repository{}, false, false, fmt.Errorf("%s: interrupted claim branch changed", claimed.Name)
-	}
-}
-
-func rollbackInterruptedClaimBranches(slot oven.Slot, assigned []oven.ClaimRepository) error {
 	for index := len(assigned) - 1; index >= 0; index-- {
 		claimed := assigned[index]
 		commit := ovenRepositoryByName(slot, claimed.Name).Commit
@@ -492,93 +416,30 @@ func rollbackInterruptedClaimBranches(slot oven.Slot, assigned []oven.ClaimRepos
 			}
 		}
 	}
+	if err := verifyDetachedOvenRepositories(slot, slot.Repositories); err != nil {
+		return fmt.Errorf("interrupted claim recovery did not restore readiness: %w", err)
+	}
 	return nil
-}
-
-func (service *Service) removeInterruptedMaterialization(slot oven.Slot, present []oven.Repository) error {
-	for index := len(present) - 1; index >= 0; index-- {
-		repository := present[index]
-		if err := service.removeWorktree(repository.SourceRepo, repository.WorktreePath, true); err != nil {
-			return fmt.Errorf("%s: removing interrupted materialization: %w", repository.Name, err)
-		}
-	}
-	if len(present) == 0 {
-		if _, err := os.Lstat(slot.BackingPath); os.IsNotExist(err) {
-			return nil
-		} else if err != nil {
-			return err
-		}
-	}
-	return service.removeOwnedOvenClaimRoot(slot)
-}
-
-func restoreInterruptedMaterializationCheckout(physicalPath string) error {
-	checkout := physicalPath + ".checkout"
-	info, err := os.Lstat(checkout)
-	if err != nil {
-		return err
-	}
-	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
-		return fmt.Errorf("preserved checkout is not a real directory")
-	}
-	if _, err := os.Lstat(physicalPath); !os.IsNotExist(err) {
-		return fmt.Errorf("materialized path changed before checkout restoration")
-	}
-	return os.Rename(checkout, physicalPath)
-}
-
-func (service *Service) verifyInterruptedClaimBacking(slot oven.Slot) error {
-	err := service.verifyOvenBackingPath(slot)
-	if err == nil || slot.TemplateSlotID == "" {
-		return err
-	}
-	if _, statErr := os.Lstat(slot.BackingPath); os.IsNotExist(statErr) {
-		return nil
-	} else if statErr != nil {
-		return statErr
-	}
-	return err
-}
-
-func inspectInterruptedClaimPath(claimed oven.ClaimRepository) (bool, bool, error) {
-	_, statErr := os.Lstat(claimed.PhysicalPath)
-	if statErr != nil && !os.IsNotExist(statErr) {
-		return false, false, statErr
-	}
-	pathExists := statErr == nil
-	entries, err := gitops.WorktreeList(claimed.SourceRepo)
-	if err != nil {
-		return false, false, err
-	}
-	for _, entry := range entries {
-		if canonicalPath(entry.Path) == canonicalPath(claimed.PhysicalPath) {
-			return pathExists, true, nil
-		}
-	}
-	return pathExists, false, nil
 }
 
 // PruneOvenRecipe removes stale ready and failed slots only after a replacement
 // generation is ready. Claimed, active, and quarantined slots are retained.
-func (service *Service) PruneOvenRecipe(recipePath, generation, runner, keepSlotID string) (OvenCleanResult, error) {
-	return service.cleanOvenSlots(func(slot oven.Slot, inventory oven.Inventory) bool {
-		return slot.RecipePath == recipePath && slot.Runner == runner && slot.ID != keepSlotID && slot.TemplateSlotID == "" &&
-			(slot.Status == oven.StatusReady || slot.Status == oven.StatusFailed) && !ovenTemplateReferenced(inventory, slot.ID)
-	}, keepSlotID, recipePath, generation, runner)
+func (service *Service) PruneOvenRecipe(recipePath, _ string, runner, keepSlotID string) (OvenCleanResult, error) {
+	return service.cleanOvenSlots(func(slot oven.Slot) bool {
+		return slot.RecipePath == recipePath && slot.Runner == runner && slot.ID != keepSlotID &&
+			(slot.Status == oven.StatusReady || slot.Status == oven.StatusFailed)
+	})
 }
 
 // CleanOven removes unclaimed ready and failed slots, optionally restricted to
 // one canonical Recipe path. Unsafe lifecycle states remain visible as blocked.
 func (service *Service) CleanOven(recipePath string) (OvenCleanResult, error) {
-	return service.cleanOvenSlots(func(slot oven.Slot, _ oven.Inventory) bool {
+	return service.cleanOvenSlots(func(slot oven.Slot) bool {
 		return recipePath == "" || slot.RecipePath == recipePath
-	}, "", "", "", "")
+	})
 }
 
-func (service *Service) cleanOvenSlots(
-	selectSlot func(oven.Slot, oven.Inventory) bool,
-	keepSlotID, keepRecipePath, keepGeneration, keepRunner string,
-) (OvenCleanResult, error) {
+func (service *Service) cleanOvenSlots(selectSlot func(oven.Slot) bool) (OvenCleanResult, error) {
 	result := OvenCleanResult{Blocked: []string{}}
 	if service.Oven == nil {
 		return result, nil
@@ -588,17 +449,10 @@ func (service *Service) cleanOvenSlots(
 		if err != nil {
 			return err
 		}
-		if keepSlotID != "" {
-			keep := inventory.FindSlot(keepSlotID)
-			if keep == nil || keep.TemplateSlotID != "" || keep.Status != oven.StatusReady ||
-				keep.RecipePath != keepRecipePath || keep.Generation != keepGeneration || keep.Runner != keepRunner {
-				return fmt.Errorf("oven replacement template %s is no longer ready", keepSlotID)
-			}
-		}
 		var cleanupErrs []error
 		ids := make([]string, 0, len(inventory.Slots))
 		for _, slot := range inventory.Slots {
-			if selectSlot(slot, inventory) {
+			if selectSlot(slot) {
 				ids = append(ids, slot.ID)
 			}
 		}
@@ -609,10 +463,6 @@ func (service *Service) cleanOvenSlots(
 			}
 			switch slot.Status {
 			case oven.StatusReady:
-				if ovenTemplateReferenced(inventory, slot.ID) {
-					result.Blocked = append(result.Blocked, slot.ID)
-					continue
-				}
 				if err := removeReadyOvenSlot(service, *slot); err != nil {
 					slot.Status = oven.StatusQuarantined
 					slot.Failure = safeOvenFailure(err)
@@ -640,15 +490,6 @@ func (service *Service) cleanOvenSlots(
 		return errors.Join(cleanupErrs...)
 	})
 	return result, err
-}
-
-func ovenTemplateReferenced(inventory oven.Inventory, templateSlotID string) bool {
-	for _, slot := range inventory.Slots {
-		if slot.TemplateSlotID == templateSlotID {
-			return true
-		}
-	}
-	return false
 }
 
 func removeReadyOvenSlot(service *Service, slot oven.Slot) error {

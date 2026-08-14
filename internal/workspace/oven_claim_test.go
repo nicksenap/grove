@@ -5,7 +5,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -43,162 +42,20 @@ func TestClaimOvenSlotCreatesNormalWorkspaceAndCleansBackingOnDelete(t *testing.
 	env := setupTestEnv(t)
 	env.createRepo("api")
 	env.createRepo("web")
-	template := bakeTestOvenSlot(t, env, "slot-claim", "api", "web")
+	slot := bakeTestOvenSlot(t, env, "slot-claim", "api", "web")
 
 	result, err := env.svc.ClaimOvenSlot(ovenClaimOptions(env, "cake", "feat/cake"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.SlotID == template.ID || result.Warning != nil {
+	if result.SlotID != slot.ID || result.Warning != nil {
 		t.Fatalf("claim result = %+v", result)
 	}
-	inventory, err := env.svc.Oven.Load()
-	if err != nil {
-		t.Fatal(err)
-	}
-	claimSlot := inventory.FindSlot(result.SlotID)
-	if claimSlot == nil || claimSlot.TemplateSlotID != template.ID {
-		t.Fatalf("materialized claim slot = %+v", claimSlot)
-	}
-	assertClaimedOvenWorkspace(t, env, *claimSlot)
+	assertClaimedOvenWorkspace(t, env, *slot)
 	if err := env.svc.Delete("cake"); err != nil {
 		t.Fatal(err)
 	}
-	assertDeletedOvenBacking(t, env, *claimSlot)
-	inventory, err = env.svc.Oven.Load()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if ready := inventory.FindSlot(template.ID); ready == nil || ready.Status != oven.StatusReady {
-		t.Fatalf("reusable template after claim delete = %+v", ready)
-	}
-}
-
-func TestClaimOvenSlotMaterializesMultipleIndependentWorkspacesFromOneBake(t *testing.T) {
-	env := setupTestEnv(t)
-	env.createRepo("api")
-	template := bakeTestOvenSlot(t, env, "slot-reusable", "api")
-	prepared := filepath.Join(template.Repositories[0].WorktreePath, "node_modules", "prepared.txt")
-	if err := os.WriteFile(prepared, []byte("prepared once"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	first, err := env.svc.ClaimOvenSlot(ovenClaimOptions(env, "first", "feat/first"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	secondOptions := ovenClaimOptions(env, "second", "feat/second")
-	secondOptions.nonce = "dddddddddddddddddddddddddddddddd"
-	second, err := env.svc.ClaimOvenSlot(secondOptions)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if first.SlotID == second.SlotID || first.SlotID == template.ID || second.SlotID == template.ID {
-		t.Fatalf("template/claim IDs are not distinct: template=%s first=%s second=%s", template.ID, first.SlotID, second.SlotID)
-	}
-	for _, workspaceName := range []string{"first", "second"} {
-		workspace, err := env.svc.State.GetWorkspace(workspaceName)
-		if err != nil || workspace == nil {
-			t.Fatalf("workspace %s = %+v, %v", workspaceName, workspace, err)
-		}
-		data, err := os.ReadFile(filepath.Join(workspace.Repos[0].WorktreePath, "node_modules", "prepared.txt"))
-		if err != nil || string(data) != "prepared once" {
-			t.Fatalf("workspace %s prepared data = %q, %v", workspaceName, data, err)
-		}
-	}
-	firstWorkspace, _ := env.svc.State.GetWorkspace("first")
-	if err := os.WriteFile(filepath.Join(firstWorkspace.Repos[0].WorktreePath, "node_modules", "prepared.txt"), []byte("first changed"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	secondWorkspace, _ := env.svc.State.GetWorkspace("second")
-	secondData, err := os.ReadFile(filepath.Join(secondWorkspace.Repos[0].WorktreePath, "node_modules", "prepared.txt"))
-	if err != nil || string(secondData) != "prepared once" {
-		t.Fatalf("second workspace shared mutable prepared data = %q, %v", secondData, err)
-	}
-	if err := env.svc.DeleteWithOptions("first", RemoveOptions{Force: true}); err != nil {
-		t.Fatal(err)
-	}
-	if err := env.svc.Status("second", StatusOptions{JSON: true}); err != nil {
-		t.Fatalf("deleting first claim damaged second: %v", err)
-	}
-	thirdOptions := ovenClaimOptions(env, "third", "feat/third")
-	thirdOptions.nonce = "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
-	if _, err := env.svc.ClaimOvenSlot(thirdOptions); err != nil {
-		t.Fatalf("template was not reusable after claim deletion: %v", err)
-	}
-	templateData, err := os.ReadFile(prepared)
-	if err != nil || string(templateData) != "prepared once" {
-		t.Fatalf("template was mutated through claim = %q, %v", templateData, err)
-	}
-}
-
-func TestClaimOvenSlotSerializesConcurrentMaterializationsFromOneTemplate(t *testing.T) {
-	env := setupTestEnv(t)
-	env.createRepo("api")
-	template := bakeTestOvenSlot(t, env, "slot-concurrent-materialization", "api")
-	options := []OvenClaimOptions{
-		ovenClaimOptions(env, "first", "feat/first"),
-		ovenClaimOptions(env, "second", "feat/second"),
-	}
-	options[1].nonce = "dddddddddddddddddddddddddddddddd"
-
-	var wait sync.WaitGroup
-	errs := make([]error, len(options))
-	for index := range options {
-		wait.Add(1)
-		go func(index int) {
-			defer wait.Done()
-			_, errs[index] = env.svc.ClaimOvenSlot(options[index])
-		}(index)
-	}
-	wait.Wait()
-	for index, err := range errs {
-		if err != nil {
-			t.Fatalf("claim %d: %v", index, err)
-		}
-	}
-	inventory, err := env.svc.Oven.Load()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if ready := inventory.FindSlot(template.ID); ready == nil || ready.Status != oven.StatusReady {
-		t.Fatalf("concurrent claims consumed template: %+v", ready)
-	}
-	for _, name := range []string{"first", "second"} {
-		if claim := inventory.ClaimForWorkspace(name); claim == nil || claim.TemplateSlotID != template.ID {
-			t.Fatalf("concurrent claim %s = %+v", name, claim)
-		}
-	}
-}
-
-func TestClaimOvenSlotCleansFailedMaterializationAndKeepsTemplateReady(t *testing.T) {
-	env := setupTestEnv(t)
-	source := env.createRepo("api")
-	template := bakeTestOvenSlot(t, env, "slot-materialization-failure", "api")
-	injected := errors.New("injected prepared clone failure")
-	options := ovenClaimOptions(env, "failed-copy", "feat/failed-copy")
-	options.clonePrepared = func(_, _ string) error { return injected }
-
-	if _, err := env.svc.ClaimOvenSlot(options); !errors.Is(err, injected) {
-		t.Fatalf("claim error = %v", err)
-	}
-	inventory, err := env.svc.Oven.Load()
-	if err != nil {
-		t.Fatal(err)
-	}
-	ready := inventory.FindSlot(template.ID)
-	if len(inventory.Slots) != 1 || ready == nil || ready.Status != oven.StatusReady {
-		t.Fatalf("failed materialization changed template inventory: %+v", inventory)
-	}
-	if workspace, _ := env.svc.State.GetWorkspace("failed-copy"); workspace != nil {
-		t.Fatalf("failed materialization published workspace: %+v", workspace)
-	}
-	for _, entry := range mustWorktreeList(t, source) {
-		if canonicalPath(entry.Path) != canonicalPath(source) &&
-			canonicalPath(entry.Path) != canonicalPath(template.Repositories[0].WorktreePath) {
-			t.Fatalf("failed materialization worktree remained: %+v", entry)
-		}
-	}
+	assertDeletedOvenBacking(t, env, *slot)
 }
 
 func assertClaimedOvenWorkspace(t *testing.T, env *testEnv, slot oven.Slot) {
@@ -279,35 +136,11 @@ func TestClaimOvenSlotMissDoesNotMutateWorkspaceState(t *testing.T) {
 	}
 }
 
-func TestClaimOvenSlotNameCollisionDoesNotQuarantineReadySlot(t *testing.T) {
-	env := setupTestEnv(t)
-	env.createRepo("api")
-	slot := bakeTestOvenSlot(t, env, "slot-name-collision", "api")
-	existing := models.NewWorkspace("existing", filepath.Join(env.wsDir, "existing"), "feat/existing")
-	if err := env.svc.State.AddWorkspace(existing); err != nil {
-		t.Fatal(err)
-	}
-
-	if _, err := env.svc.ClaimOvenSlot(ovenClaimOptions(env, "existing", "feat/existing")); err == nil {
-		t.Fatal("claim with existing workspace name succeeded")
-	}
-	inventory, err := env.svc.Oven.Load()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if current := inventory.FindSlot(slot.ID); current == nil || current.Status != oven.StatusReady {
-		t.Fatalf("name collision changed ready slot: %+v", current)
-	}
-	if _, err := env.svc.ClaimOvenSlot(ovenClaimOptions(env, "available", "feat/available")); err != nil {
-		t.Fatalf("claim after name collision: %v", err)
-	}
-}
-
 func TestClaimOvenSlotRollsBackSecondBranchFailure(t *testing.T) {
 	env := setupTestEnv(t)
 	env.createRepo("api")
 	env.createRepo("web")
-	template := bakeTestOvenSlot(t, env, "slot-attach-failure", "api", "web")
+	slot := bakeTestOvenSlot(t, env, "slot-attach-failure", "api", "web")
 	injected := errors.New("attach failed")
 	options := ovenClaimOptions(env, "failed", "feat/failed")
 	options.attachBranch = func(repository oven.ClaimRepository, commit string) error {
@@ -324,11 +157,11 @@ func TestClaimOvenSlotRollsBackSecondBranchFailure(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ready := inventory.FindSlot(template.ID)
-	if len(inventory.Slots) != 1 || ready == nil || ready.Status != oven.StatusReady || ready.Claim != nil {
-		t.Fatalf("rolled-back inventory = %+v", inventory)
+	ready := inventory.FindSlot(slot.ID)
+	if ready == nil || ready.Status != oven.StatusReady || ready.Claim != nil {
+		t.Fatalf("rolled-back slot = %+v", ready)
 	}
-	for _, repository := range template.Repositories {
+	for _, repository := range slot.Repositories {
 		if branch, err := gitops.CurrentBranch(repository.WorktreePath); err != nil || branch != "" {
 			t.Fatalf("%s branch after rollback = %q, %v", repository.Name, branch, err)
 		}
@@ -361,8 +194,8 @@ func TestClaimOvenSlotPreservesExternalAliasRace(t *testing.T) {
 		t.Fatalf("external target changed: %q, %v", data, err)
 	}
 	inventory, _ := env.svc.Oven.Load()
-	if current := inventory.FindSlot(slot.ID); len(inventory.Slots) != 1 || current == nil || current.Status != oven.StatusReady {
-		t.Fatalf("inventory after alias race = %+v", inventory)
+	if current := inventory.FindSlot(slot.ID); current == nil || current.Status != oven.StatusReady {
+		t.Fatalf("slot after alias race = %+v", current)
 	}
 }
 
@@ -396,15 +229,10 @@ func TestClaimOvenSlotTreatsCommittedStateWriteAsSuccess(t *testing.T) {
 func TestOvenOwnershipBlocksTamperedStatusDeleteAndShapeChanges(t *testing.T) {
 	env := setupTestEnv(t)
 	env.createRepo("api")
-	bakeTestOvenSlot(t, env, "slot-tamper", "api")
+	slot := bakeTestOvenSlot(t, env, "slot-tamper", "api")
 	if _, err := env.svc.ClaimOvenSlot(ovenClaimOptions(env, "claimed", "feat/claimed")); err != nil {
 		t.Fatal(err)
 	}
-	inventory, err := env.svc.Oven.Load()
-	if err != nil {
-		t.Fatal(err)
-	}
-	slot := inventory.ClaimForWorkspace("claimed")
 	alias := filepath.Join(env.wsDir, "claimed")
 	if err := os.Remove(alias); err != nil {
 		t.Fatal(err)
@@ -452,60 +280,6 @@ func TestOvenOwnershipBlocksTamperedStatusDeleteAndShapeChanges(t *testing.T) {
 	}
 }
 
-func TestOvenDeleteRemovesWorkspaceRootMetadataAfterRepositories(t *testing.T) {
-	env := setupTestEnv(t)
-	env.createRepo("api")
-	bakeTestOvenSlot(t, env, "slot-root-metadata", "api")
-	if _, err := env.svc.ClaimOvenSlot(ovenClaimOptions(env, "root-metadata", "feat/root-metadata")); err != nil {
-		t.Fatal(err)
-	}
-	workspace, err := env.svc.State.GetWorkspace("root-metadata")
-	if err != nil || workspace == nil {
-		t.Fatalf("workspace = %+v, %v", workspace, err)
-	}
-	if err := os.MkdirAll(filepath.Join(workspace.Path, ".pi"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(workspace.Path, ".pi", "metadata.json"), []byte("{}"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := env.svc.DeleteWithOptions("root-metadata", RemoveOptions{Force: true}); err != nil {
-		t.Fatal(err)
-	}
-	inventory, err := env.svc.Oven.Load()
-	if err != nil || inventory.ClaimForWorkspace("root-metadata") != nil {
-		t.Fatalf("claim survived root metadata cleanup: %+v, %v", inventory, err)
-	}
-}
-
-func TestRemoveOwnedOvenClaimRootRejectsBackingOutsideSlotIdentity(t *testing.T) {
-	env := setupTestEnv(t)
-	configureTestOven(env)
-	outside := filepath.Join(env.dir, "outside")
-	if err := os.Mkdir(outside, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	sentinel := filepath.Join(outside, "sentinel")
-	if err := os.WriteFile(sentinel, []byte("keep"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	slot := oven.Slot{
-		ID:          testOvenSlotID("unsafe-cleanup"),
-		Generation:  testOvenGeneration,
-		BackingPath: outside,
-		Claim: &oven.Claim{
-			Alias: filepath.Join(env.wsDir, "unsafe-cleanup"),
-		},
-	}
-
-	if err := env.svc.removeOwnedOvenClaimRoot(slot); err == nil {
-		t.Fatal("cleanup accepted a backing path outside the slot identity")
-	}
-	if data, err := os.ReadFile(sentinel); err != nil || string(data) != "keep" {
-		t.Fatalf("unsafe cleanup changed outside path: %q, %v", data, err)
-	}
-}
-
 func TestOvenDeletePersistsPartialCleanupAndRetries(t *testing.T) {
 	env := setupTestEnv(t)
 	env.createRepo("api")
@@ -545,7 +319,7 @@ func TestOvenDeletePersistsPartialCleanupAndRetries(t *testing.T) {
 		t.Fatal(err)
 	}
 	inventory, err = env.svc.Oven.Load()
-	if err != nil || len(inventory.Slots) != 1 || inventory.Slots[0].Status != oven.StatusReady {
+	if err != nil || len(inventory.Slots) != 0 {
 		t.Fatalf("final inventory = %+v, %v", inventory, err)
 	}
 }
@@ -582,7 +356,7 @@ func TestRecoverOvenResumesPersistedCleanupIntent(t *testing.T) {
 		t.Fatalf("workspace survived cleanup recovery: %+v", workspace)
 	}
 	inventory, err = env.svc.Oven.Load()
-	if err != nil || len(inventory.Slots) != 1 || inventory.Slots[0].Status != oven.StatusReady {
+	if err != nil || len(inventory.Slots) != 0 {
 		t.Fatalf("inventory after cleanup recovery = %+v, %v", inventory, err)
 	}
 }
@@ -608,32 +382,6 @@ func TestOvenOwnershipFailsClosedWhenInventoryDisappears(t *testing.T) {
 	}
 	if _, err := os.Stat(slot.BackingPath); err != nil {
 		t.Fatalf("backing path was removed: %v", err)
-	}
-}
-
-func TestOvenOwnershipIgnoresOtherOvenWorktreesForNormalWorkspace(t *testing.T) {
-	env := setupTestEnv(t)
-	sourceRepo := env.createRepo("api")
-	if err := env.svc.Create("normal", "feat/normal", []string{"api"}, env.repoMap, env.cfg); err != nil {
-		t.Fatal(err)
-	}
-	env.svc.Oven = oven.NewStore(canonicalPath(env.groveDir))
-	if err := env.svc.Oven.Save(oven.Inventory{Version: oven.InventoryVersion}); err != nil {
-		t.Fatal(err)
-	}
-	commit, err := gitops.HeadCommit(sourceRepo)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := gitops.WorktreeAddDetached(sourceRepo, filepath.Join(env.svc.Oven.Root, "unrelated"), commit); err != nil {
-		t.Fatal(err)
-	}
-
-	if err := env.svc.VerifyWorkspaceOwnership("normal"); err != nil {
-		t.Fatalf("normal workspace was mistaken for an Oven claim: %v", err)
-	}
-	if err := env.svc.DeleteWithOptions("normal", RemoveOptions{Force: true}); err != nil {
-		t.Fatalf("normal workspace deletion was blocked: %v", err)
 	}
 }
 
@@ -706,109 +454,6 @@ func TestRecoverOvenRollsBackPartiallyAttachedClaim(t *testing.T) {
 	}
 }
 
-func TestRecoverOvenRemovesPartiallyMaterializedReusableClaim(t *testing.T) {
-	env := setupTestEnv(t)
-	env.createRepo("api")
-	env.createRepo("web")
-	template := bakeTestOvenSlot(t, env, "slot-partial-materialization", "api", "web")
-	claimID := testOvenSlotID("claim-partial-materialization")
-	claimSlot := oven.Slot{
-		ID: claimID, TemplateSlotID: template.ID,
-		RecipeKey: template.RecipeKey, RecipeName: template.RecipeName, RecipePath: template.RecipePath,
-		Generation: template.Generation, Runner: template.Runner,
-		BackingPath: env.svc.Oven.SlotPath(template.Generation, claimID),
-		Status:      oven.StatusClaiming, CreatedAt: template.CreatedAt, UpdatedAt: template.UpdatedAt,
-	}
-	for _, repository := range template.Repositories {
-		claimSlot.Repositories = append(claimSlot.Repositories, oven.Repository{
-			Name: repository.Name, SourceRepo: repository.SourceRepo,
-			WorktreePath: filepath.Join(claimSlot.BackingPath, repository.Name), Commit: repository.Commit,
-		})
-	}
-	options := ovenClaimOptions(env, "partial-materialization", "feat/partial-materialization")
-	claim, err := env.svc.newOvenClaim(options, claimSlot)
-	if err != nil {
-		t.Fatal(err)
-	}
-	claimSlot.Claim = &claim
-	inventory, err := env.svc.Oven.Load()
-	if err != nil {
-		t.Fatal(err)
-	}
-	inventory.Slots = append(inventory.Slots, claimSlot)
-	if err := env.svc.Oven.Save(inventory); err != nil {
-		t.Fatal(err)
-	}
-	if err := createOvenBackingDirectory(env.svc.Oven, claimSlot); err != nil {
-		t.Fatal(err)
-	}
-	first := claimSlot.Repositories[0]
-	if err := gitops.WorktreeAddDetached(first.SourceRepo, first.WorktreePath, first.Commit); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Rename(first.WorktreePath, first.WorktreePath+".checkout"); err != nil {
-		t.Fatal(err)
-	}
-
-	if err := env.svc.RecoverOven(); err != nil {
-		t.Fatal(err)
-	}
-	inventory, err = env.svc.Oven.Load()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(inventory.Slots) != 1 || inventory.FindSlot(template.ID) == nil || inventory.FindSlot(claimID) != nil {
-		t.Fatalf("recovered inventory = %+v", inventory)
-	}
-	if _, err := os.Lstat(claimSlot.BackingPath); !os.IsNotExist(err) {
-		t.Fatalf("partial materialization backing remained: %v", err)
-	}
-}
-
-func TestRecoverOvenRemovesReusableClaimBeforeBackingCreation(t *testing.T) {
-	env := setupTestEnv(t)
-	env.createRepo("api")
-	template := bakeTestOvenSlot(t, env, "slot-pre-backing-crash", "api")
-	claimID := testOvenSlotID("claim-pre-backing-crash")
-	claimSlot := oven.Slot{
-		ID: claimID, TemplateSlotID: template.ID,
-		RecipeKey: template.RecipeKey, RecipeName: template.RecipeName, RecipePath: template.RecipePath,
-		Generation: template.Generation, Runner: template.Runner,
-		BackingPath: env.svc.Oven.SlotPath(template.Generation, claimID),
-		Status:      oven.StatusClaiming, CreatedAt: template.CreatedAt, UpdatedAt: template.UpdatedAt,
-		Repositories: []oven.Repository{{
-			Name: "api", SourceRepo: template.Repositories[0].SourceRepo,
-			WorktreePath: filepath.Join(env.svc.Oven.SlotPath(template.Generation, claimID), "api"),
-			Commit:       template.Repositories[0].Commit,
-		}},
-	}
-	options := ovenClaimOptions(env, "pre-backing-crash", "feat/pre-backing-crash")
-	claim, err := env.svc.newOvenClaim(options, claimSlot)
-	if err != nil {
-		t.Fatal(err)
-	}
-	claimSlot.Claim = &claim
-	inventory, err := env.svc.Oven.Load()
-	if err != nil {
-		t.Fatal(err)
-	}
-	inventory.Slots = append(inventory.Slots, claimSlot)
-	if err := env.svc.Oven.Save(inventory); err != nil {
-		t.Fatal(err)
-	}
-
-	if err := env.svc.RecoverOven(); err != nil {
-		t.Fatal(err)
-	}
-	inventory, err = env.svc.Oven.Load()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(inventory.Slots) != 1 || inventory.FindSlot(template.ID) == nil || inventory.FindSlot(claimID) != nil {
-		t.Fatalf("recovered pre-backing inventory = %+v", inventory)
-	}
-}
-
 func TestOvenOwnershipRejectsClaimNonceTampering(t *testing.T) {
 	env := setupTestEnv(t)
 	env.createRepo("api")
@@ -848,15 +493,11 @@ func TestClaimOvenRejectsSourceOutsideConfiguredRepoDirs(t *testing.T) {
 	bakeTestOvenSlot(t, env, "slot-source-allowlist", "api")
 	env.cfg.RepoDirs = []string{filepath.Join(env.dir, "other-repositories")}
 	_, err := env.svc.ClaimOvenSlot(ovenClaimOptions(env, "blocked-source", "feat/blocked-source"))
-	if err == nil || errors.Is(err, ErrOvenBlocked) {
+	if !errors.Is(err, ErrOvenBlocked) {
 		t.Fatalf("claim error = %v", err)
 	}
 	if workspace, _ := env.svc.State.GetWorkspace("blocked-source"); workspace != nil {
 		t.Fatalf("blocked source created workspace: %+v", workspace)
-	}
-	inventory, loadErr := env.svc.Oven.Load()
-	if loadErr != nil || inventory.ReadySlot(testOvenRecipeKey, "test-runner") == nil {
-		t.Fatalf("claim-local policy failure poisoned template: %+v, %v", inventory, loadErr)
 	}
 }
 
@@ -921,7 +562,7 @@ func TestRecoverOvenRetriesAfterWorkspaceStateRemovalFailure(t *testing.T) {
 		t.Fatalf("state survived retry: %+v", workspace)
 	}
 	inventory, err = env.svc.Oven.Load()
-	if err != nil || len(inventory.Slots) != 1 || inventory.Slots[0].Status != oven.StatusReady {
+	if err != nil || len(inventory.Slots) != 0 {
 		t.Fatalf("inventory after retry = %+v, %v", inventory, err)
 	}
 }

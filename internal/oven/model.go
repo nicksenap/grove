@@ -3,10 +3,9 @@ package oven
 import (
 	"fmt"
 	"sort"
-	"time"
 )
 
-const InventoryVersion = 2
+const InventoryVersion = 1
 
 type SlotStatus string
 
@@ -26,21 +25,20 @@ type Inventory struct {
 }
 
 type Slot struct {
-	ID             string       `json:"id"`
-	TemplateSlotID string       `json:"template_slot_id,omitempty"`
-	RecipeKey      string       `json:"recipe_key"`
-	RecipeName     string       `json:"recipe_name,omitempty"`
-	RecipePath     string       `json:"recipe_path,omitempty"`
-	Generation     string       `json:"generation"`
-	Runner         string       `json:"runner"`
-	BackingPath    string       `json:"backing_path"`
-	Status         SlotStatus   `json:"status"`
-	OwnerPID       int          `json:"owner_pid,omitempty"`
-	CreatedAt      string       `json:"created_at"`
-	UpdatedAt      string       `json:"updated_at"`
-	Failure        string       `json:"failure,omitempty"`
-	Repositories   []Repository `json:"repositories"`
-	Claim          *Claim       `json:"claim,omitempty"`
+	ID           string       `json:"id"`
+	RecipeKey    string       `json:"recipe_key"`
+	RecipeName   string       `json:"recipe_name,omitempty"`
+	RecipePath   string       `json:"recipe_path,omitempty"`
+	Generation   string       `json:"generation"`
+	Runner       string       `json:"runner"`
+	BackingPath  string       `json:"backing_path"`
+	Status       SlotStatus   `json:"status"`
+	OwnerPID     int          `json:"owner_pid,omitempty"`
+	CreatedAt    string       `json:"created_at"`
+	UpdatedAt    string       `json:"updated_at"`
+	Failure      string       `json:"failure,omitempty"`
+	Repositories []Repository `json:"repositories"`
+	Claim        *Claim       `json:"claim,omitempty"`
 }
 
 type Repository struct {
@@ -78,16 +76,11 @@ func (inventory *Inventory) ReadySlot(recipeKey, runner string) *Slot {
 	var matches []*Slot
 	for index := range inventory.Slots {
 		slot := &inventory.Slots[index]
-		if slot.TemplateSlotID == "" && slot.RecipeKey == recipeKey && slot.Runner == runner && slot.Status == StatusReady {
+		if slot.RecipeKey == recipeKey && slot.Runner == runner && slot.Status == StatusReady {
 			matches = append(matches, slot)
 		}
 	}
 	sort.Slice(matches, func(i, j int) bool {
-		left, leftErr := time.Parse(time.RFC3339Nano, matches[i].UpdatedAt)
-		right, rightErr := time.Parse(time.RFC3339Nano, matches[j].UpdatedAt)
-		if leftErr == nil && rightErr == nil && !left.Equal(right) {
-			return left.After(right)
-		}
 		if matches[i].UpdatedAt == matches[j].UpdatedAt {
 			return matches[i].ID > matches[j].ID
 		}
@@ -102,7 +95,7 @@ func (inventory *Inventory) ReadySlot(recipeKey, runner string) *Slot {
 func (inventory *Inventory) ReadyGeneration(recipeKey, generation, runner string) *Slot {
 	for index := range inventory.Slots {
 		slot := &inventory.Slots[index]
-		if slot.TemplateSlotID == "" && slot.RecipeKey == recipeKey && slot.Generation == generation && slot.Runner == runner && slot.Status == StatusReady {
+		if slot.RecipeKey == recipeKey && slot.Generation == generation && slot.Runner == runner && slot.Status == StatusReady {
 			return slot
 		}
 	}
@@ -112,7 +105,7 @@ func (inventory *Inventory) ReadyGeneration(recipeKey, generation, runner string
 func (inventory *Inventory) BlockingSlot(recipeKey, runner string) *Slot {
 	for index := range inventory.Slots {
 		slot := &inventory.Slots[index]
-		if slot.TemplateSlotID == "" && slot.RecipeKey == recipeKey && slot.Runner == runner && slot.Status == StatusQuarantined {
+		if slot.RecipeKey == recipeKey && slot.Runner == runner && slot.Status == StatusQuarantined {
 			return slot
 		}
 	}

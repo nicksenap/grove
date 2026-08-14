@@ -1,7 +1,6 @@
 package oven
 
 import (
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -44,68 +43,6 @@ func TestStoreRoundTripUsesPrivatePermissions(t *testing.T) {
 	}
 }
 
-func TestStoreMigratesVersionOneInventoryWithReusableClaims(t *testing.T) {
-	store := NewStore(t.TempDir())
-	template, claim := testStoreTemplateAndClaim(store)
-	legacy := Inventory{Version: 1, Slots: []Slot{template, claim}}
-	data, err := json.Marshal(legacy)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Mkdir(store.Root, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(store.Path, data, 0o600); err != nil {
-		t.Fatal(err)
-	}
-
-	loaded, err := store.Load()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if loaded.Version != InventoryVersion || len(loaded.Slots) != 2 {
-		t.Fatalf("migrated inventory = %+v", loaded)
-	}
-	if err := store.Save(loaded); err != nil {
-		t.Fatal(err)
-	}
-	persisted, err := os.ReadFile(store.Path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var envelope struct {
-		Version int `json:"version"`
-	}
-	if err := json.Unmarshal(persisted, &envelope); err != nil || envelope.Version != InventoryVersion {
-		t.Fatalf("persisted migration version = %d, %v", envelope.Version, err)
-	}
-}
-
-func TestStoreMigratesVersionOneLegacyClaimWithoutTemplateReference(t *testing.T) {
-	store := NewStore(t.TempDir())
-	template, claim := testStoreTemplateAndClaim(store)
-	claim.TemplateSlotID = ""
-	data, err := json.Marshal(Inventory{Version: 1, Slots: []Slot{template, claim}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Mkdir(store.Root, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(store.Path, data, 0o600); err != nil {
-		t.Fatal(err)
-	}
-
-	loaded, err := store.Load()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if loaded.Version != InventoryVersion || loaded.FindSlot(claim.ID) == nil ||
-		loaded.FindSlot(claim.ID).TemplateSlotID != "" {
-		t.Fatalf("migrated legacy claim = %+v", loaded)
-	}
-}
-
 func TestStoreRejectsInvalidInventory(t *testing.T) {
 	store := NewStore(t.TempDir())
 	valid := Slot{
@@ -116,10 +53,6 @@ func TestStoreRejectsInvalidInventory(t *testing.T) {
 	tests := map[string]Inventory{
 		"version":   {Version: InventoryVersion + 1},
 		"duplicate": {Version: InventoryVersion, Slots: []Slot{valid, valid}},
-		"dangling template": func() Inventory {
-			_, claim := testStoreTemplateAndClaim(store)
-			return Inventory{Version: InventoryVersion, Slots: []Slot{claim}}
-		}(),
 		"status": func() Inventory {
 			invalid := valid
 			invalid.Repositories = append([]Repository(nil), valid.Repositories...)
@@ -145,36 +78,6 @@ func TestStoreRejectsInvalidInventory(t *testing.T) {
 	}
 }
 
-func testStoreTemplateAndClaim(store *Store) (Slot, Slot) {
-	templatePath := store.SlotPath(testStoreGeneration, testStoreSlotID)
-	template := Slot{
-		ID: testStoreSlotID, RecipeKey: testStoreRecipeKey, Generation: testStoreGeneration, Runner: "runner",
-		BackingPath: templatePath, Status: StatusReady,
-		Repositories: []Repository{{
-			Name: "api", SourceRepo: "/repos/api", WorktreePath: filepath.Join(templatePath, "api"), Commit: "aaaa",
-		}},
-	}
-	claimPath := store.SlotPath(testStoreGeneration, testStoreOtherID)
-	alias := "/workspaces/cake"
-	claim := Slot{
-		ID: testStoreOtherID, TemplateSlotID: template.ID,
-		RecipeKey: template.RecipeKey, Generation: template.Generation, Runner: template.Runner,
-		BackingPath: claimPath, Status: StatusClaimed,
-		Repositories: []Repository{{
-			Name: "api", SourceRepo: "/repos/api", WorktreePath: filepath.Join(claimPath, "api"), Commit: "aaaa",
-		}},
-		Claim: &Claim{
-			Nonce: "cccccccccccccccccccccccccccccccc", WorkspaceName: "cake",
-			Alias: alias, Branch: "feat/cake",
-			Repositories: []ClaimRepository{{
-				Name: "api", SourceRepo: "/repos/api", PhysicalPath: filepath.Join(claimPath, "api"),
-				AliasPath: filepath.Join(alias, "api"), Branch: "feat/cake", BranchCreated: true,
-			}},
-		},
-	}
-	return template, claim
-}
-
 func TestInventorySelectsNewestReadySlot(t *testing.T) {
 	inventory := Inventory{Version: InventoryVersion, Slots: []Slot{
 		{ID: "old", RecipeKey: "recipe", Runner: "runner", Status: StatusReady, UpdatedAt: "2026-01-01T00:00:00Z"},
@@ -185,34 +88,6 @@ func TestInventorySelectsNewestReadySlot(t *testing.T) {
 	slot := inventory.ReadySlot("recipe", "runner")
 	if slot == nil || slot.ID != "new" {
 		t.Fatalf("ready slot = %+v", slot)
-	}
-}
-
-func TestInventorySelectsNewestReadySlotAcrossFractionalTimestamps(t *testing.T) {
-	inventory := Inventory{Version: InventoryVersion, Slots: []Slot{
-		{ID: "old", RecipeKey: "recipe", Runner: "runner", Status: StatusReady, UpdatedAt: "2026-01-01T00:00:00Z"},
-		{ID: "new", RecipeKey: "recipe", Runner: "runner", Status: StatusReady, UpdatedAt: "2026-01-01T00:00:00.1Z"},
-	}}
-	slot := inventory.ReadySlot("recipe", "runner")
-	if slot == nil || slot.ID != "new" {
-		t.Fatalf("ready slot = %+v", slot)
-	}
-}
-
-func TestInventoryClaimQuarantineDoesNotBlockOtherClaims(t *testing.T) {
-	inventory := Inventory{Version: InventoryVersion, Slots: []Slot{
-		{
-			ID: testStoreSlotID, RecipeKey: testStoreRecipeKey, Runner: "runner",
-			Status: StatusFailed,
-		},
-		{
-			ID: testStoreOtherID, TemplateSlotID: testStoreSlotID,
-			RecipeKey: testStoreRecipeKey, Runner: "runner",
-			Status: StatusQuarantined, Failure: "claim-local cleanup failed",
-		},
-	}}
-	if blocked := inventory.BlockingSlot(testStoreRecipeKey, "runner"); blocked != nil {
-		t.Fatalf("claim-local quarantine blocked unrelated claims: %+v", blocked)
 	}
 }
 

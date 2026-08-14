@@ -13,7 +13,6 @@ import (
 	"github.com/nicksenap/grove/internal/gitops"
 	"github.com/nicksenap/grove/internal/oven"
 	"github.com/nicksenap/grove/internal/state"
-	"golang.org/x/sys/unix"
 )
 
 const (
@@ -200,50 +199,6 @@ func TestBakeOvenSlotNeverReadiesCredentialResidue(t *testing.T) {
 	}
 }
 
-func TestBakeOvenSlotNeverReadiesNestedGitAdministration(t *testing.T) {
-	env := setupTestEnv(t)
-	env.createRepo("api")
-	configureTestOven(env)
-	options := ovenBakeOptions(env, "slot-nested-git", "api")
-
-	_, err := env.svc.BakeOvenSlot(options, func(worktrees map[string]string) error {
-		return os.MkdirAll(filepath.Join(worktrees["api"], "dependency", ".git"), 0o755)
-	})
-	if err == nil {
-		t.Fatal("template with nested Git administration became ready")
-	}
-	inventory, loadErr := env.svc.Oven.Load()
-	if loadErr != nil {
-		t.Fatal(loadErr)
-	}
-	slot := inventory.FindSlot(options.slotID)
-	if slot == nil || slot.Status != oven.StatusQuarantined {
-		t.Fatalf("nested Git template = %+v", slot)
-	}
-}
-
-func TestBakeOvenSlotNeverReadiesSpecialFiles(t *testing.T) {
-	env := setupTestEnv(t)
-	env.createRepo("api")
-	configureTestOven(env)
-	options := ovenBakeOptions(env, "slot-special-file", "api")
-
-	_, err := env.svc.BakeOvenSlot(options, func(worktrees map[string]string) error {
-		return unix.Mkfifo(filepath.Join(worktrees["api"], "unsupported.pipe"), 0o600)
-	})
-	if err == nil {
-		t.Fatal("template with a special file became ready")
-	}
-	inventory, loadErr := env.svc.Oven.Load()
-	if loadErr != nil {
-		t.Fatal(loadErr)
-	}
-	slot := inventory.FindSlot(options.slotID)
-	if slot == nil || slot.Status != oven.StatusQuarantined {
-		t.Fatalf("special-file template = %+v", slot)
-	}
-}
-
 func TestBakeOvenSlotQuarantinesChangedWorktreeIdentity(t *testing.T) {
 	env := setupTestEnv(t)
 	source := env.createRepo("api")
@@ -321,13 +276,12 @@ func TestRecoverOvenResolvesClaimingRecordsConservatively(t *testing.T) {
 	t.Run("completed-state", func(t *testing.T) {
 		env := setupTestEnv(t)
 		env.createRepo("api")
-		bakeTestOvenSlot(t, env, "slot-claim-recovery", "api")
+		slot := bakeTestOvenSlot(t, env, "slot-claim-recovery", "api")
 		if _, err := env.svc.ClaimOvenSlot(ovenClaimOptions(env, "claimed", "feat/claimed")); err != nil {
 			t.Fatal(err)
 		}
 		inventory, _ := env.svc.Oven.Load()
-		slot := inventory.ClaimForWorkspace("claimed")
-		slot.Status = oven.StatusClaiming
+		inventory.FindSlot(slot.ID).Status = oven.StatusClaiming
 		if err := env.svc.Oven.Save(inventory); err != nil {
 			t.Fatal(err)
 		}
@@ -375,12 +329,12 @@ func TestRecoverOvenResolvesClaimingRecordsConservatively(t *testing.T) {
 func TestCleanOvenRemovesReadyButBlocksClaimedAndQuarantined(t *testing.T) {
 	env := setupTestEnv(t)
 	env.createRepo("api")
-	ready := bakeTestOvenSlot(t, env, "slot-claimed-clean", "api")
+	claimed := bakeTestOvenSlot(t, env, "slot-claimed-clean", "api")
 	if _, err := env.svc.ClaimOvenSlot(ovenClaimOptions(env, "claimed", "feat/claimed")); err != nil {
 		t.Fatal(err)
 	}
+	ready := bakeTestOvenSlot(t, env, "slot-ready-clean", "api")
 	inventory, _ := env.svc.Oven.Load()
-	claimed := inventory.ClaimForWorkspace("claimed")
 	quarantinedID := testOvenSlotID("slot-quarantined")
 	quarantined := oven.Slot{
 		ID: quarantinedID, RecipeKey: testOvenRecipeKey, RecipePath: "/recipes/stack.yaml",
@@ -395,11 +349,11 @@ func TestCleanOvenRemovesReadyButBlocksClaimedAndQuarantined(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Removed != 0 || len(result.Blocked) != 3 {
+	if result.Removed != 1 || len(result.Blocked) != 2 {
 		t.Fatalf("clean result = %+v", result)
 	}
 	inventory, _ = env.svc.Oven.Load()
-	if inventory.FindSlot(ready.ID) == nil || inventory.FindSlot(claimed.ID) == nil || inventory.FindSlot(quarantinedID) == nil {
+	if inventory.FindSlot(ready.ID) != nil || inventory.FindSlot(claimed.ID) == nil || inventory.FindSlot(quarantinedID) == nil {
 		t.Fatalf("clean inventory = %+v", inventory)
 	}
 	if err := env.svc.DeleteWithOptions("claimed", RemoveOptions{Force: true}); err != nil {
@@ -457,83 +411,6 @@ func TestConcurrentBakePublishesAtMostOneReadySlot(t *testing.T) {
 	}
 	if ready != 1 {
 		t.Fatalf("ready slots = %d: %+v", ready, inventory.Slots)
-	}
-}
-
-func TestPruneOvenRecipePreservesClaimsFromOlderReusableGeneration(t *testing.T) {
-	env := setupTestEnv(t)
-	source := env.createRepo("api")
-	oldTemplate := bakeTestOvenSlot(t, env, "slot-old-template", "api")
-	if _, err := env.svc.ClaimOvenSlot(ovenClaimOptions(env, "old-claim", "feat/old-claim")); err != nil {
-		t.Fatal(err)
-	}
-	inventory, err := env.svc.Oven.Load()
-	if err != nil {
-		t.Fatal(err)
-	}
-	oldClaim := inventory.ClaimForWorkspace("old-claim")
-	if err := os.WriteFile(filepath.Join(source, "new.txt"), []byte("new"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := spikeGit(source, "add", "new.txt"); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := spikeGit(source, "commit", "-m", "new generation"); err != nil {
-		t.Fatal(err)
-	}
-	newOptions := ovenBakeOptions(env, "slot-new-template", "api")
-	newOptions.Generation = "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
-	newOptions.Commits["api"] = env.run(source, "git", "rev-parse", "HEAD")
-	newTemplate, err := env.svc.BakeOvenSlot(newOptions, func(map[string]string) error { return nil })
-	if err != nil {
-		t.Fatal(err)
-	}
-	result, err := env.svc.PruneOvenRecipe("/recipes/stack.yaml", newTemplate.Generation, "test-runner", newTemplate.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if result.Removed != 0 || len(result.Blocked) != 0 {
-		t.Fatalf("prune result = %+v", result)
-	}
-	inventory, err = env.svc.Oven.Load()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if inventory.FindSlot(oldTemplate.ID) == nil || inventory.FindSlot(oldClaim.ID) == nil || inventory.FindSlot(newTemplate.ID) == nil {
-		t.Fatalf("prune removed an active claim dependency: %+v", inventory)
-	}
-	if err := env.svc.Status("old-claim", StatusOptions{JSON: true}); err != nil {
-		t.Fatalf("old claim stopped working after template prune: %v", err)
-	}
-}
-
-func TestPruneOvenRecipeRequiresReadyReplacementTemplate(t *testing.T) {
-	env := setupTestEnv(t)
-	env.createRepo("api")
-	template := bakeTestOvenSlot(t, env, "slot-prune-guard", "api")
-
-	if _, err := env.svc.PruneOvenRecipe(
-		"/recipes/stack.yaml",
-		"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
-		"test-runner",
-		template.ID,
-	); err == nil {
-		t.Fatal("prune accepted a replacement from a different generation")
-	}
-	if _, err := env.svc.PruneOvenRecipe(
-		"/recipes/stack.yaml",
-		testOvenGeneration,
-		"test-runner",
-		testOvenSlotID("missing-replacement"),
-	); err == nil {
-		t.Fatal("prune accepted a missing replacement template")
-	}
-	inventory, err := env.svc.Oven.Load()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if current := inventory.FindSlot(template.ID); current == nil || current.Status != oven.StatusReady {
-		t.Fatalf("guarded prune changed the ready template: %+v", current)
 	}
 }
 
@@ -624,7 +501,7 @@ func TestClaimAndCleanSerializeThroughStateLock(t *testing.T) {
 	if err := <-cleanError; err != nil {
 		t.Fatal(err)
 	}
-	if result.Removed != 0 || len(result.Blocked) != 2 {
+	if result.Removed != 0 || len(result.Blocked) != 1 {
 		t.Fatalf("clean result after claim = %+v", result)
 	}
 	if err := env.svc.DeleteWithOptions("serialized", RemoveOptions{Force: true}); err != nil {

@@ -30,7 +30,6 @@ type OvenClaimOptions struct {
 	nonce         string
 	now           func() time.Time
 	attachBranch  func(oven.ClaimRepository, string) error
-	clonePrepared func(string, string) error
 	publishAlias  func(string, string) error
 	saveWorkspace func(models.Workspace) error
 }
@@ -66,41 +65,40 @@ func (service *Service) ClaimOvenSlot(options OvenClaimOptions) (*OvenClaimResul
 }
 
 func (service *Service) claimOvenSlotLocked(options OvenClaimOptions) (*OvenClaimResult, error) {
-	if err := service.preflightOvenClaimDestination(options); err != nil {
-		return nil, err
-	}
 	inventory, err := service.Oven.Load()
 	if err != nil {
 		return nil, err
 	}
-	template := inventory.ReadySlot(options.RecipeKey, options.Runner)
-	if template == nil {
+	slot := inventory.ReadySlot(options.RecipeKey, options.Runner)
+	if slot == nil {
 		if blocked := inventory.BlockingSlot(options.RecipeKey, options.Runner); blocked != nil {
 			return nil, fmt.Errorf("%w: slot %s: %s", ErrOvenBlocked, blocked.ID, blocked.Failure)
 		}
 		return nil, ErrOvenMiss
 	}
-	if err := service.preflightReadyOvenTemplate(options, *template); err != nil {
-		template.Status = oven.StatusQuarantined
-		template.Failure = safeOvenFailure(err)
-		template.UpdatedAt = ovenClaimTimestamp(options)
+	if err := service.preflightReadyOvenClaim(options, *slot); err != nil {
+		slot.Status = oven.StatusQuarantined
+		slot.Failure = safeOvenFailure(err)
+		slot.UpdatedAt = ovenClaimTimestamp(options)
 		if saveErr := service.Oven.Save(inventory); saveErr != nil {
 			return nil, errors.Join(err, saveErr)
 		}
-		return nil, fmt.Errorf("%w: ready slot %s was quarantined: %v", ErrOvenBlocked, template.ID, err)
+		return nil, fmt.Errorf("%w: ready slot %s was quarantined: %v", ErrOvenBlocked, slot.ID, err)
 	}
-	if err := service.preflightOvenClaimRepositories(options, *template); err != nil {
-		return nil, err
-	}
-	claimSlot, err := service.materializeOvenClaimLocked(options, &inventory, *template)
-	if err != nil {
-		return nil, err
-	}
-	return service.executeOvenClaimLocked(options, inventory, claimSlot)
+	return service.executeOvenClaimLocked(options, inventory, slot)
 }
 
 func (service *Service) executeOvenClaimLocked(options OvenClaimOptions, inventory oven.Inventory, slot *oven.Slot) (*OvenClaimResult, error) {
-	claim := *slot.Claim
+	claim, err := service.newOvenClaim(options, *slot)
+	if err != nil {
+		return nil, err
+	}
+	slot.Status = oven.StatusClaiming
+	slot.Claim = &claim
+	slot.UpdatedAt = ovenClaimTimestamp(options)
+	if err := service.Oven.Save(inventory); err != nil {
+		return nil, err
+	}
 
 	workspace, assigned, err := service.attachOvenClaimRepositories(options, *slot, claim)
 	if err != nil {
@@ -124,110 +122,6 @@ func (service *Service) executeOvenClaimLocked(options OvenClaimOptions, invento
 		result.Warning = errors.Join(result.Warning, fmt.Errorf("finalizing oven claim inventory: %w", err))
 	}
 	return result, nil
-}
-
-func (service *Service) materializeOvenClaimLocked(options OvenClaimOptions, inventory *oven.Inventory, template oven.Slot) (*oven.Slot, error) {
-	id, err := randomOvenID()
-	if err != nil {
-		return nil, err
-	}
-	backingPath := service.Oven.SlotPath(template.Generation, id)
-	claimSlot := oven.Slot{
-		ID: id, TemplateSlotID: template.ID, RecipeKey: template.RecipeKey, RecipeName: template.RecipeName,
-		RecipePath: template.RecipePath, Generation: template.Generation, Runner: template.Runner,
-		BackingPath: backingPath, Status: oven.StatusClaiming,
-		CreatedAt: ovenClaimTimestamp(options), UpdatedAt: ovenClaimTimestamp(options),
-	}
-	for _, repository := range template.Repositories {
-		claimSlot.Repositories = append(claimSlot.Repositories, oven.Repository{
-			Name: repository.Name, SourceRepo: repository.SourceRepo,
-			WorktreePath: filepath.Join(backingPath, repository.Name), Commit: repository.Commit,
-		})
-	}
-	claim, err := service.newOvenClaim(options, claimSlot)
-	if err != nil {
-		return nil, err
-	}
-	claimSlot.Claim = &claim
-	inventory.Slots = append(inventory.Slots, claimSlot)
-	if err := service.Oven.Save(*inventory); err != nil {
-		return nil, err
-	}
-	if err := createOvenBackingDirectory(service.Oven, claimSlot); err != nil {
-		return nil, service.failOvenMaterialization(claimSlot.ID, err)
-	}
-	created := make([]oven.Repository, 0, len(claimSlot.Repositories))
-	clonePrepared := options.clonePrepared
-	if clonePrepared == nil {
-		clonePrepared = clonePreparedWorktree
-	}
-	for _, repository := range claimSlot.Repositories {
-		templateRepository := ovenRepositoryByName(template, repository.Name)
-		if templateRepository.Name == "" {
-			return nil, service.failOvenMaterialization(claimSlot.ID, fmt.Errorf("%s: reusable template repository is missing", repository.Name))
-		}
-		if err := gitops.WorktreeAddDetached(repository.SourceRepo, repository.WorktreePath, repository.Commit); err != nil {
-			return nil, service.failOvenMaterialization(claimSlot.ID, fmt.Errorf("%s: creating claim worktree: %w", repository.Name, err))
-		}
-		created = append(created, repository)
-		if err := clonePrepared(templateRepository.WorktreePath, repository.WorktreePath); err != nil {
-			return nil, service.failOvenMaterialization(claimSlot.ID, fmt.Errorf("%s: materializing prepared worktree: %w", repository.Name, err))
-		}
-	}
-	if err := errors.Join(
-		service.verifyOvenBackingPath(claimSlot),
-		verifyDetachedOvenRepositories(claimSlot, created),
-		verifyNoOvenCredentialResidue(claimSlot),
-	); err != nil {
-		return nil, service.failOvenMaterialization(claimSlot.ID, err)
-	}
-	return inventory.FindSlot(claimSlot.ID), nil
-}
-
-func (service *Service) failOvenMaterialization(slotID string, cause error) error {
-	inventory, loadErr := service.Oven.Load()
-	if loadErr != nil {
-		return errors.Join(cause, loadErr)
-	}
-	slot := inventory.FindSlot(slotID)
-	if slot == nil || slot.Status != oven.StatusClaiming || slot.Claim == nil {
-		return errors.Join(cause, fmt.Errorf("oven materialization identity changed; preserving artifacts"))
-	}
-	var cleanupErrs []error
-	for index := len(slot.Repositories) - 1; index >= 0; index-- {
-		repository := slot.Repositories[index]
-		pathExists, registered, err := inspectInterruptedClaimPath(oven.ClaimRepository{
-			SourceRepo: repository.SourceRepo, PhysicalPath: repository.WorktreePath,
-		})
-		if err != nil {
-			cleanupErrs = append(cleanupErrs, err)
-			continue
-		}
-		if pathExists != registered {
-			cleanupErrs = append(cleanupErrs, fmt.Errorf("%s: materialized path and Git registration disagree", repository.Name))
-			continue
-		}
-		if pathExists {
-			if removeErr := service.removeWorktree(repository.SourceRepo, repository.WorktreePath, true); removeErr != nil {
-				cleanupErrs = append(cleanupErrs, fmt.Errorf("%s: removing materialized worktree: %w", repository.Name, removeErr))
-			}
-		}
-	}
-	if len(cleanupErrs) == 0 {
-		if err := service.removeOwnedOvenClaimRoot(*slot); err != nil {
-			cleanupErrs = append(cleanupErrs, err)
-		}
-	}
-	if len(cleanupErrs) == 0 {
-		inventory.RemoveSlot(slot.ID)
-	} else {
-		slot.Status = oven.StatusQuarantined
-		slot.Failure = safeOvenFailure(errors.Join(cause, errors.Join(cleanupErrs...)))
-	}
-	if err := service.Oven.Save(inventory); err != nil {
-		cleanupErrs = append(cleanupErrs, err)
-	}
-	return errors.Join(cause, errors.Join(cleanupErrs...))
 }
 
 func (service *Service) attachOvenClaimRepositories(options OvenClaimOptions, slot oven.Slot, claim oven.Claim) (models.Workspace, []oven.ClaimRepository, error) {
@@ -288,7 +182,10 @@ func (service *Service) saveClaimedOvenWorkspace(options OvenClaimOptions, works
 	return &OvenClaimResult{Workspace: workspace, SlotID: slotID}, nil
 }
 
-func (service *Service) preflightOvenClaimDestination(options OvenClaimOptions) error {
+func (service *Service) preflightReadyOvenClaim(options OvenClaimOptions, slot oven.Slot) error {
+	if slot.Status != oven.StatusReady || slot.Claim != nil || slot.RecipeKey != options.RecipeKey || slot.Runner != options.Runner {
+		return fmt.Errorf("oven slot is not ready for this Recipe and runner")
+	}
 	if existing, err := service.State.GetWorkspace(options.Name); err != nil {
 		return err
 	} else if existing != nil {
@@ -300,28 +197,17 @@ func (service *Service) preflightOvenClaimDestination(options OvenClaimOptions) 
 	} else if !os.IsNotExist(err) {
 		return err
 	}
-	return nil
-}
-
-func (service *Service) preflightReadyOvenTemplate(options OvenClaimOptions, slot oven.Slot) error {
-	if slot.TemplateSlotID != "" || slot.Status != oven.StatusReady || slot.Claim != nil || slot.RecipeKey != options.RecipeKey || slot.Runner != options.Runner {
-		return fmt.Errorf("oven slot is not a reusable template for this Recipe and runner")
-	}
 	if err := service.verifyOvenBackingPath(slot); err != nil {
 		return err
 	}
-	return errors.Join(
-		verifyDetachedOvenRepositories(slot, slot.Repositories),
-		validatePreparedTrees(slot),
-	)
-}
-
-func (service *Service) preflightOvenClaimRepositories(options OvenClaimOptions, template oven.Slot) error {
-	for _, repository := range template.Repositories {
+	if err := verifyDetachedOvenRepositories(slot, slot.Repositories); err != nil {
+		return err
+	}
+	for _, repository := range slot.Repositories {
 		if !sourceRepoAllowed(options.Config, repository.SourceRepo) {
 			return fmt.Errorf("%s: source repository is outside configured repository directories", repository.Name)
 		}
-		if err := preflightReadyOvenRepository(template, repository, options.Branch); err != nil {
+		if err := preflightReadyOvenRepository(slot, repository, options.Branch); err != nil {
 			return err
 		}
 	}
@@ -424,14 +310,6 @@ func (service *Service) rollbackOvenClaim(slotID, nonce string, assigned []oven.
 	if len(rollbackErrs) > 0 {
 		slot.Status = oven.StatusQuarantined
 		slot.Failure = safeOvenFailure(errors.Join(cause, errors.Join(rollbackErrs...)))
-	} else if slot.TemplateSlotID != "" {
-		if err := service.removeRolledBackOvenClaim(*slot); err != nil {
-			rollbackErrs = append(rollbackErrs, err)
-			slot.Status = oven.StatusQuarantined
-			slot.Failure = safeOvenFailure(errors.Join(cause, err))
-		} else {
-			inventory.RemoveSlot(slot.ID)
-		}
 	} else {
 		slot.Status = oven.StatusReady
 		slot.Claim = nil
@@ -441,19 +319,6 @@ func (service *Service) rollbackOvenClaim(slotID, nonce string, assigned []oven.
 		rollbackErrs = append(rollbackErrs, err)
 	}
 	return errors.Join(cause, errors.Join(rollbackErrs...))
-}
-
-func (service *Service) removeRolledBackOvenClaim(slot oven.Slot) error {
-	if err := verifyDetachedOvenRepositories(slot, slot.Repositories); err != nil {
-		return fmt.Errorf("verifying rolled-back materialization: %w", err)
-	}
-	for index := len(slot.Repositories) - 1; index >= 0; index-- {
-		repository := slot.Repositories[index]
-		if err := service.removeWorktree(repository.SourceRepo, repository.WorktreePath, true); err != nil {
-			return fmt.Errorf("%s: removing rolled-back materialization: %w", repository.Name, err)
-		}
-	}
-	return service.removeOwnedOvenClaimRoot(slot)
 }
 
 func preflightOvenClaimRollback(slot oven.Slot, claim oven.Claim, assigned []oven.ClaimRepository, aliasCreated bool) error {

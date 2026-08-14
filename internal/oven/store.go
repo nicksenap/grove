@@ -53,9 +53,6 @@ func (store *Store) Load() (Inventory, error) {
 	if err := json.Unmarshal(data, &inventory); err != nil {
 		return Inventory{}, fmt.Errorf("parsing oven inventory: %w", err)
 	}
-	if inventory.Version == 1 {
-		inventory.Version = InventoryVersion
-	}
 	if err := store.validate(inventory); err != nil {
 		return Inventory{}, err
 	}
@@ -168,71 +165,31 @@ func (store *Store) validate(inventory Inventory) error {
 	}
 	seen := make(map[string]bool, len(inventory.Slots))
 	for _, slot := range inventory.Slots {
-		if err := store.validateSlot(slot, seen); err != nil {
-			return err
+		if !lowerHex(slot.ID, 32) || seen[slot.ID] {
+			return fmt.Errorf("invalid or duplicate oven slot ID %q", slot.ID)
 		}
 		seen[slot.ID] = true
-	}
-	return validateTemplateReferences(inventory)
-}
-
-func (store *Store) validateSlot(slot Slot, seen map[string]bool) error {
-	if !lowerHex(slot.ID, 32) || seen[slot.ID] {
-		return fmt.Errorf("invalid or duplicate oven slot ID %q", slot.ID)
-	}
-	if err := validateTemplateReference(slot); err != nil {
-		return err
-	}
-	if !lowerHex(slot.RecipeKey, 64) || !lowerHex(slot.Generation, 64) || slot.Runner == "" {
-		return fmt.Errorf("oven slot %s has invalid identity", slot.ID)
-	}
-	if !validStatus(slot.Status) {
-		return fmt.Errorf("oven slot %s has invalid status %q", slot.ID, slot.Status)
-	}
-	expected := filepath.Clean(store.SlotPath(slot.Generation, slot.ID))
-	if filepath.Clean(slot.BackingPath) != expected || !pathWithin(store.GenerationsPath(), slot.BackingPath) {
-		return fmt.Errorf("oven slot %s backing path is outside its generation", slot.ID)
-	}
-	if slot.RecipePath != "" && (!filepath.IsAbs(slot.RecipePath) || filepath.Clean(slot.RecipePath) != slot.RecipePath) {
-		return fmt.Errorf("oven slot %s Recipe path is not absolute and clean", slot.ID)
-	}
-	if strings.ContainsRune(slot.Failure, '\x00') {
-		return fmt.Errorf("oven slot %s failure contains invalid data", slot.ID)
-	}
-	if err := validateSlotRepositories(slot); err != nil {
-		return err
-	}
-	return validateSlotLifecycle(slot)
-}
-
-func validateTemplateReference(slot Slot) error {
-	if slot.TemplateSlotID == "" {
-		return nil
-	}
-	if !lowerHex(slot.TemplateSlotID, 32) || slot.TemplateSlotID == slot.ID {
-		return fmt.Errorf("oven slot %s has an invalid template slot ID", slot.ID)
-	}
-	if slot.Status == StatusBaking || slot.Status == StatusReady || slot.Status == StatusFailed {
-		return fmt.Errorf("oven claim slot %s has template-only status %s", slot.ID, slot.Status)
-	}
-	return nil
-}
-
-func validateTemplateReferences(inventory Inventory) error {
-	byID := make(map[string]Slot, len(inventory.Slots))
-	for _, slot := range inventory.Slots {
-		byID[slot.ID] = slot
-	}
-	for _, slot := range inventory.Slots {
-		if slot.TemplateSlotID == "" {
-			continue
+		if !lowerHex(slot.RecipeKey, 64) || !lowerHex(slot.Generation, 64) || slot.Runner == "" {
+			return fmt.Errorf("oven slot %s has invalid identity", slot.ID)
 		}
-		template, ok := byID[slot.TemplateSlotID]
-		if !ok || template.TemplateSlotID != "" {
-			return fmt.Errorf("oven claim slot %s references a missing or non-template slot", slot.ID)
+		if !validStatus(slot.Status) {
+			return fmt.Errorf("oven slot %s has invalid status %q", slot.ID, slot.Status)
 		}
-		if slot.RecipeKey != template.RecipeKey || slot.Generation != template.Generation || slot.Runner != template.Runner {
-			return fmt.Errorf("oven claim slot %s differs from its template identity", slot.ID)
+		expected := filepath.Clean(store.SlotPath(slot.Generation, slot.ID))
+		if filepath.Clean(slot.BackingPath) != expected || !pathWithin(store.GenerationsPath(), slot.BackingPath) {
+			return fmt.Errorf("oven slot %s backing path is outside its generation", slot.ID)
+		}
+		if slot.RecipePath != "" && (!filepath.IsAbs(slot.RecipePath) || filepath.Clean(slot.RecipePath) != slot.RecipePath) {
+			return fmt.Errorf("oven slot %s Recipe path is not absolute and clean", slot.ID)
+		}
+		if strings.ContainsRune(slot.Failure, '\x00') {
+			return fmt.Errorf("oven slot %s failure contains invalid data", slot.ID)
+		}
+		if err := validateSlotRepositories(slot); err != nil {
+			return err
+		}
+		if err := validateSlotLifecycle(slot); err != nil {
+			return err
 		}
 	}
 	return nil
