@@ -156,57 +156,9 @@ func DeleteBranch(repo, branch string, force bool) error {
 	return err
 }
 
-// DeleteBranchIfAt removes a branch only when it still names expectedCommit.
-// Without force, the branch must also be merged into the source repository HEAD.
-func DeleteBranchIfAt(repo, branch, expectedCommit string, force bool) error {
-	current, err := LocalBranchCommit(repo, branch)
-	if err != nil {
-		return err
-	}
-	if current != expectedCommit {
-		return fmt.Errorf("branch %s changed from expected commit %s", branch, expectedCommit)
-	}
-	if !force {
-		if _, err := runGit(repo, "merge-base", "--is-ancestor", expectedCommit, "HEAD"); err != nil {
-			return fmt.Errorf("branch %s is not fully merged", branch)
-		}
-	}
-	if _, err := runGit(repo, "check-ref-format", "--branch", branch); err != nil {
-		return err
-	}
-	_, err = runGit(repo, "update-ref", "-d", "refs/heads/"+branch, expectedCommit)
-	return err
-}
-
 // WorktreeAdd creates a worktree for the given branch.
 func WorktreeAdd(repo, path, branch string) error {
 	_, err := runGit(repo, "worktree", "add", path, branch)
-	return err
-}
-
-// WorktreeAddDetached creates a detached worktree at an immutable commit.
-func WorktreeAddDetached(repo, path, commit string) error {
-	_, err := runGit(repo, "worktree", "add", "--detach", path, commit)
-	return err
-}
-
-// AttachWorktreeBranch attaches a detached worktree to a branch at commit.
-func AttachWorktreeBranch(path, branch, commit string, create bool) error {
-	args := []string{"switch"}
-	if create {
-		args = append(args, "-c")
-	}
-	args = append(args, branch)
-	if create {
-		args = append(args, commit)
-	}
-	_, err := runGit(path, args...)
-	return err
-}
-
-// DetachWorktree returns a worktree to a detached exact commit.
-func DetachWorktree(path, commit string) error {
-	_, err := runGit(path, "switch", "--detach", commit)
 	return err
 }
 
@@ -298,19 +250,9 @@ func RepoStatus(path string) (string, error) {
 	return runGit(path, "status", "--short")
 }
 
-// TrackedStatus returns changes to tracked files while ignoring prepared cache artifacts.
-func TrackedStatus(path string) (string, error) {
-	return runGit(path, "status", "--short", "--untracked-files=no")
-}
-
 // CurrentBranch returns the current branch name.
 func CurrentBranch(path string) (string, error) {
 	return runGit(path, "branch", "--show-current")
-}
-
-// HeadCommit returns the exact commit checked out at path.
-func HeadCommit(path string) (string, error) {
-	return runGit(path, "rev-parse", "--verify", "HEAD")
 }
 
 // RebaseOnto rebases the current branch onto the given base.

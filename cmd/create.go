@@ -27,7 +27,6 @@ var (
 	createForce         bool
 	createTrack         bool
 	createRecipe        string
-	createOven          bool
 	createJSON          bool
 	createSourceURL     string
 	createSourceProvide string
@@ -40,9 +39,6 @@ var createCmd = &cobra.Command{
 	Short: "Create a new workspace",
 	Args:  cobra.MaximumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
-		if createOven && createRecipe == "" {
-			exitError("--oven requires --recipe")
-		}
 		if createRecipe != "" {
 			if err := runRecipeCreate(cmd, args); err != nil {
 				exitError(terminalSafe(err.Error()))
@@ -275,8 +271,7 @@ func init() {
 	createCmd.Flags().BoolVar(&createReplace, "replace", false, "Delete the current workspace (detected from cwd) before creating the new one")
 	createCmd.Flags().BoolVarP(&createForce, "force", "f", false, "Skip --replace confirmation prompt")
 	createCmd.Flags().BoolVar(&createTrack, "track", false, "Check out an existing remote branch (e.g. a PR head) instead of creating a new one")
-	createCmd.Flags().StringVarP(&createRecipe, "recipe", "R", "", "Create from a Recipe YAML file")
-	createCmd.Flags().BoolVarP(&createOven, "oven", "O", false, "Claim a prepared local Oven slot, with cold fallback")
+	createCmd.Flags().StringVar(&createRecipe, "recipe", "", "Create from a Recipe YAML file")
 	createCmd.Flags().BoolVarP(&createJSON, "json", "j", false, "Output Recipe creation result as JSON")
 	createCmd.Flags().StringVar(&createSourceURL, "source-url", "", "Record the source URL this workspace was seeded from")
 	createCmd.Flags().StringVar(&createSourceProvide, "source-provider", "", "Source provider label (e.g. github, notion, slack)")

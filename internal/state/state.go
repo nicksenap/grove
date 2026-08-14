@@ -54,36 +54,11 @@ func (s *Store) Save(workspaces []models.Workspace) error {
 		return err
 	}
 
-	temporary, err := os.CreateTemp(filepath.Dir(s.Path), "state-*.tmp")
-	if err != nil {
+	tmp := s.Path + ".tmp"
+	if err := os.WriteFile(tmp, data, 0o644); err != nil {
 		return err
 	}
-	temporaryPath := temporary.Name()
-	defer os.Remove(temporaryPath)
-	if err := temporary.Chmod(0o644); err != nil {
-		temporary.Close()
-		return err
-	}
-	if _, err := temporary.Write(data); err != nil {
-		temporary.Close()
-		return err
-	}
-	if err := temporary.Sync(); err != nil {
-		temporary.Close()
-		return err
-	}
-	if err := temporary.Close(); err != nil {
-		return err
-	}
-	if err := os.Rename(temporaryPath, s.Path); err != nil {
-		return err
-	}
-	directory, err := os.Open(filepath.Dir(s.Path))
-	if err != nil {
-		return err
-	}
-	defer directory.Close()
-	return directory.Sync()
+	return os.Rename(tmp, s.Path)
 }
 
 // GetWorkspace finds a workspace by name.

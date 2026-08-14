@@ -5,27 +5,23 @@ import (
 	"os/exec"
 
 	"github.com/nicksenap/grove/internal/config"
-	"github.com/nicksenap/grove/internal/oven"
 	"github.com/nicksenap/grove/internal/state"
 	"github.com/nicksenap/grove/internal/stats"
 )
 
 // Service orchestrates workspace operations with injectable dependencies.
 type Service struct {
-	State           *state.Store
-	Oven            *oven.Store
-	Stats           *stats.Tracker
-	RunCmd          func(dir, cmd string) error
-	RunCmdSilent    func(dir, cmd string) error
-	RemoveWorktree  func(repo, path string, force bool) error // optional test seam
-	RemoveWorkspace func(name string) error                   // optional test seam
+	State          *state.Store
+	Stats          *stats.Tracker
+	RunCmd         func(dir, cmd string) error
+	RunCmdSilent   func(dir, cmd string) error
+	RemoveWorktree func(repo, path string, force bool) error // optional test seam
 }
 
 // NewService creates a Service with production dependencies.
 func NewService() *Service {
 	return &Service{
 		State:        state.NewStore(config.GroveDir),
-		Oven:         oven.NewStore(config.GroveDir),
 		Stats:        stats.NewTracker(config.GroveDir),
 		RunCmd:       prodRunCmd,
 		RunCmdSilent: prodRunCmdSilent,

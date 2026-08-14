@@ -70,13 +70,8 @@ func doDelete(args []string, force bool) {
 	}
 
 	for _, name := range names {
-		service := workspace.NewService()
-		// Verify ownership and use immutable physical paths before invoking hooks.
-		ws, err := service.OperationWorkspace(name)
-		if err != nil {
-			exitError(err.Error())
-		}
 		// Fire pre_delete hook before teardown (e.g. harvest Claude memory)
+		ws, _ := state.GetWorkspace(name)
 		if ws != nil {
 			vars := lifecycle.Vars{Name: name, Path: ws.Path, Branch: ws.Branch}
 			if err := lifecycle.Run("pre_delete", vars); err != nil && !errors.Is(err, lifecycle.ErrNoHook) {
@@ -87,7 +82,7 @@ func doDelete(args []string, force bool) {
 			}
 		}
 
-		if err := service.DeleteWithOptions(name, workspace.RemoveOptions{Force: force}); err != nil {
+		if err := workspace.NewService().DeleteWithOptions(name, workspace.RemoveOptions{Force: force}); err != nil {
 			exitError(err.Error())
 		}
 	}
