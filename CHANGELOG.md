@@ -1,5 +1,23 @@
 # Changelog
 
+## v1.1.12
+
+### Features
+
+- Added strict, versioned YAML Recipes and `gw recipe validate <file> [--json]` for offline validation with path-aware diagnostics.
+- `gw create <name> --branch <branch> --recipe <file> [--json]` can now create multi-repository workspaces from a Recipe, pin repository refs to exact commits, and execute bounded `needs`-based setup jobs with timeouts and prefixed output. Recipes are trusted shell code, and failed preparation rolls back only resources created by the invocation.
+
+### Fixes
+
+- Public plugin installation no longer consumes GitHub's unauthenticated REST API quota. Grove discovers conventional GoReleaser assets through the public `releases/latest` redirect and retains the API fallback for private or nonstandard releases.
+- Workspace create, add, remove, and delete operations are now serialized and fail safely. Dirty or unexpected worktrees are rejected unless forced, failed operations preserve user-owned roots and branches, and rollback removes only resources created by the current operation.
+- Adding or removing repositories now reports progress while work is running and remains silent for no-op operations.
+
+### Maintenance
+
+- Clarified installation, shell integration, and upgrade documentation.
+- Updated `modernc.org/sqlite` from 1.54.0 to 1.56.0.
+
 ## v1.1.11
 
 ### Features
