@@ -61,6 +61,10 @@ Failure exits non-zero after rollback:
 
 Stable failure codes cover `recipe_invalid`, `repository_resolution_failed`, `workspace_provision_failed`, `recipe_step_failed`, `recipe_job_timeout`, `recipe_cancelled`, and `post_create_failed`. A cleanup failure adds `cleanup_error` while preserving the original job failure. An aborting global `post_create` failure reports `created: true` because the completed workspace remains present.
 
+## Local Oven
+
+Cold creation is the default. Add `--oven` to claim an explicitly prepared local slot with cold fallback; see [Local Oven](local-oven.md).
+
 ## Non-goals
 
-Oven slots, remote execution, containers, services, matrices, retries, conditions, actions, expressions, output caching, persistent logs, or credential-provider machinery.
+Remote execution, containers, services, matrices, retries, conditions, actions, expressions, output caching, persistent logs, or credential-provider machinery.

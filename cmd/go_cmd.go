@@ -15,6 +15,7 @@ import (
 	"github.com/nicksenap/grove/internal/logging"
 	"github.com/nicksenap/grove/internal/picker"
 	"github.com/nicksenap/grove/internal/state"
+	"github.com/nicksenap/grove/internal/workspace"
 	"github.com/spf13/cobra"
 )
 
@@ -83,6 +84,9 @@ var goCmd = &cobra.Command{
 		}
 		if ws == nil {
 			exitError("Workspace not found: " + name)
+		}
+		if err := workspace.NewService().VerifyWorkspaceOwnership(name); err != nil {
+			exitError(err.Error())
 		}
 
 		if goDelete {

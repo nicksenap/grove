@@ -110,7 +110,7 @@ Full documentation lives in the [OpenWiki](openwiki/quickstart.md) — start wit
 
 - [Hooks](docs/hooks.md) — global hooks (terminal integration) & per-repo hooks (`.grove.toml`, `gw run`)
 - [Plugins](docs/plugins.md) — extend gw with external commands
-- [Recipes](docs/recipe-v1.md) — strict schema, [workspace creation](docs/recipe-execution.md), and the [prepared-claim spike](docs/prepared-workspace-claim-spike.md)
+- [Recipes](docs/recipe-v1.md) — strict schema, [workspace creation](docs/recipe-execution.md), the [local Oven](docs/local-oven.md), and its [claiming safety proof](docs/prepared-workspace-claim-spike.md)
 - [AI coding tools](docs/ai-tools.md) — Claude Code workflows, MCP server
 
 ## Requirements

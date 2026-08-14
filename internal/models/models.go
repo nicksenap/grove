@@ -25,6 +25,13 @@ type Workspace struct {
 	CreatedAt string           `json:"created_at"`
 	Repos     []RepoWorktree   `json:"repos"`
 	Source    *WorkspaceSource `json:"source,omitempty"`
+	Oven      *OvenOwnership   `json:"oven,omitempty"`
+}
+
+// OvenOwnership reciprocally identifies an external prepared-workspace claim.
+type OvenOwnership struct {
+	SlotID     string `json:"slot_id"`
+	ClaimNonce string `json:"claim_nonce"`
 }
 
 // WorkspaceSource records where a workspace was seeded from (e.g. a GitHub PR,
