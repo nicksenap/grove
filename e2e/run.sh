@@ -1021,62 +1021,6 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# Test: local Oven
-# ---------------------------------------------------------------------------
-section "Local Oven"
-
-oven_bake_json=$(gw oven bake "${RECIPE_FILE}" --json 2>/dev/null)
-if echo "${oven_bake_json}" | jq -e '.action == "bake" and .status == "ready" and (.slot_id | length) > 0' >/dev/null; then
-    pass "oven bake creates a ready slot"
-else
-    fail "oven bake JSON failed: ${oven_bake_json}"
-fi
-
-oven_status_json=$(gw oven status --json 2>/dev/null)
-if echo "${oven_status_json}" | jq -e 'length == 1 and .[0].status == "ready" and .[0].recipe == "e2e-recipe"' >/dev/null; then
-    pass "oven status reports the ready generation"
-else
-    fail "oven status did not explain readiness: ${oven_status_json}"
-fi
-
-oven_hit_json=$(gw create oven-hit --branch feat/oven-hit --recipe "${RECIPE_FILE}" --oven --json 2>/dev/null)
-if echo "${oven_hit_json}" | jq -e '.created == true and .oven == "hit" and (.jobs | length) == 0' >/dev/null && \
-   [ -f "${GROVE_HOME}/.grove/workspaces/oven-hit/auth/.recipe-ran" ] && \
-   [ -f "${GROVE_HOME}/.grove/workspaces/oven-hit/api/.recipe-ran" ]; then
-    pass "create --oven claims prepared artifacts"
-else
-    fail "create --oven hit failed: ${oven_hit_json}"
-fi
-
-gw delete oven-hit --force >/dev/null 2>&1
-if echo "$(gw oven status --json 2>/dev/null)" | jq -e 'length == 0' >/dev/null; then
-    pass "deleting an Oven workspace cleans its backing slot"
-else
-    fail "claimed Oven slot remained after delete"
-fi
-
-oven_miss_json=$(gw create oven-miss --branch feat/oven-miss --recipe "${RECIPE_FILE}" --oven --json 2>/dev/null)
-if echo "${oven_miss_json}" | jq -e '.created == true and .oven == "miss" and (.jobs | length) == 3' >/dev/null; then
-    pass "Oven miss falls back to cold Recipe creation"
-else
-    fail "Oven miss fallback failed: ${oven_miss_json}"
-fi
-gw delete oven-miss --force >/dev/null 2>&1
-
-oven_reconcile_json=$(gw oven reconcile "${RECIPE_FILE}" --json 2>/dev/null)
-if echo "${oven_reconcile_json}" | jq -e '.action == "reconcile" and .status == "ready"' >/dev/null; then
-    pass "oven reconcile replenishes the ready slot"
-else
-    fail "oven reconcile failed: ${oven_reconcile_json}"
-fi
-oven_clean_json=$(gw oven clean "${RECIPE_FILE}" --json 2>/dev/null)
-if echo "${oven_clean_json}" | jq -e '.removed == 1 and (.blocked | length) == 0' >/dev/null; then
-    pass "oven clean removes unclaimed slots"
-else
-    fail "oven clean failed: ${oven_clean_json}"
-fi
-
-# ---------------------------------------------------------------------------
 # Test: stats
 # ---------------------------------------------------------------------------
 section "Stats"

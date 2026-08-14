@@ -326,15 +326,15 @@ func setupRecipeCreateCommand(t *testing.T, command string) recipeCreateCommandE
 	if err := config.Save(&models.Config{RepoDirs: []string{reposDir}, WorkspaceDir: workspaceDir}); err != nil {
 		t.Fatal(err)
 	}
-	oldRecipe, oldBranch, oldJSON, oldOven := createRecipe, createBranch, createJSON, createOven
+	oldRecipe, oldBranch, oldJSON := createRecipe, createBranch, createJSON
 	oldRepos, oldPreset, oldAll := createRepos, createPreset, createAll
 	oldReplace, oldTrack, oldForce := createReplace, createTrack, createForce
-	createRecipe, createBranch, createJSON, createOven = recipePath, "feat/recipe", true, false
+	createRecipe, createBranch, createJSON = recipePath, "feat/recipe", true
 	createRepos, createPreset, createAll = "", "", false
 	createReplace, createTrack, createForce = false, false, false
 	t.Cleanup(func() {
 		config.GroveDir, config.ConfigPath, config.DefaultWorkspaceDir = oldGroveDir, oldConfigPath, oldWorkspaceDir
-		createRecipe, createBranch, createJSON, createOven = oldRecipe, oldBranch, oldJSON, oldOven
+		createRecipe, createBranch, createJSON = oldRecipe, oldBranch, oldJSON
 		createRepos, createPreset, createAll = oldRepos, oldPreset, oldAll
 		createReplace, createTrack, createForce = oldReplace, oldTrack, oldForce
 	})

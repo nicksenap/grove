@@ -69,7 +69,6 @@ func init() {
 		shellInitCmd,
 		presetCmd,
 		recipeCmd,
-		ovenCmd,
 		addDirCmd,
 		removeDirCmd,
 		runCmd,
