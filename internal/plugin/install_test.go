@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -60,6 +61,91 @@ func TestParseRepo(t *testing.T) {
 				t.Errorf("parseRepo(%q) name = %q, want %q", tt.input, name, tt.wantName)
 			}
 		})
+	}
+}
+
+func TestFetchReleaseWithoutTokenUsesPublicReleaseRoute(t *testing.T) {
+	t.Setenv("GH_TOKEN", "")
+	t.Setenv("GITHUB_TOKEN", "")
+
+	assetName := fmt.Sprintf("gw-test_0.1.0_%s_%s.tar.gz", runtime.GOOS, runtime.GOARCH)
+	apiCalled := false
+	var srv *httptest.Server
+	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/owner/gw-test/releases/latest":
+			http.Redirect(w, r, srv.URL+"/owner/gw-test/releases/tag/v0.1.0", http.StatusFound)
+		case "/owner/gw-test/releases/tag/v0.1.0":
+			w.WriteHeader(http.StatusOK)
+		case "/owner/gw-test/releases/download/v0.1.0/" + assetName:
+			w.WriteHeader(http.StatusOK)
+		case "/repos/owner/gw-test/releases/latest":
+			apiCalled = true
+			http.Error(w, "API should not be needed", http.StatusInternalServerError)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	release, err := (releaseFetcher{
+		client:     srv.Client(),
+		webBaseURL: srv.URL,
+		apiBaseURL: srv.URL,
+	}).fetch("owner", "gw-test")
+	if err != nil {
+		t.Fatalf("fetch() error = %v", err)
+	}
+	if apiCalled {
+		t.Fatal("GitHub API should not be called for a conventional public release")
+	}
+	if release.TagName != "v0.1.0" {
+		t.Fatalf("TagName = %q, want v0.1.0", release.TagName)
+	}
+	if len(release.Assets) != 2 || release.Assets[0].Name != assetName || release.Assets[1].Name != "checksums.txt" {
+		t.Fatalf("Assets = %#v, want archive and checksums", release.Assets)
+	}
+}
+
+func TestFetchReleaseFallsBackToAPIForNonstandardAssets(t *testing.T) {
+	t.Setenv("GH_TOKEN", "")
+	t.Setenv("GITHUB_TOKEN", "")
+
+	assetName := fmt.Sprintf("gw-test-custom-%s-%s.tar.gz", runtime.GOOS, runtime.GOARCH)
+	apiCalled := false
+	var srv *httptest.Server
+	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/owner/gw-test/releases/latest":
+			http.Redirect(w, r, srv.URL+"/owner/gw-test/releases/tag/v0.1.0", http.StatusFound)
+		case r.URL.Path == "/owner/gw-test/releases/tag/v0.1.0":
+			w.WriteHeader(http.StatusOK)
+		case strings.HasPrefix(r.URL.Path, "/owner/gw-test/releases/download/"):
+			http.NotFound(w, r)
+		case r.URL.Path == "/repos/owner/gw-test/releases/latest":
+			apiCalled = true
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprintf(w, `{"tag_name":"v0.1.0","assets":[{"name":%q,"browser_download_url":%q}]}`,
+				assetName, srv.URL+"/assets/custom.tar.gz")
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	release, err := (releaseFetcher{
+		client:     srv.Client(),
+		webBaseURL: srv.URL,
+		apiBaseURL: srv.URL,
+	}).fetch("owner", "gw-test")
+	if err != nil {
+		t.Fatalf("fetch() error = %v", err)
+	}
+	if !apiCalled {
+		t.Fatal("GitHub API fallback was not called")
+	}
+	if len(release.Assets) != 1 || release.Assets[0].Name != assetName {
+		t.Fatalf("Assets = %#v, want API assets", release.Assets)
 	}
 }
 

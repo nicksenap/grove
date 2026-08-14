@@ -163,36 +163,119 @@ func parseRepo(repo string) (owner, name string, err error) {
 	return parts[0], parts[1], nil
 }
 
-func fetchRelease(owner, repo string) (*ghRelease, error) {
-	url := fmt.Sprintf("https://api.github.com/repos/%s/%s/releases/latest", owner, repo)
+const (
+	githubWebBaseURL = "https://github.com"
+	githubAPIBaseURL = "https://api.github.com"
+)
 
-	client := &http.Client{Timeout: 15 * time.Second}
-	req, err := http.NewRequest("GET", url, nil)
+type releaseFetcher struct {
+	client     *http.Client
+	webBaseURL string
+	apiBaseURL string
+}
+
+func fetchRelease(owner, repo string) (*ghRelease, error) {
+	fetcher := releaseFetcher{
+		client:     &http.Client{Timeout: 15 * time.Second},
+		webBaseURL: githubWebBaseURL,
+		apiBaseURL: githubAPIBaseURL,
+	}
+	return fetcher.fetch(owner, repo)
+}
+
+func (f releaseFetcher) fetch(owner, repo string) (*ghRelease, error) {
+	release, publicErr := f.fetchPublicGoReleaserRelease(owner, repo)
+	if publicErr == nil {
+		return release, nil
+	}
+
+	release, apiErr := f.fetchFromAPI(owner, repo)
+	if apiErr != nil {
+		return nil, fmt.Errorf("public release discovery failed: %v; GitHub API fallback failed: %w", publicErr, apiErr)
+	}
+	return release, nil
+}
+
+func (f releaseFetcher) fetchPublicGoReleaserRelease(owner, repo string) (*ghRelease, error) {
+	latestURL := fmt.Sprintf("%s/%s/%s/releases/latest", strings.TrimRight(f.webBaseURL, "/"), owner, repo)
+	req, err := http.NewRequest(http.MethodHead, latestURL, nil)
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("User-Agent", "grove-plugin-installer")
 
-	// Use GITHUB_TOKEN if available for higher rate limits
+	resp, err := f.client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("latest release page returned HTTP %d", resp.StatusCode)
+	}
+
+	tagPrefix := fmt.Sprintf("/%s/%s/releases/tag/", owner, repo)
+	if !strings.HasPrefix(resp.Request.URL.Path, tagPrefix) {
+		return nil, fmt.Errorf("latest release did not redirect to a release tag")
+	}
+	tag := strings.TrimPrefix(resp.Request.URL.Path, tagPrefix)
+	version := strings.TrimPrefix(tag, "v")
+	if tag == "" || version == "" {
+		return nil, fmt.Errorf("latest release has an empty tag")
+	}
+
+	assetName := fmt.Sprintf("%s_%s_%s_%s.tar.gz", repo, version, runtime.GOOS, runtime.GOARCH)
+	downloadBaseURL := fmt.Sprintf("%s/%s/%s/releases/download/%s", strings.TrimRight(f.webBaseURL, "/"), owner, repo, tag)
+	assetURL := downloadBaseURL + "/" + assetName
+
+	assetReq, err := http.NewRequest(http.MethodHead, assetURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	assetReq.Header.Set("User-Agent", "grove-plugin-installer")
+	assetResp, err := f.client.Do(assetReq)
+	if err != nil {
+		return nil, err
+	}
+	assetResp.Body.Close()
+	if assetResp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("conventional release asset %s returned HTTP %d", assetName, assetResp.StatusCode)
+	}
+
+	return &ghRelease{
+		TagName: tag,
+		Assets: []ghAsset{
+			{Name: assetName, BrowserDownloadURL: assetURL},
+			{Name: "checksums.txt", BrowserDownloadURL: downloadBaseURL + "/checksums.txt"},
+		},
+	}, nil
+}
+
+func (f releaseFetcher) fetchFromAPI(owner, repo string) (*ghRelease, error) {
+	apiURL := fmt.Sprintf("%s/repos/%s/%s/releases/latest", strings.TrimRight(f.apiBaseURL, "/"), owner, repo)
+	req, err := http.NewRequest(http.MethodGet, apiURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("User-Agent", "grove-plugin-installer")
 	if token := os.Getenv("GITHUB_TOKEN"); token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
 
-	resp, err := client.Do(req)
+	resp, err := f.client.Do(req)
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode == 404 {
+	if resp.StatusCode == http.StatusNotFound {
 		return nil, fmt.Errorf("repository %s/%s not found or has no releases", owner, repo)
 	}
-	if resp.StatusCode != 200 {
+	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("GitHub API returned %d", resp.StatusCode)
 	}
 
 	var release ghRelease
-	// Limit response body to 1 MiB to prevent memory exhaustion
+	// Limit response body to 1 MiB to prevent memory exhaustion.
 	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&release); err != nil {
 		return nil, fmt.Errorf("parsing release response: %w", err)
 	}
