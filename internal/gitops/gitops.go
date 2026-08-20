@@ -255,6 +255,18 @@ func CurrentBranch(path string) (string, error) {
 	return runGit(path, "branch", "--show-current")
 }
 
+// Switch checks out branch in the worktree at path.
+// discard maps to git switch --discard-changes (tracked files only).
+func Switch(path, branch string, discard bool) error {
+	args := []string{"switch", "-q"}
+	if discard {
+		args = append(args, "--discard-changes")
+	}
+	args = append(args, "--", branch)
+	_, err := runGit(path, args...)
+	return err
+}
+
 // RebaseOnto rebases the current branch onto the given base.
 func RebaseOnto(path, base string) error {
 	_, err := runGit(path, "rebase", base)

@@ -608,6 +608,44 @@ fi
 gw delete sync-ws 2>&1
 
 # ---------------------------------------------------------------------------
+# Test: reset (switch back to workspace branch, then sync)
+# ---------------------------------------------------------------------------
+section "Reset"
+
+gw create reset-ws --branch feat/reset-test --repos grove 2>&1
+RESET_WS_DIR="${GROVE_HOME}/.grove/workspaces/reset-ws"
+pass "created reset workspace with Grove repo"
+
+(cd "${RESET_WS_DIR}/grove" && git switch -q -c feat/wander)
+wander=$(cd "${RESET_WS_DIR}/grove" && git branch --show-current)
+if [ "${wander}" = "feat/wander" ]; then
+    pass "worktree switched off workspace branch"
+else
+    fail "expected feat/wander, got: ${wander}"
+fi
+
+gw reset reset-ws 2>&1
+pass "reset command ran"
+
+home=$(cd "${RESET_WS_DIR}/grove" && git branch --show-current)
+if [ "${home}" = "feat/reset-test" ]; then
+    pass "worktree back on workspace branch"
+else
+    fail "expected feat/reset-test after reset, got: ${home}"
+fi
+
+(cd "${RESET_WS_DIR}/grove" && git switch -q -c feat/wander2 && echo dirt >> README.md)
+gw reset reset-ws 2>&1
+dirty_branch=$(cd "${RESET_WS_DIR}/grove" && git branch --show-current)
+if [ "${dirty_branch}" = "feat/wander2" ]; then
+    pass "reset skips dirty wanderer"
+else
+    fail "dirty wanderer should stay on feat/wander2, got: ${dirty_branch}"
+fi
+
+gw delete reset-ws --force 2>&1
+
+# ---------------------------------------------------------------------------
 # Test: doctor (healthy state)
 # ---------------------------------------------------------------------------
 section "Doctor"

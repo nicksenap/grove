@@ -118,6 +118,7 @@ setup = ["npm install", "npm run build"]  # run after worktree creation
 | `gw go <name>` | Change directory into workspace |
 | `gw status <name>` | Git status across all repos |
 | `gw sync <name>` | Rebase all repos onto base branch |
+| `gw reset <name>` | Switch every repo back to the workspace branch, then sync |
 | `gw add-repo <name> -r <repo>` | Add a repo to existing workspace |
 | `gw remove-repo <name> -r <repo>` | Remove a repo from workspace |
 | `gw run <name>` | Run dev processes (interactive TUI) |
