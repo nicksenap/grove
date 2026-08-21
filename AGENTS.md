@@ -56,7 +56,6 @@ Tool-specific integrations (Codex memory sync, Zellij, archive, dashboard) live 
 - **internal/gitops/** — Thin wrappers around `git` subprocess calls. Includes `ReadGroveConfig()`.
 - **internal/lifecycle/** — Runs global lifecycle hooks (`post_create`, `pre_delete`, `on_close`) defined in `[hooks]`. Hooks may be bare command strings or tables with metadata (`stream`, `timeout`, `on_failure`); the global `--no-hooks`/`-n` flag skips them all. Plugins register here.
 - **internal/logging/** — Structured logging.
-- **internal/mcp/** — MCP JSON-RPC server exposing workspace state to Codex.
 - **internal/models/** — Data structs with JSON serialization.
 - **internal/picker/** — Interactive terminal menus.
 - **internal/plugin/** — Plugin install/upgrade/remove from GitHub releases.

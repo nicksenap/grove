@@ -73,7 +73,6 @@ func init() {
 		removeDirCmd,
 		runCmd,
 		exploreCmd,
-		mcpServeCmd,
 		pluginCmd,
 		wizardCmd,
 		bugReportCmd,

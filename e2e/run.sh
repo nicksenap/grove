@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Grove Go rewrite — end-to-end test suite.
-# Adapted from the Python e2e tests, skipping MCP and dashboard.
+# Adapted from the Python e2e tests, skipping the dashboard.
 set -euo pipefail
 
 PASS=0
@@ -124,23 +124,6 @@ else
     fail "expected branch feat/e2e, got ${auth_branch}"
 fi
 
-# Verify .mcp.json was written in workspace root AND worktree dirs
-if [ -f "${WS_DIR}/.mcp.json" ]; then
-    if jq -e '.mcpServers.grove' "${WS_DIR}/.mcp.json" > /dev/null 2>&1; then
-        pass ".mcp.json has grove server entry (workspace root)"
-    else
-        fail ".mcp.json missing grove entry"
-    fi
-else
-    fail ".mcp.json not created in workspace root"
-fi
-
-if [ ! -f "${WS_DIR}/svc-auth/.mcp.json" ]; then
-    pass ".mcp.json not written into repo worktrees (workspace root only)"
-else
-    fail ".mcp.json should not be written inside a repo worktree"
-fi
-
 # Verify .grove.toml setup hook ran
 if [ -f "${WS_DIR}/svc-auth/.grove-setup-ran" ]; then
     pass ".grove.toml setup hook executed"
@@ -183,7 +166,7 @@ if ! gw create test-ws --branch feat/dupe --repos svc-auth 2>/dev/null; then
     pass "duplicate workspace name rejected"
 else
     fail "duplicate workspace name should have failed"
-    gw delete test-ws --force 2>/dev/null || true
+    gw delete test-ws 2>/dev/null || true
 fi
 
 # ---------------------------------------------------------------------------
@@ -310,7 +293,7 @@ else
     fail "status table missing Source line: ${status_table}"
 fi
 
-gw delete pr-ws --force 2>&1
+gw delete pr-ws 2>&1
 
 # ---------------------------------------------------------------------------
 # Test: create --track fallback (remote branch missing → new branch, no error)
@@ -327,7 +310,7 @@ else
     fail "expected feat/ghost-pr, got ${fb_branch}"
 fi
 
-gw delete fallback-ws --force 2>&1
+gw delete fallback-ws 2>&1
 
 # ---------------------------------------------------------------------------
 # Test: post_create hook receives source_* placeholders
@@ -356,7 +339,7 @@ else
     fail "post_create source vars wrong: $(cat "${SRC_HOOK_MARKER}" 2>/dev/null)"
 fi
 
-gw delete hooksrc-ws --force 2>&1
+gw delete hooksrc-ws 2>&1
 rm -f "${SRC_HOOK_MARKER}"
 
 # Restore config without hooks for subsequent tests.
@@ -622,7 +605,7 @@ else
     fail "worktree still ${behind_after} behind after sync"
 fi
 
-gw delete sync-ws --force 2>&1
+gw delete sync-ws 2>&1
 
 # ---------------------------------------------------------------------------
 # Test: doctor (healthy state)
@@ -690,7 +673,7 @@ fi
 # ---------------------------------------------------------------------------
 section "Delete workspace"
 
-gw delete ws-two --force 2>&1
+gw delete ws-two 2>&1
 pass "delete succeeded"
 
 count=$(gw list --json 2>/dev/null | jq 'length')
@@ -737,7 +720,7 @@ else
     fail "post_create hook did not fire"
 fi
 
-gw delete hook-ws --force 2>&1
+gw delete hook-ws 2>&1
 if [ -f "${PRE_DELETE_MARKER}" ]; then
     pass "pre_delete hook fired before workspace deletion"
 else
@@ -761,7 +744,7 @@ else
 fi
 
 # Use the -n shorthand here to cover both spellings.
-gw -n delete nohook-ws --force 2>&1
+gw -n delete nohook-ws 2>&1
 if [ ! -f "${PRE_DELETE_MARKER}" ]; then
     pass "-n (--no-hooks shorthand) skipped pre_delete hook"
 else
@@ -798,7 +781,7 @@ if echo "${stream_out}" | grep -q '\[post_create\] hello-from-stream'; then
 else
     fail "stream hook output missing [post_create] prefix: ${stream_out}"
 fi
-gw delete stream-ws --force 2>&1
+gw delete stream-ws 2>&1
 
 # on_failure = "abort" should make a failing hook fatal — gw exits non-zero.
 cat > "${GROVE_HOME}/.grove/config.toml" <<EOF
@@ -817,7 +800,7 @@ else
 fi
 # The workspace is created before post_create runs, so it still exists. Only
 # pre_delete fires on delete (unset here), so cleanup succeeds cleanly.
-gw delete abort-ws --force 2>&1
+gw delete abort-ws 2>&1
 
 # Default on_failure ("warn") should NOT abort — a failing hook only warns.
 cat > "${GROVE_HOME}/.grove/config.toml" <<EOF
@@ -833,7 +816,7 @@ if gw create warn-ws --branch feat/warn --repos svc-auth 2>&1; then
 else
     fail "default on_failure = warn should not abort the command"
 fi
-gw delete warn-ws --force 2>&1
+gw delete warn-ws 2>&1
 
 # Restore config without hooks for subsequent tests
 cat > "${GROVE_HOME}/.grove/config.toml" <<EOF
@@ -849,7 +832,7 @@ section "ws delete subcommand"
 gw create ws-del-sub --branch feat/ws-del --repos svc-auth 2>&1
 pass "workspace for ws delete test created"
 
-gw ws delete ws-del-sub --force 2>&1
+gw ws delete ws-del-sub 2>&1
 pass "gw ws delete succeeded"
 
 count=$(gw list --json 2>/dev/null | jq 'length')
@@ -896,7 +879,7 @@ else
     fail "svc-gateway should not be in preset"
 fi
 
-gw delete preset-ws --force 2>&1
+gw delete preset-ws 2>&1
 pass "preset workspace cleaned up"
 
 # Test: preset list --json
@@ -981,7 +964,7 @@ else
     fail "Recipe create unexpectedly ran legacy setup"
 fi
 
-gw delete recipe-ws --force >/dev/null 2>&1
+gw delete recipe-ws >/dev/null 2>&1
 pass "Recipe workspace cleaned up normally"
 
 FAIL_RECIPE="${GROVE_HOME}/recipe-fail.yaml"
@@ -1097,84 +1080,7 @@ else
     fail "gw run output missing: ${run_out}"
 fi
 
-gw delete run-ws --force 2>&1
-
-# ---------------------------------------------------------------------------
-# Test: MCP server (stdio JSON-RPC)
-# ---------------------------------------------------------------------------
-section "MCP server"
-
-gw create mcp-ws --branch feat/mcp --repos svc-auth 2>&1
-
-# Inline MCP smoke test (no Python dependency needed)
-MCP_ERRORS=0
-
-# Helper to send JSON-RPC and read response
-mcp_test() {
-    local input="$1"
-    local expected_id="$2"
-
-    # Send all messages and capture output
-    echo "$input" | timeout_cmd 10 gw mcp-serve --workspace mcp-ws 2>/dev/null || true
-}
-
-# Test initialize + tools/list + announce + get_announcements + list_workspaces
-MCP_INPUT=$(cat <<'JSONRPC'
-{"jsonrpc":"2.0","method":"initialize","id":1,"params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"e2e","version":"0.1"}}}
-{"jsonrpc":"2.0","method":"notifications/initialized"}
-{"jsonrpc":"2.0","method":"ping","id":99}
-{"jsonrpc":"2.0","method":"tools/list","id":2}
-{"jsonrpc":"2.0","method":"tools/call","id":3,"params":{"name":"announce","arguments":{"repo_url":"git@github.com:org/repo.git","category":"info","message":"e2e test"}}}
-{"jsonrpc":"2.0","method":"tools/call","id":4,"params":{"name":"get_announcements","arguments":{"repo_url":"git@github.com:org/repo.git"}}}
-{"jsonrpc":"2.0","method":"tools/call","id":5,"params":{"name":"list_workspaces","arguments":{}}}
-JSONRPC
-)
-
-MCP_OUT=$(echo "${MCP_INPUT}" | timeout_cmd 10 "${GW_BIN}" mcp-serve --workspace mcp-ws 2>/dev/null || true)
-
-# Check initialize response
-if echo "${MCP_OUT}" | grep -q '"protocolVersion"'; then
-    pass "MCP initialize"
-else
-    fail "MCP initialize failed"
-fi
-
-# Check ping response (id: 99)
-if echo "${MCP_OUT}" | grep -q '"id":99'; then
-    pass "MCP ping"
-else
-    fail "MCP ping failed"
-fi
-
-# Check tools/list has all 3 tools
-if echo "${MCP_OUT}" | grep -q '"announce"' && echo "${MCP_OUT}" | grep -q '"get_announcements"' && echo "${MCP_OUT}" | grep -q '"list_workspaces"'; then
-    pass "MCP tools/list returns all 3 tools"
-else
-    fail "MCP tools/list missing tools"
-fi
-
-# Check announce returned "published"
-if echo "${MCP_OUT}" | grep -q 'published'; then
-    pass "MCP announce tool works"
-else
-    fail "MCP announce failed"
-fi
-
-# Check get_announcements returns empty (same workspace excluded)
-if echo "${MCP_OUT}" | grep -q '\[\]'; then
-    pass "MCP get_announcements excludes own workspace"
-else
-    fail "MCP get_announcements should return empty"
-fi
-
-# Check list_workspaces returns workspace name
-if echo "${MCP_OUT}" | grep -q 'mcp-ws'; then
-    pass "MCP list_workspaces returns current workspace"
-else
-    fail "MCP list_workspaces missing workspace"
-fi
-
-gw delete mcp-ws --force 2>&1
+gw delete run-ws 2>&1
 
 # ---------------------------------------------------------------------------
 # Test: plugin system
@@ -1306,7 +1212,7 @@ if ! (cd "${GROVE_HOME}" && gw create should-not-exist --branch feat/nope --repo
     pass "--replace outside a workspace exits non-zero"
 else
     fail "--replace outside a workspace should have failed"
-    gw delete should-not-exist --force 2>/dev/null || true
+    gw delete should-not-exist 2>/dev/null || true
 fi
 
 # --replace with same name as current ws should error (name collision guard)
@@ -1316,7 +1222,7 @@ else
     fail "--replace should reject same-name collision"
 fi
 
-gw delete replace-new --force 2>&1
+gw delete replace-new 2>&1
 
 # ---------------------------------------------------------------------------
 # Test: bug-report (verify diagnostics collection — don't actually open browser)
@@ -1348,7 +1254,7 @@ fi
 # ---------------------------------------------------------------------------
 section "Final cleanup"
 
-gw delete test-ws --force 2>&1
+gw delete test-ws 2>&1
 pass "final delete succeeded"
 
 count=$(gw list --json 2>/dev/null | jq 'length')

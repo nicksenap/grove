@@ -90,7 +90,7 @@ Pass `--no-hooks` (shorthand `-n`) to any command to skip all global hooks for t
 
 ```sh
 gw --no-hooks create my-feature --repos svc-auth
-gw -n delete my-feature --force
+gw -n delete my-feature
 ```
 
 Per-repo hooks (`.grove.toml`) are unaffected.

@@ -2,7 +2,6 @@ package workspace
 
 import (
 	"bytes"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -597,36 +596,17 @@ func TestCreateWithOptsPersistsSource(t *testing.T) {
 	}
 }
 
-func TestCreateWritesMCPConfig(t *testing.T) {
+func TestCreateDoesNotWriteMCPConfig(t *testing.T) {
 	env := setupTestEnv(t)
 	env.createRepo("api")
 
-	env.svc.Create("mcp-ws", "feat/mcp", []string{"api"}, env.repoMap, env.cfg)
-
-	// .mcp.json in workspace root
-	mcpPath := filepath.Join(env.wsDir, "mcp-ws", ".mcp.json")
-	data, err := os.ReadFile(mcpPath)
-	if err != nil {
-		t.Fatalf("reading .mcp.json: %v", err)
-	}
-	var mcpCfg models.MCPConfig
-	if err := json.Unmarshal(data, &mcpCfg); err != nil {
-		t.Fatalf("parsing .mcp.json: %v", err)
-	}
-	if _, ok := mcpCfg.MCPServers["grove"]; !ok {
-		t.Error(".mcp.json missing grove server entry")
+	if err := env.svc.Create("plain-ws", "feat/plain", []string{"api"}, env.repoMap, env.cfg); err != nil {
+		t.Fatalf("create: %v", err)
 	}
 
-	// .mcp.json should NOT be written inside the repo worktree — that would
-	// dirty the tree and break sync. Claude Code is run from the workspace
-	// root, which is where the shell integration cd's the user.
-	wt := filepath.Join(env.wsDir, "mcp-ws", "api")
-	if _, err := os.Stat(filepath.Join(wt, ".mcp.json")); err == nil {
-		t.Error(".mcp.json should not be written inside a repo worktree")
-	}
-	status := env.run(wt, "git", "status", "--porcelain")
-	if status != "" {
-		t.Errorf("worktree should be clean after workspace create, got:\n%s", status)
+	mcpPath := filepath.Join(env.wsDir, "plain-ws", ".mcp.json")
+	if _, err := os.Stat(mcpPath); !os.IsNotExist(err) {
+		t.Fatalf("Grove should not create .mcp.json, stat error: %v", err)
 	}
 }
 
@@ -777,6 +757,29 @@ func TestDeleteRejectsDirtyWorktreeByDefault(t *testing.T) {
 	}
 }
 
+func TestDeleteRemovesWorkspaceMetadata(t *testing.T) {
+	env := setupTestEnv(t)
+	env.createRepo("api")
+	if err := env.svc.Create("metadata-delete", "feat/metadata-delete", []string{"api"}, env.repoMap, env.cfg); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	ws, _ := env.svc.State.GetWorkspace("metadata-delete")
+	if err := os.MkdirAll(filepath.Join(ws.Path, ".pi"), 0o755); err != nil {
+		t.Fatalf("create workspace metadata directory: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(ws.Path, ".pi", "hindsight.json"), []byte("{}"), 0o644); err != nil {
+		t.Fatalf("write workspace metadata: %v", err)
+	}
+
+	if err := env.svc.Delete("metadata-delete"); err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+	if _, err := os.Stat(ws.Path); !os.IsNotExist(err) {
+		t.Fatalf("workspace metadata should not block root removal, got %v", err)
+	}
+}
+
 func TestDeleteForceRemovesDirtyWorktree(t *testing.T) {
 	env := setupTestEnv(t)
 	env.createRepo("api")
@@ -788,12 +791,21 @@ func TestDeleteForceRemovesDirtyWorktree(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(ws.Repos[0].WorktreePath, "dirty.txt"), []byte("remove me"), 0o644); err != nil {
 		t.Fatalf("write dirty file: %v", err)
 	}
+	if err := os.MkdirAll(filepath.Join(ws.Path, ".pi"), 0o755); err != nil {
+		t.Fatalf("create workspace metadata directory: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(ws.Path, ".pi", "hindsight.json"), []byte("{}"), 0o644); err != nil {
+		t.Fatalf("write workspace metadata: %v", err)
+	}
 
 	if err := env.svc.DeleteWithOptions("force-delete", RemoveOptions{Force: true}); err != nil {
 		t.Fatalf("force delete: %v", err)
 	}
 	if saved, _ := env.svc.State.GetWorkspace("force-delete"); saved != nil {
 		t.Fatal("workspace state should be removed")
+	}
+	if _, err := os.Stat(ws.Path); !os.IsNotExist(err) {
+		t.Fatalf("force delete should remove the entire workspace root, got %v", err)
 	}
 }
 
@@ -818,9 +830,6 @@ func TestDeleteRemovalFailurePreservesPathAndState(t *testing.T) {
 	}
 	if saved, _ := env.svc.State.GetWorkspace("failed-delete"); saved == nil || len(saved.Repos) != 1 {
 		t.Fatal("failed repo should remain in state")
-	}
-	if _, err := os.Stat(filepath.Join(ws.Path, ".mcp.json")); err != nil {
-		t.Fatalf("failed delete should preserve workspace MCP config: %v", err)
 	}
 }
 
@@ -1621,69 +1630,6 @@ func TestAllWorkspacesSummaryMultiple(t *testing.T) {
 		if r.Name == "" || r.Branch == "" || r.Path == "" {
 			t.Errorf("empty field in result: %+v", r)
 		}
-	}
-}
-
-// ---------------------------------------------------------------------------
-// MCP config tests
-// ---------------------------------------------------------------------------
-
-func TestMCPConfigMergesWithExisting(t *testing.T) {
-	env := setupTestEnv(t)
-	env.createRepo("api")
-
-	env.svc.Create("merge-ws", "feat/merge", []string{"api"}, env.repoMap, env.cfg)
-
-	// Add another server to .mcp.json
-	mcpPath := filepath.Join(env.wsDir, "merge-ws", "api", ".mcp.json")
-	existing := `{"mcpServers":{"grove":{"command":"gw","args":["mcp-serve","--workspace","merge-ws"]},"other":{"command":"other-tool","args":[]}}}`
-	os.WriteFile(mcpPath, []byte(existing), 0o644)
-
-	// Create another workspace that writes .mcp.json — simulate by calling writeMCPConfig directly
-	ws, _ := env.svc.State.GetWorkspace("merge-ws")
-	writeMCPConfig(*ws)
-
-	// "other" server should still be there
-	data, _ := os.ReadFile(mcpPath)
-	var mcpCfg map[string]interface{}
-	json.Unmarshal(data, &mcpCfg)
-
-	servers := mcpCfg["mcpServers"].(map[string]interface{})
-	if _, ok := servers["other"]; !ok {
-		t.Error("existing 'other' server should be preserved")
-	}
-	if _, ok := servers["grove"]; !ok {
-		t.Error("'grove' server should exist")
-	}
-}
-
-func TestMCPConfigRemoveOnlyGrove(t *testing.T) {
-	env := setupTestEnv(t)
-	env.createRepo("api")
-
-	env.svc.Create("rmcp-ws", "feat/rmcp", []string{"api"}, env.repoMap, env.cfg)
-
-	// Add another server at the workspace-root .mcp.json
-	mcpPath := filepath.Join(env.wsDir, "rmcp-ws", ".mcp.json")
-	existing := `{"mcpServers":{"grove":{"command":"gw","args":["mcp-serve","--workspace","rmcp-ws"]},"keeper":{"command":"keep-me","args":[]}}}`
-	os.WriteFile(mcpPath, []byte(existing), 0o644)
-
-	ws, _ := env.svc.State.GetWorkspace("rmcp-ws")
-	removeMCPConfig(*ws)
-
-	// "keeper" should remain, "grove" should be gone
-	data, err := os.ReadFile(mcpPath)
-	if err != nil {
-		t.Fatalf("file should still exist: %v", err)
-	}
-	var mcpCfg map[string]interface{}
-	json.Unmarshal(data, &mcpCfg)
-	servers := mcpCfg["mcpServers"].(map[string]interface{})
-	if _, ok := servers["grove"]; ok {
-		t.Error("'grove' should be removed")
-	}
-	if _, ok := servers["keeper"]; !ok {
-		t.Error("'keeper' should be preserved")
 	}
 }
 

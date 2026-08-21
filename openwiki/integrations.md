@@ -1,13 +1,13 @@
 ---
 type: "Reference"
 title: "Integrations"
-description: "Grove integration points, including external plugins, lifecycle hooks, Claude Code support, Zellij workflows, and the MCP server."
-tags: [grove, integrations, plugins, hooks, mcp]
+description: "Grove integration points, including external plugins, lifecycle hooks, Claude Code support, and Zellij workflows."
+tags: [grove, integrations, plugins, hooks]
 ---
 
 # Integrations
 
-This page covers external integrations: plugins, AI tools, and the MCP server.
+This page covers external integrations, including plugins and AI tools.
 
 ## Plugin Ecosystem Overview
 
@@ -197,126 +197,6 @@ gw archive list                    # List archived workspaces
 
 ---
 
-## Claude Code Integration (`gw mcp-serve`)
-
-Grove exposes a **Model Context Protocol (MCP)** server on stdin/stdout that allows Claude Code to query and create workspaces directly.
-
-### What is MCP?
-
-MCP is a protocol for AI agents to interact with external tools via JSON-RPC. Claude Code uses MCP servers to access Grove state.
-
-### Start the MCP Server
-
-```bash
-gw mcp-serve
-```
-
-Listens on stdin/stdout (usually started by Claude Code automatically via `.mcp.json`).
-
-### Available Methods
-
-#### `list_workspaces`
-
-List all workspaces.
-
-```json
-{
-  "jsonrpc": "2.0",
-  "method": "list_workspaces",
-  "id": 1
-}
-```
-
-Response:
-
-```json
-{
-  "jsonrpc": "2.0",
-  "result": [
-    {
-      "name": "feat-login",
-      "branch": "feat/login",
-      "path": "~/.grove/workspaces/feat-login",
-      "created_at": "2024-01-15T10:30:45.123456",
-      "repos": ["svc-api", "svc-auth"]
-    }
-  ],
-  "id": 1
-}
-```
-
-#### `get_workspace`
-
-Get details of a specific workspace.
-
-```json
-{
-  "jsonrpc": "2.0",
-  "method": "get_workspace",
-  "params": { "name": "feat-login" },
-  "id": 2
-}
-```
-
-#### `create_workspace`
-
-Create a new workspace from Claude Code.
-
-```json
-{
-  "jsonrpc": "2.0",
-  "method": "create_workspace",
-  "params": {
-    "name": "claude-task",
-    "branch": "feat/claude-task",
-    "repos": ["svc-api", "svc-auth"],
-    "source": {
-      "provider": "claude",
-      "url": "claude:///task-id",
-      "title": "Fix auth bug"
-    }
-  },
-  "id": 3
-}
-```
-
-#### `get_workspace_status`
-
-Get git status across all repos in workspace.
-
-```json
-{
-  "jsonrpc": "2.0",
-  "method": "get_workspace_status",
-  "params": { "name": "feat-login" },
-  "id": 4
-}
-```
-
-### Implementation Details
-
-- **Location**: `internal/mcp/mcp.go`
-- **Protocol**: JSON-RPC 2.0 over stdin/stdout
-- **Thread-safe**: Synchronizes access to state.json
-- **Error handling**: Returns JSON-RPC error codes for invalid operations
-
-### Custom Claude Code Setup
-
-If Claude Code is not auto-configured with Grove's MCP server, add to `.mcp.json` in your project root:
-
-```json
-{
-  "mcpServers": {
-    "grove": {
-      "command": "gw",
-      "args": ["mcp-serve"]
-    }
-  }
-}
-```
-
----
-
 ## Workspace Source Provenance
 
 When creating a workspace from an external source (GitHub PR, Notion page, Slack thread), you can record the source URL and metadata:
@@ -332,7 +212,7 @@ gw create my-feature -b feat/login -r svc-a,svc-b \
 This metadata is:
 - Stored in workspace state (`.source` field)
 - Passed to hooks via placeholders: `{source_url}`, `{source_ref}`, `{source_title}`
-- Available to plugins (MCP, claude memory, dashboard)
+- Available to plugins (for example Claude memory and dashboard integrations)
 
 **Use cases**:
 - Claude Code agents → Trace back to original PR or task
@@ -517,26 +397,6 @@ gw --verbose create my-feature  # Show hook firing
 Verify hook is in `~/.grove/config.toml`:
 ```bash
 grep "post_create" ~/.grove/config.toml
-```
-
-### MCP Server Not Starting
-
-Ensure gw is on PATH:
-```bash
-which gw
-gw mcp-serve  # Test manually
-```
-
-Check Claude Code config (`.mcp.json`):
-```json
-{
-  "mcpServers": {
-    "grove": {
-      "command": "gw",
-      "args": ["mcp-serve"]
-    }
-  }
-}
 ```
 
 ### Memory Sync Issues

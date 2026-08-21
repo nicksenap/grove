@@ -7,12 +7,10 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"syscall"
 
 	"github.com/nicksenap/grove/internal/config"
 	"github.com/nicksenap/grove/internal/console"
 	"github.com/nicksenap/grove/internal/lifecycle"
-	"github.com/nicksenap/grove/internal/logging"
 	"github.com/nicksenap/grove/internal/picker"
 	"github.com/nicksenap/grove/internal/state"
 	"github.com/spf13/cobra"
@@ -35,11 +33,13 @@ var goCmd = &cobra.Command{
 		// --close-tab: fire on_close lifecycle hook
 		if goCloseTab {
 			if goDelete {
-				// Delete current workspace first
+				// Delete current workspace first.
 				cwd, _ := os.Getwd()
 				ws, _ := state.FindWorkspaceByPath(cwd)
 				if ws != nil {
-					deleteAsync(ws.Name)
+					if err := deleteWorkspace(ws.Name); err != nil {
+						exitError(err.Error())
+					}
 				}
 			}
 			if err := lifecycle.Run("on_close", lifecycle.Vars{}); errors.Is(err, lifecycle.ErrNoHook) {
@@ -53,11 +53,12 @@ var goCmd = &cobra.Command{
 		if goBack {
 			target := resolveGoBack()
 			if goDelete {
-				// Delete current workspace asynchronously
 				cwd, _ := os.Getwd()
 				ws, _ := state.FindWorkspaceByPath(cwd)
 				if ws != nil {
-					deleteAsync(ws.Name)
+					if err := deleteWorkspace(ws.Name); err != nil {
+						exitError(err.Error())
+					}
 				}
 			}
 			fmt.Print(target)
@@ -92,7 +93,9 @@ var goCmd = &cobra.Command{
 			if currentWs != nil && currentWs.Name == ws.Name {
 				console.Warning("Cannot delete workspace you're navigating to")
 			} else if currentWs != nil {
-				deleteAsync(currentWs.Name)
+				if err := deleteWorkspace(currentWs.Name); err != nil {
+					exitError(err.Error())
+				}
 			}
 		}
 
@@ -188,21 +191,26 @@ func pickWorkspaceForGo() string {
 	return strings.Split(picked, "  (current)")[0]
 }
 
-// deleteAsync spawns a detached subprocess to delete a workspace.
-// The subprocess survives after this process exits.
-func deleteAsync(name string) {
+var newDeleteCommand = func(name string) *exec.Cmd {
 	exe, err := os.Executable()
 	if err != nil {
 		exe = "gw"
 	}
-	cmd := exec.Command(exe, "delete", "--force", name)
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	cmd.Stdout = nil
-	cmd.Stderr = nil
-	cmd.Stdin = nil
-	if err := cmd.Start(); err != nil {
-		logging.Warn("deleteAsync: failed to spawn detached delete for %q: %v", name, err)
+	return exec.Command(exe, "delete", name)
+}
+
+// deleteWorkspace runs deletion synchronously so navigation only succeeds after
+// cleanup has succeeded. Its output is sent to stderr to keep stdout reserved
+// for the destination path consumed by shell integration.
+func deleteWorkspace(name string) error {
+	cmd := newDeleteCommand(name)
+	cmd.Stdout = os.Stderr
+	cmd.Stderr = os.Stderr
+	cmd.Stdin = os.Stdin
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("deleting workspace %s: %w", name, err)
 	}
+	return nil
 }
 
 func init() {

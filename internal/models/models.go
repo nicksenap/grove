@@ -234,16 +234,6 @@ type DoctorIssue struct {
 	SuggestedAction string  `json:"suggested_action"`
 }
 
-// MCPConfig is the .mcp.json structure written to workspaces.
-type MCPConfig struct {
-	MCPServers map[string]MCPServer `json:"mcpServers"`
-}
-
-type MCPServer struct {
-	Command string   `json:"command"`
-	Args    []string `json:"args"`
-}
-
 // ToJSON marshals to indented JSON.
 func ToJSON(v interface{}) ([]byte, error) {
 	return json.MarshalIndent(v, "", "  ")

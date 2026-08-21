@@ -474,8 +474,8 @@ Grove sets `GIT_TERMINAL_PROMPT=0` to disable interactive prompts. If auth fails
 #### "Worktree path exists"
 Grove cleans up worktrees on delete, but manual deletion of files can leave state inconsistent. Run:
 ```bash
-gw doctor  # Identifies orphaned entries
-gw delete --force <name>  # Force delete (skips cleanup)
+gw doctor         # Identifies orphaned entries
+gw delete <name>  # Destructively removes the registered workspace
 ```
 
 #### "Hook timeout"
