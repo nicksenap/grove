@@ -88,8 +88,8 @@ gw status my-feature   # git status across every repo
 gw sync my-feature     # rebase all repos onto their base branch
 gw run my-feature      # run dev processes (TUI)
 
-# Clean up when done (refuses dirty worktrees unless --force is used)
-gw delete my-feature   # removes worktrees + safely deletes merged branches
+# Clean up when done (destructive; use a pre_delete hook to enforce policy)
+gw delete my-feature   # removes worktrees, branches, and workspace files
 ```
 
 Interactive menus support **type-to-search** filtering, arrow-key navigation (single-select), or arrow + tab (multi-select) with an `(all)` shortcut.
@@ -104,14 +104,14 @@ Full documentation lives in the [OpenWiki](openwiki/quickstart.md) — start wit
 - [Architecture](openwiki/architecture.md) — layered design, data model, concurrency, and key decisions
 - [Workflows](openwiki/workflows.md) — how each command maps to code (create, sync, run, delete, presets…)
 - [Operations](openwiki/operations.md) — configuration, hooks, state, troubleshooting, and release process
-- [Integrations](openwiki/integrations.md) — plugins, the MCP server, and workspace source provenance
+- [Integrations](openwiki/integrations.md) — plugins and workspace source provenance
 
 ### Focused topic guides
 
 - [Hooks](docs/hooks.md) — global hooks (terminal integration) & per-repo hooks (`.grove.toml`, `gw run`)
 - [Plugins](docs/plugins.md) — extend gw with external commands
 - [Recipes](docs/recipe-v1.md) — strict schema, [workspace creation](docs/recipe-execution.md), and the [prepared-claim spike](docs/prepared-workspace-claim-spike.md)
-- [AI coding tools](docs/ai-tools.md) — Claude Code workflows, MCP server
+- [AI coding tools](docs/ai-tools.md) — Claude Code workflows
 
 ## Requirements
 

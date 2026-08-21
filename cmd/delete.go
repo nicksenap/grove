@@ -2,8 +2,6 @@ package cmd
 
 import (
 	"errors"
-	"fmt"
-	"strings"
 
 	"github.com/nicksenap/grove/internal/console"
 	"github.com/nicksenap/grove/internal/lifecycle"
@@ -13,18 +11,13 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var (
-	deleteCmdForce   bool
-	wsDeleteCmdForce bool
-)
-
 // deleteCmd is the top-level "gw delete" command.
 var deleteCmd = &cobra.Command{
 	Use:   "delete [NAME]",
 	Short: "Delete a workspace (shortcut for gw ws delete)",
 	Args:  cobra.MaximumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
-		doDelete(args, deleteCmdForce)
+		doDelete(args)
 	},
 }
 
@@ -34,17 +27,16 @@ var wsDeleteCmd = &cobra.Command{
 	Short: "Delete a workspace",
 	Args:  cobra.MaximumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
-		doDelete(args, wsDeleteCmdForce)
+		doDelete(args)
 	},
 }
 
-func doDelete(args []string, force bool) {
+func doDelete(args []string) {
 	var names []string
 
 	if len(args) > 0 {
 		names = []string{args[0]}
 	} else {
-		// Interactive multi-select
 		workspaces, err := state.Load()
 		if err != nil {
 			exitError(err.Error())
@@ -63,14 +55,9 @@ func doDelete(args []string, force bool) {
 		names = selected
 	}
 
-	if !force {
-		if !console.Confirm(fmt.Sprintf("Delete %s?", strings.Join(names, ", ")), false) {
-			return
-		}
-	}
-
 	for _, name := range names {
-		// Fire pre_delete hook before teardown (e.g. harvest Claude memory)
+		// pre_delete is the safety-policy extension point: configure a hook with
+		// on_failure = "abort" to inspect or block this destructive operation.
 		ws, _ := state.GetWorkspace(name)
 		if ws != nil {
 			vars := lifecycle.Vars{Name: name, Path: ws.Path, Branch: ws.Branch}
@@ -82,16 +69,13 @@ func doDelete(args []string, force bool) {
 			}
 		}
 
-		if err := workspace.NewService().DeleteWithOptions(name, workspace.RemoveOptions{Force: force}); err != nil {
+		if err := workspace.NewService().DeleteWithOptions(name, workspace.RemoveOptions{Force: true}); err != nil {
 			exitError(err.Error())
 		}
 	}
 }
 
 func init() {
-	deleteCmd.Flags().BoolVarP(&deleteCmdForce, "force", "f", false, "Skip worktree safety checks and confirmation")
 	deleteCmd.ValidArgsFunction = completeWorkspaceNames
-
-	wsDeleteCmd.Flags().BoolVarP(&wsDeleteCmdForce, "force", "f", false, "Skip worktree safety checks and confirmation")
 	wsDeleteCmd.ValidArgsFunction = completeWorkspaceNames
 }

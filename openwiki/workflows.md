@@ -244,17 +244,17 @@ gw run feat-login
 gw delete feat-login
 ```
 
-- Prompts for confirmation (unless `--force`)
-- Pre-delete hook fires (e.g., `gw claude sync harvest {path}` to save work)
+- Destructively removes the workspace without a confirmation prompt
+- Pre-delete hook fires (e.g., `gw claude sync harvest {path}` to save work); configure `on_failure = "abort"` to enforce deletion policy
 - For each repo in workspace:
-  - Calls `git worktree remove <path>` to remove the worktree
+  - Calls `git worktree remove --force <path>` to remove the worktree
   - Calls `git branch -D <branch>` to delete the branch
-- Removes workspace from state
+- Removes remaining Grove-owned workspace metadata and the workspace from state
 - Optionally: runs `on_close` hook (e.g., `gw zellij close-pane`)
 
 ### Code Flow
 
-1. **`cmd/delete.go`** — User confirmation and orchestration
+1. **`cmd/delete.go`** — Runs `pre_delete` and orchestrates destructive deletion
 2. **`internal/lifecycle/lifecycle.go`** — Fires `pre_delete` hook with `{path}` placeholder
 3. **`internal/workspace/workspace.go`** — `Delete()` method
    - Calls `gitops.DeleteWorktree()` for each repo
@@ -264,8 +264,8 @@ gw delete feat-login
 ### Key Decisions When Modifying
 
 - **Hook timing**: `pre_delete` fires before worktree removal (still has access to working directories)
-- **Confirmation**: Requires explicit user approval (unless `--force`) to prevent accidental deletion
-- **Forced vs. safe**: `--force` skips confirmation; `--no-hooks` skips all lifecycle hooks
+- **Deletion policy**: Deletion is destructive by default. A `pre_delete` hook with `on_failure = "abort"` is the extension point for safeguards.
+- **Hook bypass**: `--no-hooks` skips lifecycle hooks, including any configured deletion policy
 
 ---
 

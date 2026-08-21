@@ -15,8 +15,9 @@
 
 ### Maintenance
 
+- Removed the unfinished built-in MCP server and automatic `.mcp.json` generation. Agent integrations can use Grove's CLI and plugin interface instead.
 - Clarified installation, shell integration, and upgrade documentation.
-- Updated `modernc.org/sqlite` from 1.54.0 to 1.56.0.
+- Removed the SQLite dependency that was used only by the MCP server.
 
 ## v1.1.11
 

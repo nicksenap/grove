@@ -69,9 +69,3 @@ gw dash                  # launch the dashboard
 ```
 
 See the [gw-dash README](https://github.com/nicksenap/gw-dash) for keybindings, Zellij integration, and architecture.
-
-## MCP server
-
-Grove exposes a cross-workspace communication server via MCP (Model Context Protocol). This lets Claude Code agents in different workspaces announce changes and discover what other agents are working on.
-
-The server is started automatically via `.mcp.json` — no manual setup needed.

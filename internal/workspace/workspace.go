@@ -256,7 +256,6 @@ func (s *Service) createWithOptsLockedDetailed(name string, opts CreateOpts, set
 		return creationResult{}, errors.Join(err, s.rollback(created), removeEmptyDir(wsPath))
 	}
 
-	writeMCPConfig(ws)
 	return creationResult{workspace: ws, provisioned: created}, nil
 }
 
@@ -439,7 +438,6 @@ func (s *Service) rollbackPreparation(created creationResult) error {
 			return errors.Join(cleanupErrs...)
 		}
 
-		removeMCPConfig(*current)
 		if err := os.Remove(current.Path); err != nil && !os.IsNotExist(err) {
 			current.Repos = nil
 			cleanupErrs = append(cleanupErrs, fmt.Errorf("removing workspace root %s: %w", current.Path, err))
@@ -521,81 +519,6 @@ func (s *Service) runSetupHooks(ws models.Workspace) {
 	wg.Wait()
 }
 
-// mcpServerEntry returns the grove MCP server config.
-func mcpServerEntry(wsName string) models.MCPServer {
-	return models.MCPServer{
-		Command: "gw",
-		Args:    []string{"mcp-serve", "--workspace", wsName},
-	}
-}
-
-// mergeMCPConfig reads existing .mcp.json, adds/updates the grove entry, writes back.
-func mergeMCPConfig(path string, wsName string) {
-	var existing map[string]any
-
-	data, err := os.ReadFile(path)
-	if err == nil {
-		json.Unmarshal(data, &existing)
-	}
-	if existing == nil {
-		existing = make(map[string]any)
-	}
-
-	servers, ok := existing["mcpServers"].(map[string]any)
-	if !ok {
-		servers = make(map[string]any)
-	}
-	servers["grove"] = mcpServerEntry(wsName)
-	existing["mcpServers"] = servers
-
-	out, err := json.MarshalIndent(existing, "", "  ")
-	if err != nil {
-		return
-	}
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, out, 0o644); err != nil {
-		return
-	}
-	os.Rename(tmp, path)
-}
-
-func writeMCPConfig(ws models.Workspace) {
-	mergeMCPConfig(filepath.Join(ws.Path, ".mcp.json"), ws.Name)
-}
-
-// removeMCPConfig removes the grove entry from the workspace's .mcp.json.
-func removeMCPConfig(ws models.Workspace) {
-	path := filepath.Join(ws.Path, ".mcp.json")
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return
-	}
-	var existing map[string]any
-	if err := json.Unmarshal(data, &existing); err != nil {
-		return
-	}
-	servers, ok := existing["mcpServers"].(map[string]any)
-	if !ok {
-		return
-	}
-	delete(servers, "grove")
-	if len(servers) == 0 {
-		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-			logging.Warn("could not remove %s: %s", path, err)
-		}
-		return
-	}
-	existing["mcpServers"] = servers
-	out, err := json.MarshalIndent(existing, "", "  ")
-	if err != nil {
-		logging.Warn("could not marshal %s: %s", path, err)
-		return
-	}
-	if err := os.WriteFile(path, out, 0o644); err != nil {
-		logging.Warn("could not update %s: %s", path, err)
-	}
-}
-
 // RemoveOptions controls destructive worktree cleanup.
 type RemoveOptions struct {
 	Force bool
@@ -673,10 +596,11 @@ func (s *Service) deleteLocked(name string, opts RemoveOptions) (*models.Workspa
 		return nil, errors.Join(cleanupErrs...)
 	}
 
-	removeMCPConfig(*ws)
-	if err := os.Remove(ws.Path); err != nil && !os.IsNotExist(err) {
+	// Once all registered worktrees are safely removed, everything remaining in
+	// this Grove-owned root is workspace metadata and must not block deletion.
+	if removeRootErr := os.RemoveAll(ws.Path); removeRootErr != nil && !os.IsNotExist(removeRootErr) {
 		ws.Repos = nil
-		cleanupErrs = append(cleanupErrs, fmt.Errorf("removing workspace root %s: %w", ws.Path, err))
+		cleanupErrs = append(cleanupErrs, fmt.Errorf("removing workspace root %s: %w", ws.Path, removeRootErr))
 		if stateErr := s.State.UpdateWorkspace(*ws); stateErr != nil {
 			cleanupErrs = append(cleanupErrs, fmt.Errorf("updating state: %w", stateErr))
 		}
