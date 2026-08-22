@@ -78,7 +78,7 @@ gw create my-feature -p backend  # uses the "backend" preset
 Automation hooks fire on workspace lifecycle events (create, delete, close). Global hooks live in `~/.grove/config.toml [hooks]`; per-repo hooks in `.grove.toml`.
 
 ### Plugin
-Extend `gw` with custom commands (e.g., `gw-claude` for Claude Code integration, `gw-zellij` for terminal multiplexing).
+Extend `gw` with custom commands (for example, agent automation, dashboards, or terminal multiplexer integration).
 
 ## Configuration
 
@@ -96,8 +96,8 @@ backend = { repos = ["svc-auth", "svc-api"] }
 frontend = { repos = ["web-app", "design-system"] }
 
 [hooks]
-post_create = "gw claude sync rehydrate {path}"
-pre_delete = "gw claude sync harvest {path}"
+post_create = "./scripts/workspace-created {path}"
+pre_delete = "./scripts/workspace-closing {path}"
 ```
 
 ### Per-Repo Config: `.grove.toml` (at repo root)

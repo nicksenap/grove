@@ -8,9 +8,9 @@ Global hooks live in `~/.grove/config.toml` under `[hooks]`. Grove fires these o
 
 ```toml
 [hooks]
-post_create = "gw claude sync rehydrate {path}"
-pre_delete = "gw claude sync harvest {path}"
-on_close = "gw zellij close-pane"
+post_create = "./scripts/workspace-created {path}"
+pre_delete = "./scripts/workspace-closing {path}"
+on_close = "./scripts/close-workspace-pane {path}"
 ```
 
 Edit `~/.grove/config.toml` directly to configure these hooks.
@@ -19,9 +19,9 @@ Edit `~/.grove/config.toml` directly to configure these hooks.
 
 | Hook | Fired by | When | Example |
 |------|----------|------|---------|
-| `post_create` | `gw create` | After workspace creation | `gw claude sync rehydrate {path}` |
-| `pre_delete` | `gw delete` | Before worktree removal | `gw claude sync harvest {path}` |
-| `on_close` | `gw go -c` | Close terminal pane | `gw zellij close-pane`, `tmux kill-pane` |
+| `post_create` | `gw create` | After workspace creation | `./scripts/workspace-created {path}` |
+| `pre_delete` | `gw delete` | Before worktree removal | `./scripts/workspace-closing {path}` |
+| `on_close` | `gw go -c` | Close terminal pane | `./scripts/close-workspace-pane {path}`, `tmux kill-pane` |
 
 ### Placeholders
 
@@ -40,8 +40,8 @@ Unused placeholders expand to an empty string.
 
 ```toml
 [hooks]
-post_create = "gw claude sync rehydrate {path}"
-pre_delete = "gw claude sync harvest {path}"
+post_create = "./scripts/workspace-created {path}"
+pre_delete = "./scripts/workspace-closing {path}"
 on_close = "tmux kill-pane"
 ```
 
@@ -52,7 +52,7 @@ when you want to control how it runs. Both forms are valid and can be mixed:
 
 ```toml
 [hooks]
-pre_delete = "gw claude sync harvest {path}"   # simple string form
+pre_delete = "./scripts/workspace-closing {path}"   # simple string form
 
 [hooks.post_create]                            # table form with metadata
 command     = "npm install && npm run build"

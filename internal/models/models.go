@@ -100,7 +100,7 @@ type Config struct {
 // the hook does and how it should run:
 //
 //	[hooks]
-//	pre_delete = "gw claude sync harvest {path}"   # bare string (simple form)
+//	pre_delete = "./scripts/workspace-closing {path}"   # bare string (simple form)
 //
 //	[hooks.post_create]                            # table form (with metadata)
 //	command     = "npm install && npm run build"

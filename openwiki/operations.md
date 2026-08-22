@@ -73,9 +73,9 @@ backend = { repos = ["svc-auth", "svc-api", "svc-worker"] }
 frontend = { repos = ["web-app", "design-system"] }
 
 [hooks]
-post_create = "gw claude sync rehydrate {path}"
-pre_delete = "gw claude sync harvest {path}"
-on_close = "gw zellij close-pane"
+post_create = "./scripts/workspace-created {path}"
+pre_delete = "./scripts/workspace-closing {path}"
+on_close = "./scripts/close-workspace-pane {path}"
 
 [hooks.post_create]
 command     = "npm install && npm run build"
@@ -159,7 +159,7 @@ Defined in `~/.grove/config.toml [hooks]`. Fire on all workspaces.
 
 | Hook | Fired By | When | Typical Use |
 |------|----------|------|------------|
-| `post_create` | `gw create` | After workspace creation, before returning to user | Save workspace to Claude, check in with dashboard |
+| `post_create` | `gw create` | After workspace creation, before returning to user | Prepare agent context, check in with dashboard |
 | `pre_delete` | `gw delete` | Before worktree removal (still has access to files) | Export work, harvest state, notify external systems |
 | `on_close` | `gw go -c` | When closing a workspace's terminal pane | Close tmux/Zellij pane |
 
@@ -183,7 +183,7 @@ Hooks can include placeholders that Grove expands before execution:
 **Simple string** (quiet execution):
 ```toml
 [hooks]
-post_create = "gw claude sync rehydrate {path}"
+post_create = "./scripts/workspace-created {path}"
 ```
 
 **Table with metadata** (advanced control):
@@ -264,8 +264,8 @@ Plugins extend Grove with custom commands. They're standalone binaries prefixed 
 
 #### From GitHub
 ```bash
-gw plugin install nicksenap/gw-dash
-gw plugin install github.com/nicksenap/gw-zellij
+gw plugin install nicksenap/gw-dispatch
+gw plugin install igor-kupczynski/gw-code
 ```
 
 Downloads the latest release binary for your OS/arch from GitHub Releases. Expects naming convention: `gw-<name>_<version>_<os>_<arch>.tar.gz` (goreleaser standard).
@@ -283,9 +283,9 @@ Or place it anywhere on `$PATH`.
 
 ```bash
 gw plugin list                    # List installed plugins
-gw plugin upgrade dash            # Re-fetch latest release for dash
+gw plugin upgrade dispatch        # Re-fetch latest release for dispatch
 gw plugin upgrade                 # Upgrade all plugins
-gw plugin remove dash             # Uninstall a plugin
+gw plugin remove dispatch         # Uninstall a plugin
 ```
 
 ### How Plugins Work
@@ -308,40 +308,22 @@ The plugin gets full control of the terminal (no output capture). This enables T
 
 ### Plugin Lifecycle Hooks
 
-Plugins can be invoked by lifecycle hooks. Example:
+Plugins can be invoked by lifecycle hooks. Install the plugin using its real GitHub `OWNER/REPOSITORY` identifier, then add its recommended hook commands to `config.toml`. Grove fires them normally.
 
+### Example Plugins
+
+#### [`gw-dispatch`](https://github.com/nicksenap/gw-dispatch)
+Creates a Grove workspace and starts a selected coding agent there with an initial prompt.
 ```bash
-gw plugin install nicksenap/gw-claude
+gw plugin install nicksenap/gw-dispatch
+gw dispatch -n -r api,web -P "Implement login"
 ```
 
-Add the plugin's recommended hook commands to `config.toml`, and Grove fires them normally.
-
-### First-Party Plugins
-
-Grove maintains reference plugins:
-
-#### `gw-claude`
-Claude Code integration. Memory sync, session tracking, hook management.
+#### [`gw-code`](https://github.com/igor-kupczynski/gw-code)
+Generates and opens a multi-folder editor workspace for a Grove workspace.
 ```bash
-gw plugin install nicksenap/gw-claude
-```
-
-#### `gw-zellij`
-Zellij terminal integration. Auto-create panes, close-pane commands.
-```bash
-gw plugin install nicksenap/gw-zellij
-```
-
-#### `gw-dash`
-Agent monitoring dashboard. Real-time workspace status.
-```bash
-gw plugin install nicksenap/gw-dash
-```
-
-#### `gw-archive`
-Archive workspaces for later replay.
-```bash
-gw plugin install nicksenap/gw-archive
+gw plugin install igor-kupczynski/gw-code
+gw code my-workspace
 ```
 
 ---

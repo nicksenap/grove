@@ -242,12 +242,12 @@ gw delete feat-login
 ```
 
 - Destructively removes the workspace without a confirmation prompt
-- Pre-delete hook fires (e.g., `gw claude sync harvest {path}` to save work); configure `on_failure = "abort"` to enforce deletion policy
+- Pre-delete hook fires (for example, `./scripts/workspace-closing {path}` to save external state); configure `on_failure = "abort"` to enforce deletion policy
 - For each repo in workspace:
   - Calls `git worktree remove --force <path>` to remove the worktree
   - Calls `git branch -D <branch>` to delete the branch
 - Removes remaining Grove-owned workspace metadata and the workspace from state
-- Optionally: runs `on_close` hook (e.g., `gw zellij close-pane`)
+- Optionally: runs the configured `on_close` hook (for example, a terminal-specific pane-closing script)
 
 ### Code Flow
 
