@@ -564,44 +564,18 @@ Grove does **not** cache repo discovery. Each command rescans `repo_dirs`. If yo
 
 ---
 
-## Monitoring, Logging & Bug Reports
+## Monitoring & Logging
 
-### Logging
+### Verbose Logging
 
-Grove keeps normal terminal output concise while writing `INFO`, `WARN`, and
-`ERROR` diagnostics to a rotating flight-recorder log at
-`~/.grove/grove.log` (1 MB per file, three backups). Log files are private to
-the current user. `DEBUG` entries are recorded only when `--verbose` is set.
-
-Enable live diagnostic output for a command:
+Enable debug logging for a command:
 
 ```bash
 gw --verbose create my-feature
+gw -v status my-feature
 ```
 
-Verbose diagnostics are written to stderr, preserving stdout for shell and JSON
-output.
-
-### Bug Reports
-
-Generate a sanitized, reviewable report on stdout:
-
-```bash
-gw bug-report
-```
-
-Or write it to a private file:
-
-```bash
-gw bug-report --output grove-report.md
-```
-
-The report contains version/platform details, a configuration summary,
-workspace health, and up to 500 log lines from the last 24 hours. Grove redacts
-known secrets, environment values, home-directory paths, and URL credentials or
-query values. It never uploads or opens an issue automatically. Always review
-the report before sharing because automatic sanitization cannot recognize every
-private value.
+Outputs detailed logs to stderr.
 
 ### Stats & Usage
 

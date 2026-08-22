@@ -127,7 +127,6 @@ setup = ["npm install", "npm run build"]  # run after worktree creation
 | `gw delete <name>` | Clean up workspace (worktrees + branches) |
 | `gw plugin install <repo>` | Install a plugin from GitHub |
 | `gw doctor` | Diagnose workspace issues |
-| `gw bug-report [-o file]` | Print or save a sanitized diagnostic report |
 
 ## Architecture Overview
 

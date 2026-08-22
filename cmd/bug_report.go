@@ -3,67 +3,74 @@ package cmd
 import (
 	"bytes"
 	"fmt"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
-	"sort"
 	"strings"
-	"time"
 
-	"github.com/nicksenap/grove/internal/config"
+	"github.com/nicksenap/grove/internal/console"
 	"github.com/nicksenap/grove/internal/logging"
-	"github.com/nicksenap/grove/internal/redact"
 	"github.com/nicksenap/grove/internal/state"
 	"github.com/nicksenap/grove/internal/workspace"
 	"github.com/spf13/cobra"
 )
 
-const (
-	bugReportLogLines = 500
-	bugReportLogAge   = 24 * time.Hour
-)
+const bugReportRepo = "nicksenap/grove"
 
-var bugReportOutput string
+var bugReportPrint bool
 
 var bugReportCmd = &cobra.Command{
 	Use:   "bug-report",
-	Short: "Print a sanitized diagnostic report",
-	Long: `Collects system information, sanitized configuration, workspace health,
-and recent logs, then prints a report for review. Grove never uploads the report.
+	Short: "Open a pre-filled GitHub issue with diagnostics",
+	Long: `Collects system info, workspace state, doctor output, and recent logs,
+then opens a pre-filled GitHub issue in your browser for review before submitting.
 
-Use --output to write the report to a private file instead of stdout. Always
-review the report before sharing it.`,
-	Args: cobra.NoArgs,
-	RunE: func(cmd *cobra.Command, args []string) error {
+Use --print to output the report to stdout instead of opening a browser.`,
+	Run: func(cmd *cobra.Command, args []string) {
 		report := collectReport()
-		if bugReportOutput == "" {
-			_, err := fmt.Fprint(cmd.OutOrStdout(), report)
-			return err
+
+		if bugReportPrint || !console.IsTerminal(os.Stdin) {
+			fmt.Println(report)
+			return
 		}
-		if err := writeBugReport(bugReportOutput, report); err != nil {
-			return err
+
+		issueURL := fmt.Sprintf("https://github.com/%s/issues/new?title=%s&body=%s",
+			bugReportRepo,
+			url.QueryEscape("Bug: "),
+			url.QueryEscape(report),
+		)
+
+		console.Info("Collected diagnostics. Opening GitHub issue in browser...")
+		console.Info("Review the issue before submitting — it contains log output.")
+
+		if err := openBrowser(issueURL); err != nil {
+			fmt.Fprintln(os.Stderr)
+			fmt.Println(report)
 		}
-		fmt.Fprintf(cmd.ErrOrStderr(), "Diagnostic report written to %s\nReview it before sharing.\n", bugReportOutput)
-		return nil
 	},
 }
 
 func collectReport() string {
 	var buf bytes.Buffer
 
-	buf.WriteString("<!-- Review this report before sharing. Grove has sanitized known sensitive values but cannot guarantee every private value was detected. -->\n\n")
+	// System info
 	buf.WriteString("## Environment\n\n")
 	fmt.Fprintf(&buf, "- **gw version:** %s\n", Version)
 	fmt.Fprintf(&buf, "- **Go version:** %s\n", runtime.Version())
 	fmt.Fprintf(&buf, "- **OS/Arch:** %s/%s\n", runtime.GOOS, runtime.GOARCH)
+
+	if shell := os.Getenv("SHELL"); shell != "" {
+		fmt.Fprintf(&buf, "- **Shell:** %s\n", shell)
+	}
+
+	// Git version
 	if out, err := exec.Command("git", "--version").Output(); err == nil {
 		fmt.Fprintf(&buf, "- **Git:** %s\n", strings.TrimSpace(string(out)))
 	}
 
-	buf.WriteString("\n## Configuration\n\n")
-	writeConfigSummary(&buf)
-
+	// Workspace summary
 	buf.WriteString("\n## Workspaces\n\n")
 	if workspaces, err := state.Load(); err == nil {
 		if len(workspaces) == 0 {
@@ -78,6 +85,7 @@ func collectReport() string {
 		fmt.Fprintf(&buf, "Error loading state: %s\n", err)
 	}
 
+	// Doctor output
 	buf.WriteString("\n## Doctor\n\n")
 	if issues, _, err := workspace.NewService().Doctor(false); err == nil {
 		if len(issues) == 0 {
@@ -95,58 +103,26 @@ func collectReport() string {
 		fmt.Fprintf(&buf, "Error running doctor: %s\n", err)
 	}
 
+	// Recent logs
 	buf.WriteString("\n## Recent Logs\n\n")
-	buf.WriteString("Up to 500 lines from the last 24 hours.\n\n```\n")
-	logs := strings.ReplaceAll(recentLogs(bugReportLogLines, bugReportLogAge, time.Now()), "```", "`\u200b``")
-	buf.WriteString(logs)
+	buf.WriteString("```\n")
+	buf.WriteString(tailLog(50))
 	buf.WriteString("```\n")
 
+	// Description placeholder
 	buf.WriteString("\n## Description\n\n")
 	buf.WriteString("<!-- Describe what happened and what you expected -->\n")
 
-	home, _ := os.UserHomeDir()
-	return sanitizeReport(buf.String(), home)
+	return buf.String()
 }
 
-func writeConfigSummary(buf *bytes.Buffer) {
-	cfg, err := config.Load()
-	if err != nil {
-		fmt.Fprintf(buf, "Error loading configuration: %s\n", err)
-		return
-	}
-	if cfg == nil {
-		buf.WriteString("Grove is not initialized.\n")
-		return
-	}
-	fmt.Fprintf(buf, "- **Repository directories:** %d\n", len(cfg.RepoDirs))
-	fmt.Fprintf(buf, "- **Workspace directory:** `%s`\n", cfg.WorkspaceDir)
-	fmt.Fprintf(buf, "- **Presets:** %d\n", len(cfg.Presets))
-	if len(cfg.Hooks) == 0 {
-		buf.WriteString("- **Hooks:** none\n")
-		return
-	}
-	names := make([]string, 0, len(cfg.Hooks))
-	for name := range cfg.Hooks {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	buf.WriteString("- **Hooks:**\n")
-	for _, name := range names {
-		hook := cfg.Hooks[name]
-		policy := hook.OnFailure
-		if policy == "" {
-			policy = "warn"
-		}
-		fmt.Fprintf(buf, "  - `%s` (on_failure: `%s`, stream: `%t`, timeout: `%s`)\n", name, policy, hook.Stream, hook.Timeout)
-	}
-}
-
-// tailLog is retained for callers that need a simple current-file tail.
 func tailLog(n int) string {
-	data, err := os.ReadFile(filepath.Join(logging.LogDir, "grove.log"))
+	logPath := filepath.Join(logging.LogDir, "grove.log")
+	data, err := os.ReadFile(logPath)
 	if err != nil {
 		return "(no log file found)\n"
 	}
+
 	lines := strings.Split(strings.TrimRight(string(data), "\n"), "\n")
 	if len(lines) > n {
 		lines = lines[len(lines)-n:]
@@ -154,81 +130,19 @@ func tailLog(n int) string {
 	return strings.Join(lines, "\n") + "\n"
 }
 
-func recentLogs(limit int, maxAge time.Duration, now time.Time) string {
-	base := filepath.Join(logging.LogDir, "grove.log")
-	paths := []string{base + ".3", base + ".2", base + ".1", base}
-	var lines []string
-	cutoff := now.Add(-maxAge)
-	for _, path := range paths {
-		data, err := os.ReadFile(path)
-		if err != nil {
-			continue
-		}
-		entryRecent := false
-		for _, line := range strings.Split(strings.TrimRight(string(data), "\n"), "\n") {
-			if line == "" {
-				continue
-			}
-			if len(line) >= 19 {
-				if ts, err := time.ParseInLocation("2006-01-02 15:04:05", line[:19], now.Location()); err == nil {
-					entryRecent = !ts.Before(cutoff) && !ts.After(now)
-					if entryRecent {
-						lines = append(lines, line)
-					}
-					continue
-				}
-			}
-			if entryRecent {
-				lines = append(lines, line)
-			}
-		}
+func openBrowser(rawURL string) error {
+	switch runtime.GOOS {
+	case "darwin":
+		return exec.Command("open", rawURL).Start()
+	case "linux":
+		return exec.Command("xdg-open", rawURL).Start()
+	case "windows":
+		return exec.Command("rundll32", "url.dll,FileProtocolHandler", rawURL).Start()
+	default:
+		return fmt.Errorf("unsupported platform")
 	}
-	if len(lines) == 0 {
-		return "(no recent log entries found)\n"
-	}
-	if len(lines) > limit {
-		lines = lines[len(lines)-limit:]
-	}
-	return strings.Join(lines, "\n") + "\n"
-}
-
-func sanitizeReport(report, home string) string {
-	return redact.Text(report, home)
-}
-
-func writeBugReport(path, report string) error {
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return fmt.Errorf("creating report directory: %w", err)
-	}
-	if info, err := os.Lstat(path); err == nil && info.Mode()&os.ModeSymlink != 0 {
-		return fmt.Errorf("refusing to overwrite symlink: %s", path)
-	} else if err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("inspecting report path: %w", err)
-	}
-	tmp, err := os.CreateTemp(dir, ".grove-report-*")
-	if err != nil {
-		return fmt.Errorf("creating report: %w", err)
-	}
-	tmpPath := tmp.Name()
-	defer os.Remove(tmpPath)
-	if err := tmp.Chmod(0o600); err != nil {
-		tmp.Close()
-		return fmt.Errorf("securing report: %w", err)
-	}
-	if _, err := tmp.WriteString(report); err != nil {
-		tmp.Close()
-		return fmt.Errorf("writing report: %w", err)
-	}
-	if err := tmp.Close(); err != nil {
-		return fmt.Errorf("closing report: %w", err)
-	}
-	if err := os.Rename(tmpPath, path); err != nil {
-		return fmt.Errorf("installing report: %w", err)
-	}
-	return nil
 }
 
 func init() {
-	bugReportCmd.Flags().StringVarP(&bugReportOutput, "output", "o", "", "Write report to a private file instead of stdout")
+	bugReportCmd.Flags().BoolVar(&bugReportPrint, "print", false, "Print report to stdout instead of opening browser")
 }
