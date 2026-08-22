@@ -1,6 +1,7 @@
 package logging
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"strings"
@@ -16,6 +17,28 @@ func TestSetupCreatesLogFile(t *testing.T) {
 	logFile := filepath.Join(dir, "grove.log")
 	if _, err := os.Stat(logFile); os.IsNotExist(err) {
 		t.Error("log file should be created")
+	}
+}
+
+func TestSetupUsesPrivatePermissions(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "logs")
+	LogDir = dir
+
+	Setup(false)
+
+	dirInfo, err := os.Stat(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fileInfo, err := os.Stat(filepath.Join(dir, "grove.log"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := dirInfo.Mode().Perm(); got != 0o700 {
+		t.Fatalf("log directory permissions = %o, want 700", got)
+	}
+	if got := fileInfo.Mode().Perm(); got != 0o600 {
+		t.Fatalf("log file permissions = %o, want 600", got)
 	}
 }
 
@@ -100,9 +123,66 @@ func TestErrorLevel(t *testing.T) {
 	}
 }
 
+func TestVerboseWritesDiagnosticsLive(t *testing.T) {
+	dir := t.TempDir()
+	LogDir = dir
+	var live bytes.Buffer
+	SetLiveWriter(&live)
+	t.Cleanup(func() { SetLiveWriter(os.Stderr) })
+
+	Setup(true)
+	Info("workspace %s", "feature")
+	Debug("git command completed")
+
+	output := live.String()
+	if !strings.Contains(output, "INFO - workspace feature") || !strings.Contains(output, "DEBUG - git command completed") {
+		t.Fatalf("verbose output missing diagnostics: %q", output)
+	}
+}
+
+func TestNonVerboseKeepsDiagnosticsOffTerminal(t *testing.T) {
+	dir := t.TempDir()
+	LogDir = dir
+	var live bytes.Buffer
+	SetLiveWriter(&live)
+	t.Cleanup(func() { SetLiveWriter(os.Stderr) })
+
+	Setup(false)
+	Info("quiet flight recorder")
+
+	if live.Len() != 0 {
+		t.Fatalf("non-verbose output = %q, want quiet terminal", live.String())
+	}
+}
+
+func TestLoggingSanitizesBeforeFileAndLiveOutput(t *testing.T) {
+	dir := t.TempDir()
+	LogDir = dir
+	var live bytes.Buffer
+	SetLiveWriter(&live)
+	t.Cleanup(func() { SetLiveWriter(os.Stderr) })
+
+	Setup(true)
+	Info("Authorization: Bearer live-secret url=https://user:pass@example.com/repo?token=query-secret")
+
+	data, err := os.ReadFile(filepath.Join(dir, "grove.log"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, output := range []string{string(data), live.String()} {
+		for _, secret := range []string{"live-secret", "user:pass", "query-secret"} {
+			if strings.Contains(output, secret) {
+				t.Fatalf("logging leaked %q: %s", secret, output)
+			}
+		}
+	}
+}
+
 func TestLogRotation(t *testing.T) {
 	dir := t.TempDir()
 	LogDir = dir
+	SetLiveWriter(nil)
+	t.Cleanup(func() { SetLiveWriter(os.Stderr) })
 
 	Setup(true)
 

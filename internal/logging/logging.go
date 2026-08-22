@@ -8,10 +8,13 @@ package logging
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sync"
 	"time"
+
+	"github.com/nicksenap/grove/internal/redact"
 )
 
 const (
@@ -23,9 +26,10 @@ const (
 var LogDir string
 
 var (
-	mu      sync.Mutex
-	logFile *os.File
-	verbose bool
+	mu         sync.Mutex
+	logFile    *os.File
+	verbose    bool
+	liveWriter io.Writer = os.Stderr
 )
 
 func init() {
@@ -39,14 +43,28 @@ func Setup(v bool) {
 	mu.Lock()
 	defer mu.Unlock()
 	verbose = v
+	if logFile != nil {
+		_ = logFile.Close()
+		logFile = nil
+	}
 
-	os.MkdirAll(LogDir, 0o755)
+	os.MkdirAll(LogDir, 0o700)
+	_ = os.Chmod(LogDir, 0o700)
 	path := filepath.Join(LogDir, "grove.log")
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {
 		return
 	}
+	_ = f.Chmod(0o600)
 	logFile = f
+}
+
+// SetLiveWriter changes where verbose diagnostics are written. It is primarily
+// useful for embedding and tests; nil disables live output.
+func SetLiveWriter(w io.Writer) {
+	mu.Lock()
+	defer mu.Unlock()
+	liveWriter = w
 }
 
 // Debug logs a debug message (only when verbose).
@@ -89,17 +107,25 @@ func write(level, format string, args ...interface{}) {
 		return
 	}
 
-	msg := fmt.Sprintf(format, args...)
+	msg := redact.Text(fmt.Sprintf(format, args...), homeDir())
 	ts := time.Now().Format("2006-01-02 15:04:05")
 	line := fmt.Sprintf("%s %s - %s\n", ts, level, msg)
 
 	logFile.WriteString(line)
+	if verbose && liveWriter != nil {
+		fmt.Fprint(liveWriter, line)
+	}
 
 	// Check rotation
 	info, err := logFile.Stat()
 	if err == nil && info.Size() > maxSize {
 		rotate()
 	}
+}
+
+func homeDir() string {
+	home, _ := os.UserHomeDir()
+	return home
 }
 
 func rotate() {
@@ -122,7 +148,7 @@ func rotate() {
 	}
 	os.Rename(base, base+".1")
 
-	f, err := os.OpenFile(base, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	f, err := os.OpenFile(base, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {
 		return
 	}

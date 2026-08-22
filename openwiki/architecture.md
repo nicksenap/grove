@@ -178,10 +178,11 @@ Colored output helpers:
 - Consistent formatting
 
 #### Logging (`internal/logging/`)
-Structured debug logging:
-- `Setup(verbose)` — Initialize logging level
-- `Info()`, `Debug()`, `Error()` — Log at appropriate levels
-- Disabled by default; enabled with `--verbose` flag
+Rotating diagnostic logging:
+- `Setup(verbose)` — Initializes the private `~/.grove/grove.log` flight recorder
+- `Info()`, `Debug()`, `Warn()`, `Error()` — Log at appropriate levels
+- `INFO` and above are always recorded; `DEBUG` and live stderr output require `--verbose`
+- `gw bug-report` consumes a sanitized, bounded tail of the rotating logs
 
 ## Data Flow Example: `gw create my-feature -b feat/login -r svc-a,svc-b`
 
