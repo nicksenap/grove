@@ -1,6 +1,6 @@
 # AGENTS.md
 
-This file provides guidance to Codex (Codex.ai/code) when working with code in this repository.
+This file provides vendor-neutral guidance to coding agents working in this repository.
 
 ## OpenWiki
 
@@ -44,7 +44,7 @@ Repos managed by Grove can have a `.grove.toml` at their root:
 
 Entry point: `cmd/gw/main.go` → `cmd.Execute()` (Cobra).
 
-Tool-specific integrations (Codex memory sync, Zellij, archive, dashboard) live in external plugins (`gw-Codex`, `gw-zellij`, `gw-archive`, `gw-dash`) — Grove core is a pure git worktree orchestrator. Plugins hook into lifecycle events configured in `~/.grove/config.toml`.
+Tool-specific integrations (coding agents, terminal multiplexers, archives, and dashboards) live in external plugins — Grove core is a pure git worktree orchestrator. Plugins hook into lifecycle events configured in `~/.grove/config.toml`.
 
 ### Package layout
 

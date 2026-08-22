@@ -57,31 +57,6 @@ The plugin gets full control of the terminal — this means TUI plugins (like `g
 
 ## First-party plugins
 
-### gw-claude
-
-Claude Code integration. Memory sync, session tracking, hook management.
-
-- **Repo:** https://github.com/nicksenap/gw-claude
-- **Install:** `gw plugin install nicksenap/gw-claude`
-
-| Command | Description |
-|---|---|
-| `gw claude sync rehydrate <path>` | Copy memory from source repos to worktrees |
-| `gw claude sync harvest <path>` | Copy newer memory from worktrees back to source |
-| `gw claude sync migrate <old> <new>` | Rename/merge memory dir |
-| `gw claude doctor` | Find orphaned memory directories |
-| `gw claude hook install` | Register session tracking hooks in ~/.claude/settings.json |
-| `gw claude hook uninstall` | Remove hooks |
-| `gw claude hook status` | Check if hooks are installed |
-
-Recommended hooks:
-
-```toml
-[hooks]
-post_create = "gw claude sync rehydrate {path}"
-pre_delete = "gw claude sync harvest {path}"
-```
-
 ### gw-zellij
 
 Zellij terminal multiplexer integration.
@@ -102,7 +77,7 @@ on_close = "gw zellij close-pane"
 
 ### gw-dash
 
-Kanban-style TUI dashboard for monitoring Claude Code agents across workspaces.
+Workspace dashboard and TUI.
 
 - **Repo:** https://github.com/nicksenap/gw-dash
 - **Install:** `gw plugin install nicksenap/gw-dash`

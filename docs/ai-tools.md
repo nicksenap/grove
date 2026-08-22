@@ -1,68 +1,40 @@
-# Works with AI coding tools
+# Works with coding agents
 
-Worktrees mean isolation. That makes Grove a natural fit for tools like [Claude Code](https://docs.anthropic.com/en/docs/claude-code) — spin up a workspace, let your AI agent work across repos without touching anything else, clean up when done:
-
-```bash
-gw create -p backend -b fix/auth-bug
-claude "fix the auth token expiry bug across svc-auth and api-gateway"
-gw delete fix-auth-bug   # removes worktrees, branches, and workspace
-```
-
-## Golden path: full Claude Code + Zellij setup
+Worktrees provide isolated checkouts, which makes Grove a natural fit for any coding agent or agent-enabled editor. Create a workspace, launch your preferred agent from that directory, and clean up when the work is complete:
 
 ```bash
-# Install plugins
-gw plugin install nicksenap/gw-claude
-gw plugin install nicksenap/gw-zellij
-gw plugin install nicksenap/gw-dash
-
-# Register Claude Code session tracking hooks
-gw claude hook install
+gw create agent-fix -p backend -b fix/auth-bug
+cd "$(gw go agent-fix)"
+<your-agent-command> "fix the auth token expiry bug across the selected repos"
+gw delete agent-fix
 ```
 
-Add to `~/.grove/config.toml`:
+## Repository guidance
+
+Use [`AGENTS.md`](../AGENTS.md) as the repository's vendor-neutral entry point for coding agents. It links to architecture, workflows, testing guidance, and source maps in OpenWiki.
+
+Keep reusable agent workflows in your agent's **skills** or equivalent extension mechanism rather than duplicating instructions in vendor-specific repository files. Project facts and commands belong in `AGENTS.md`; reusable methods such as code review, testing, or release preparation belong in skills.
+
+## Lifecycle integration
+
+Grove does not embed a particular coding agent. Use lifecycle hooks to connect any external automation:
 
 ```toml
 [hooks]
-post_create = "gw claude sync rehydrate {path}"
-pre_delete = "gw claude sync harvest {path}"
+post_create = "./scripts/agent-workspace-created {path}"
+pre_delete = "./scripts/agent-workspace-closing {path}"
 on_close = "gw zellij close-pane"
 ```
 
-That gives you memory sync on create/delete, session tracking, and Zellij pane closing on navigate-away.
+Hooks can prepare ignored files, notify an agent dashboard, persist external session metadata, or run any other workspace-level integration. See [hooks.md](hooks.md) and [plugins.md](plugins.md).
 
----
+## Agent dashboards and plugins
 
-## Claude Code plugin
-
-Install the [gw-claude](https://github.com/nicksenap/gw-claude) plugin to get:
-
-- **Memory sync** — Claude Code memory carries over from source repos to worktrees and back
-- **Session tracking** — hook events are recorded for the dashboard
-
-```bash
-gw plugin install nicksenap/gw-claude
-gw claude hook install
-```
-
-Configure the lifecycle hooks in `~/.grove/config.toml`:
-
-```toml
-[hooks]
-post_create = "gw claude sync rehydrate {path}"
-pre_delete = "gw claude sync harvest {path}"
-```
-
-See [plugins.md](plugins.md) for the full command reference.
-
-## Agent dashboard
-
-The [gw-dash](https://github.com/nicksenap/gw-dash) plugin provides a kanban-style TUI for monitoring Claude Code agents across workspaces.
+External plugins can use Grove's command protocol and environment variables without adding vendor-specific behavior to core. The [`gw-dash`](https://github.com/nicksenap/gw-dash) plugin is one example of a workspace dashboard:
 
 ```bash
 gw plugin install nicksenap/gw-dash
-gw claude hook install   # register session tracking hooks
-gw dash                  # launch the dashboard
+gw dash
 ```
 
-See the [gw-dash README](https://github.com/nicksenap/gw-dash) for keybindings, Zellij integration, and architecture.
+See the plugin's own documentation for supported agent/session integrations.

@@ -73,8 +73,8 @@ backend = { repos = ["svc-auth", "svc-api", "svc-worker"] }
 frontend = { repos = ["web-app", "design-system"] }
 
 [hooks]
-post_create = "gw claude sync rehydrate {path}"
-pre_delete = "gw claude sync harvest {path}"
+post_create = "./scripts/workspace-created {path}"
+pre_delete = "./scripts/workspace-closing {path}"
 on_close = "gw zellij close-pane"
 
 [hooks.post_create]
@@ -159,7 +159,7 @@ Defined in `~/.grove/config.toml [hooks]`. Fire on all workspaces.
 
 | Hook | Fired By | When | Typical Use |
 |------|----------|------|------------|
-| `post_create` | `gw create` | After workspace creation, before returning to user | Save workspace to Claude, check in with dashboard |
+| `post_create` | `gw create` | After workspace creation, before returning to user | Prepare agent context, check in with dashboard |
 | `pre_delete` | `gw delete` | Before worktree removal (still has access to files) | Export work, harvest state, notify external systems |
 | `on_close` | `gw go -c` | When closing a workspace's terminal pane | Close tmux/Zellij pane |
 
@@ -183,7 +183,7 @@ Hooks can include placeholders that Grove expands before execution:
 **Simple string** (quiet execution):
 ```toml
 [hooks]
-post_create = "gw claude sync rehydrate {path}"
+post_create = "./scripts/workspace-created {path}"
 ```
 
 **Table with metadata** (advanced control):
@@ -308,23 +308,11 @@ The plugin gets full control of the terminal (no output capture). This enables T
 
 ### Plugin Lifecycle Hooks
 
-Plugins can be invoked by lifecycle hooks. Example:
-
-```bash
-gw plugin install nicksenap/gw-claude
-```
-
-Add the plugin's recommended hook commands to `config.toml`, and Grove fires them normally.
+Plugins can be invoked by lifecycle hooks. Install the plugin using its real GitHub `OWNER/REPOSITORY` identifier, then add its recommended hook commands to `config.toml`. Grove fires them normally.
 
 ### First-Party Plugins
 
-Grove maintains reference plugins:
-
-#### `gw-claude`
-Claude Code integration. Memory sync, session tracking, hook management.
-```bash
-gw plugin install nicksenap/gw-claude
-```
+Grove maintains reference plugins. Agent-specific memory or session integrations can use the same external plugin contract without adding vendor-specific behavior to core.
 
 #### `gw-zellij`
 Zellij terminal integration. Auto-create panes, close-pane commands.

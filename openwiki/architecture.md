@@ -241,7 +241,7 @@ Hooks are not an afterthought; they're central to the design:
 - Allow automation (CI/CD on workspace creation)
 
 ### 6. **Plugin Extensibility**
-Rather than embedding tool-specific logic (Claude, Zellij, etc.), Grove exposes hooks and environment variables. Plugins decide what to do with workspace lifecycle events.
+Rather than embedding tool-specific logic for coding agents, terminal multiplexers, or dashboards, Grove exposes hooks and environment variables. Plugins decide what to do with workspace lifecycle events.
 
 ### 7. **Per-Repo Configuration**
 Each repo can have its own `.grove.toml` to define:
@@ -304,4 +304,4 @@ Test fixtures often create temporary directories with real git repos, allowing t
 | `internal/plugin/` | Plugin management | Install, upgrade, remove |
 | `docs/hooks.md` | Hook documentation | Comprehensive, with examples |
 | `docs/plugins.md` | Plugin documentation | Installation, environment vars |
-| `AGENTS.md`, `CLAUDE.md` | Agent guidance | Architecture and dev setup |
+| `AGENTS.md` | Vendor-neutral agent guidance | Architecture and dev setup |

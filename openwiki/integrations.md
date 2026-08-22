@@ -1,196 +1,94 @@
 ---
 type: "Reference"
 title: "Integrations"
-description: "Grove integration points, including external plugins, lifecycle hooks, Claude Code support, and Zellij workflows."
-tags: [grove, integrations, plugins, hooks]
+description: "Vendor-neutral Grove integration points, including external plugins, lifecycle hooks, coding agents, dashboards, and terminal multiplexers."
+tags: [grove, integrations, plugins, hooks, agents]
 ---
 
 # Integrations
 
-This page covers external integrations, including plugins and AI tools.
+Grove core is a Git worktree orchestrator. Coding agents, terminal multiplexers, dashboards, notifications, and archival systems integrate through external plugins and lifecycle hooks rather than vendor-specific core behavior.
 
-## Plugin Ecosystem Overview
+## Plugin model
 
-Grove's core is a pure git worktree orchestrator. All tool-specific integrations (Claude Code, Zellij, etc.) live in **external plugins** that hook into workspace lifecycle events.
+Any executable named `gw-<name>` can extend Grove. When a built-in command does not match, Grove searches `~/.grove/plugins/` and `$PATH`, then executes the plugin with:
 
-### Why Plugins?
+| Variable | Description |
+|---|---|
+| `GROVE_DIR` | Grove configuration directory |
+| `GROVE_CONFIG` | Path to `config.toml` |
+| `GROVE_STATE` | Path to `state.json` |
+| `GROVE_WORKSPACE` | Current workspace name, when detected from cwd |
 
-Keeping tool logic out of Grove core makes it:
-- **Lightweight** — Single static binary with no dependencies
-- **Extensible** — Anyone can write plugins without modifying Grove
-- **Composable** — Mix and match plugins (Claude + Zellij + Dash)
+Install released plugins by passing their real GitHub `OWNER/REPOSITORY` identifier to `gw plugin install`.
 
-Plugins are invoked by lifecycle hooks configured in `~/.grove/config.toml`.
+See [Plugin documentation](../docs/plugins.md) for installation, command dispatch, and authoring details.
 
----
+## Coding-agent integration
 
-## First-Party Plugins
+Grove is agent-agnostic. Repository-specific instructions live in `AGENTS.md`, while reusable workflows such as review, testing, or release preparation belong in agent skills or an equivalent extension mechanism.
 
-Grove maintains reference implementations demonstrating the plugin model.
-
-### `gw-claude` — Claude Code Integration
-
-Full integration with Claude Code for memory sync and session tracking.
-
-#### Install
+A typical workflow is:
 
 ```bash
-gw plugin install nicksenap/gw-claude
+gw create agent-task -p backend -b feat/agent-task
+cd "$(gw go agent-task)"
+<your-agent-command>
+gw delete agent-task
 ```
 
-#### Features
-
-- **Memory sync** — Claude Code memory persists across workspaces
-  - `gw claude sync rehydrate {path}` — Load memory into new workspace
-  - `gw claude sync harvest {path}` — Save memory from workspace before deletion
-  - Memory is stored in `~/.grove/.claude-memory/` (per-workspace JSON)
-
-- **Session tracking** — Records workspace lifecycle for the dashboard
-  - Logs creation, deletion, and modifications
-  - Enables `gw-dash` to show workspace history
-
-#### Usage
-
-Lifecycle hook configuration:
+Use hooks when an external agent system needs workspace lifecycle events:
 
 ```toml
-# ~/.grove/config.toml
 [hooks]
-post_create = "gw claude sync rehydrate {path}"
-pre_delete = "gw claude sync harvest {path}"
+post_create = "./scripts/workspace-created {path} {name}"
+pre_delete = "./scripts/workspace-closing {path} {name}"
 ```
 
-#### How It Works
+Possible integrations include preparing ignored files, publishing task metadata, recording an external session, or notifying a dashboard. Grove does not prescribe the storage format or agent vendor.
 
-**On workspace creation** (`post_create`):
-1. `gw claude sync rehydrate {path}` — Loads memory from the source repo into the workspace
+## Terminal multiplexer integration
 
-**On workspace deletion** (`pre_delete`):
-1. `gw claude sync harvest {path}` — Saves any Claude Code updates back to source repo memory
-
-**Memory storage**:
-- Location: `~/.grove/.claude-memory/<repo-name>.json`
-- Format: JSON with Claude Code session metadata
-- Thread-safe: Atomic writes like state.json
-
-#### Commands
-
-```bash
-gw claude sync rehydrate <path>    # Load memory into workspace
-gw claude sync harvest <path>      # Save memory from workspace
-gw claude hook install             # Register default hooks
-gw claude <subcommand> -h          # Help for subcommands
-```
-
----
-
-### `gw-zellij` — Terminal Multiplexer Integration
-
-Integrates with Zellij terminal multiplexer for automatic workspace pane management.
-
-#### Install
+The `gw-zellij` plugin demonstrates terminal integration:
 
 ```bash
 gw plugin install nicksenap/gw-zellij
 ```
 
-#### Features
-
-- **Auto pane creation** — Create Zellij pane on workspace creation
-- **Pane closing** — Close pane when navigating away from workspace
-- **Layout synchronization** — Keep Zellij layout in sync with workspace state
-
-#### Usage
-
-Hook configuration:
-
 ```toml
-# ~/.grove/config.toml
 [hooks]
-post_create = "gw zellij create-pane {name}"
 on_close = "gw zellij close-pane"
 ```
 
-#### Commands
+Other terminal multiplexers can use the same hook contract.
 
-```bash
-gw zellij create-pane <name>   # Create a new Zellij pane
-gw zellij close-pane           # Close current Zellij pane
-gw zellij <subcommand> -h      # Help for subcommands
-```
+## Dashboards
 
----
-
-### `gw-dash` — Agent Dashboard
-
-Kanban-style TUI for monitoring Claude Code agents across workspaces.
-
-#### Install
+The `gw-dash` plugin provides a workspace TUI:
 
 ```bash
 gw plugin install nicksenap/gw-dash
 gw dash
 ```
 
-#### Features
+Dashboard-specific agent/session support belongs to the dashboard plugin and should be documented there rather than in Grove core.
 
-- **Workspace kanban** — Shows workspace status in columns (pending, active, completed)
-- **Session tracking** — Displays Claude Code session metadata
-- **Live updates** — Refreshes as workspaces are created/deleted
-- **Zellij integration** — Optional: Zellij window management
+## Workspace archival
 
-#### Usage
-
-```bash
-gw dash
-```
-
-Opens a full-screen TUI with:
-- Left sidebar: Workspace list
-- Main area: Kanban columns
-- Status bar: Commands and help
-
-#### Keybindings
-
-See [gw-dash README](https://github.com/nicksenap/gw-dash) for full keybindings.
-
-#### Architecture
-
-- Reads from `~/.grove/state.json` and Claude Code session tracking files
-- No polling — subscribes to file change events
-- Lightweight: single-threaded event loop
-
----
-
-### `gw-archive` — Workspace Archival
-
-Archive workspaces for later replay or audit.
-
-#### Install
+The `gw-archive` plugin provides external workspace export and restore workflows:
 
 ```bash
 gw plugin install nicksenap/gw-archive
+gw archive export <name> <file>
+gw archive import <file>
+gw archive list
 ```
 
-#### Features
+Archive formats and retention policy belong to the plugin rather than Grove core.
 
-- **Snapshot workspaces** — Export full worktree state to archive
-- **Replay workspaces** — Restore from archive
-- **Audit trail** — Records workspace changes over time
+## Source provenance
 
-#### Commands
-
-```bash
-gw archive export <name> <file>   # Export workspace to tar.gz
-gw archive import <file>           # Restore workspace from archive
-gw archive list                    # List archived workspaces
-```
-
----
-
-## Workspace Source Provenance
-
-When creating a workspace from an external source (GitHub PR, Notion page, Slack thread), you can record the source URL and metadata:
+Workspace source metadata can connect agents and automation back to a task or pull request:
 
 ```bash
 gw create my-feature -b feat/login -r svc-a,svc-b \
@@ -200,218 +98,49 @@ gw create my-feature -b feat/login -r svc-a,svc-b \
   --source-title "Add login flow"
 ```
 
-This metadata is:
-- Stored in workspace state (`.source` field)
-- Passed to hooks via placeholders: `{source_url}`, `{source_ref}`, `{source_title}`
-- Available to plugins (for example Claude memory and dashboard integrations)
+The metadata is stored in workspace state and exposed to hooks through `{source_url}`, `{source_ref}`, and `{source_title}`.
 
-**Use cases**:
-- Claude Code agents → Trace back to original PR or task
-- Dashboard → Show workspace origin
-- Automation → Route workspaces based on source provider
+## Writing a plugin
 
----
-
-## Writing Custom Plugins
-
-Any executable named `gw-<name>` can be a plugin. Grove will:
-1. Check for built-in command
-2. Look in `~/.grove/plugins/` and `$PATH`
-3. Exec the plugin with environment variables
-
-### Plugin Template (Bash)
+A plugin can be any executable:
 
 ```bash
-#!/bin/bash
-# gw-mycommand — A simple Grove plugin
-
-WORKSPACE="${GROVE_WORKSPACE:-unknown}"
-CONFIG="${GROVE_CONFIG}"
-STATE="${GROVE_STATE}"
-
-case "${1:-}" in
-  "--help")
-    echo "gw mycommand — My custom command"
-    echo "Usage: gw mycommand [options]"
-    ;;
-  *)
-    echo "Running in workspace: $WORKSPACE"
-    echo "Config: $CONFIG"
-    echo "State: $STATE"
-    ;;
-esac
+#!/bin/sh
+# ~/.grove/plugins/gw-notify
+printf 'workspace=%s event=%s\n' "${GROVE_WORKSPACE:-}" "${1:-}"
 ```
 
-### Plugin Template (Go)
-
-```go
-package main
-
-import (
-    "fmt"
-    "os"
-)
-
-func main() {
-    workspace := os.Getenv("GROVE_WORKSPACE")
-    config := os.Getenv("GROVE_CONFIG")
-    state := os.Getenv("GROVE_STATE")
-    
-    fmt.Printf("Running in workspace: %s\n", workspace)
-    fmt.Printf("Config: %s\n", config)
-    fmt.Printf("State: %s\n", state)
-}
-```
-
-### Register as Lifecycle Hook
-
-To make your plugin respond to workspace lifecycle events:
-
-1. Write commands that accept `{path}`, `{name}`, `{branch}` placeholders
-2. Add to `~/.grove/config.toml`:
+Register plugin commands as hooks when they should receive lifecycle events:
 
 ```toml
 [hooks]
-post_create = "gw mycommand post-create {path} {name} {branch}"
-pre_delete = "gw mycommand pre-delete {path} {name}"
+post_create = "gw notify created {path} {name}"
+pre_delete = "gw notify closing {path} {name}"
 ```
 
-3. Grove fires your hook on events
+### Best practices
 
-### Environment Variables Available
+1. Use Grove environment variables rather than assuming paths.
+2. Accept documented placeholders explicitly.
+3. Keep hooks fast or configure `stream` and `timeout` metadata.
+4. Fail gracefully when optional external tooling is unavailable.
+5. Keep vendor-specific state and behavior outside Grove core.
+6. Test against real Git worktrees.
 
-| Variable | Value | Example |
-|----------|-------|---------|
-| `GROVE_DIR` | Grove config directory | `~/.grove` |
-| `GROVE_CONFIG` | Path to config.toml | `~/.grove/config.toml` |
-| `GROVE_STATE` | Path to state.json | `~/.grove/state.json` |
-| `GROVE_WORKSPACE` | Current workspace (if in one) | `feat-login` |
+## Troubleshooting
 
-You can parse `GROVE_CONFIG` (TOML) and `GROVE_STATE` (JSON) to access full Grove state.
-
----
-
-## Extensibility Patterns
-
-### Pattern 1: Lifecycle Hook Handler
-
-Listen to workspace events and react:
+If a plugin is not found, verify it is executable and installed in `~/.grove/plugins/` or on `$PATH`:
 
 ```bash
-# In plugin
-case "$1" in
-  "post-create")
-    workspace="$2"
-    path="$3"
-    # Do something after workspace creation
-    ;;
-esac
+gw plugin list
+which gw-example
 ```
 
-### Pattern 2: Workspace Query
+If a hook does not fire, validate `~/.grove/config.toml` and run a command with `--verbose`:
 
-Read state.json to find workspaces:
-
-```bash
-# In plugin
-state_file="${GROVE_STATE}"
-jq '.workspaces[] | select(.name == "active-workspace")' "$state_file"
-```
-
-### Pattern 3: Tool Integration
-
-Pass workspace info to external tools:
-
-```bash
-# gw-notify — Send workspace notifications
-workspace="${GROVE_WORKSPACE}"
-[ -n "$workspace" ] && notify "Entered workspace: $workspace"
-```
-
-### Pattern 4: Custom Config
-
-Store plugin config in `~/.grove/config.toml`:
-
-```toml
-[plugins.mycommand]
-api_key = "..."
-debug = true
-```
-
-Parse it as TOML in your plugin.
-
----
-
-## Best Practices
-
-### For Plugin Authors
-
-1. **Use environment variables** — Don't assume state.json location or config format
-2. **Fail gracefully** — Missing config should be a warning, not an error
-3. **Document placeholders** — Show users which `{placeholder}` your hooks support
-4. **Test with worktrees** — Verify your plugin works with actual git worktrees
-5. **Avoid heavy dependencies** — Single static binary preferred (like Grove itself)
-
-### For Plugin Users
-
-1. **Keep hooks fast** — Long-running hooks block workspace creation/deletion
-2. **Use stream for long tasks** — Set `stream = true` for progress visibility
-3. **Set timeouts** — Prevent hung hooks from blocking your terminal
-4. **Test locally first** — Try a hook manually before adding to config
-5. **Monitor logs** — Use `--verbose` to debug hook failures
-
----
-
-## Troubleshooting Integration Issues
-
-### Plugin Not Found
-
-```bash
-gw myplugin
-# → zsh: command not found: gw-myplugin
-```
-
-Ensure `gw-myplugin` is installed:
-```bash
-which gw-myplugin  # Should be in PATH or ~/.grove/plugins/
-chmod +x ~/.grove/plugins/gw-myplugin
-```
-
-### Hook Not Firing
-
-Check config syntax:
 ```bash
 gw doctor
-gw --verbose create my-feature  # Show hook firing
+gw --verbose create my-feature
 ```
 
-Verify hook is in `~/.grove/config.toml`:
-```bash
-grep "post_create" ~/.grove/config.toml
-```
-
-### Memory Sync Issues
-
-Ensure `gw-claude` plugin is installed:
-```bash
-gw plugin list | grep claude
-gw plugin install nicksenap/gw-claude
-```
-
-Verify hooks are configured:
-```bash
-grep "gw claude" ~/.grove/config.toml
-```
-
-Check memory directory:
-```bash
-ls -la ~/.grove/.claude-memory/
-```
-
----
-
-## Next Steps
-
-- Learn how to [configure hooks](operations.md#lifecycle-hooks) for your plugins
-- Explore [plugin source code](https://github.com/nicksenap/gw-claude) as templates
-- Join the Grove community to share and discover plugins
+See [Operations](operations.md#lifecycle-hooks) for hook execution and failure policy.

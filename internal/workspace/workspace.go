@@ -75,21 +75,8 @@ func (e *PreparationError) Error() string {
 
 func (e *PreparationError) Unwrap() error { return e.Cause }
 
-// Create creates a new workspace with worktrees for the given repos.
-// repoMap is name→source_path. It preserves the historical positional signature
-// by delegating to CreateWithOpts.
-func (s *Service) Create(name, branch string, repoNames []string, repoMap map[string]string, cfg *models.Config) error {
-	return s.CreateWithOpts(name, CreateOpts{
-		Branch:  branch,
-		Repos:   repoNames,
-		RepoMap: repoMap,
-		Cfg:     cfg,
-	})
-}
-
-// CreateWithOpts creates a new workspace from the given options. It is the full
-// implementation behind Create, additionally supporting per-repo branch tracking
-// (BranchMode/TrackBranchRepo) and a persisted Source link.
+// CreateWithOpts creates a new workspace from the given options, including
+// per-repo branch tracking (BranchMode/TrackBranchRepo) and a persisted Source link.
 func (s *Service) CreateWithOpts(name string, opts CreateOpts) error {
 	var ws models.Workspace
 	if err := s.State.WithLock(func() error {
