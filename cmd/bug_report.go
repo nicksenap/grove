@@ -20,9 +20,8 @@ import (
 )
 
 const (
-	bugReportLogLines  = 500
-	bugReportLogAge    = 24 * time.Hour
-	logTimestampLayout = "2006-01-02 15:04:05"
+	bugReportLogLines = 500
+	bugReportLogAge   = 24 * time.Hour
 )
 
 var bugReportOutput string
@@ -66,10 +65,35 @@ func collectReport() string {
 	writeConfigSummary(&buf)
 
 	buf.WriteString("\n## Workspaces\n\n")
-	writeWorkspaceSummary(&buf)
+	if workspaces, err := state.Load(); err == nil {
+		if len(workspaces) == 0 {
+			buf.WriteString("No workspaces configured.\n")
+		} else {
+			fmt.Fprintf(&buf, "%d workspace(s)\n\n", len(workspaces))
+			for _, ws := range workspaces {
+				fmt.Fprintf(&buf, "- **%s** (branch: `%s`, repos: %d)\n", ws.Name, ws.Branch, len(ws.Repos))
+			}
+		}
+	} else {
+		fmt.Fprintf(&buf, "Error loading state: %s\n", err)
+	}
 
 	buf.WriteString("\n## Doctor\n\n")
-	writeDoctorSummary(&buf)
+	if issues, _, err := workspace.NewService().Doctor(false); err == nil {
+		if len(issues) == 0 {
+			buf.WriteString("All workspaces healthy.\n")
+		} else {
+			for _, issue := range issues {
+				repo := ""
+				if issue.Repo != nil {
+					repo = fmt.Sprintf(" (repo: %s)", *issue.Repo)
+				}
+				fmt.Fprintf(&buf, "- **%s**%s: %s\n", issue.Workspace, repo, issue.Issue)
+			}
+		}
+	} else {
+		fmt.Fprintf(&buf, "Error running doctor: %s\n", err)
+	}
 
 	buf.WriteString("\n## Recent Logs\n\n")
 	buf.WriteString("Up to 500 lines from the last 24 hours.\n\n```\n")
@@ -81,42 +105,7 @@ func collectReport() string {
 	buf.WriteString("<!-- Describe what happened and what you expected -->\n")
 
 	home, _ := os.UserHomeDir()
-	return redact.Text(buf.String(), home)
-}
-
-func writeWorkspaceSummary(buf *bytes.Buffer) {
-	workspaces, err := state.Load()
-	if err != nil {
-		fmt.Fprintf(buf, "Error loading state: %s\n", err)
-		return
-	}
-	if len(workspaces) == 0 {
-		buf.WriteString("No workspaces configured.\n")
-		return
-	}
-	fmt.Fprintf(buf, "%d workspace(s)\n\n", len(workspaces))
-	for _, ws := range workspaces {
-		fmt.Fprintf(buf, "- **%s** (branch: `%s`, repos: %d)\n", ws.Name, ws.Branch, len(ws.Repos))
-	}
-}
-
-func writeDoctorSummary(buf *bytes.Buffer) {
-	issues, _, err := workspace.NewService().Doctor(false)
-	if err != nil {
-		fmt.Fprintf(buf, "Error running doctor: %s\n", err)
-		return
-	}
-	if len(issues) == 0 {
-		buf.WriteString("All workspaces healthy.\n")
-		return
-	}
-	for _, issue := range issues {
-		repo := ""
-		if issue.Repo != nil {
-			repo = fmt.Sprintf(" (repo: %s)", *issue.Repo)
-		}
-		fmt.Fprintf(buf, "- **%s**%s: %s\n", issue.Workspace, repo, issue.Issue)
-	}
+	return sanitizeReport(buf.String(), home)
 }
 
 func writeConfigSummary(buf *bytes.Buffer) {
@@ -152,6 +141,19 @@ func writeConfigSummary(buf *bytes.Buffer) {
 	}
 }
 
+// tailLog is retained for callers that need a simple current-file tail.
+func tailLog(n int) string {
+	data, err := os.ReadFile(filepath.Join(logging.LogDir, "grove.log"))
+	if err != nil {
+		return "(no log file found)\n"
+	}
+	lines := strings.Split(strings.TrimRight(string(data), "\n"), "\n")
+	if len(lines) > n {
+		lines = lines[len(lines)-n:]
+	}
+	return strings.Join(lines, "\n") + "\n"
+}
+
 func recentLogs(limit int, maxAge time.Duration, now time.Time) string {
 	base := filepath.Join(logging.LogDir, "grove.log")
 	paths := []string{base + ".3", base + ".2", base + ".1", base}
@@ -167,12 +169,14 @@ func recentLogs(limit int, maxAge time.Duration, now time.Time) string {
 			if line == "" {
 				continue
 			}
-			if timestamp, ok := logTimestamp(line, now.Location()); ok {
-				entryRecent = !timestamp.Before(cutoff) && !timestamp.After(now)
-				if entryRecent {
-					lines = append(lines, line)
+			if len(line) >= 19 {
+				if ts, err := time.ParseInLocation("2006-01-02 15:04:05", line[:19], now.Location()); err == nil {
+					entryRecent = !ts.Before(cutoff) && !ts.After(now)
+					if entryRecent {
+						lines = append(lines, line)
+					}
+					continue
 				}
-				continue
 			}
 			if entryRecent {
 				lines = append(lines, line)
@@ -188,12 +192,8 @@ func recentLogs(limit int, maxAge time.Duration, now time.Time) string {
 	return strings.Join(lines, "\n") + "\n"
 }
 
-func logTimestamp(line string, location *time.Location) (time.Time, bool) {
-	if len(line) < len(logTimestampLayout) {
-		return time.Time{}, false
-	}
-	timestamp, err := time.ParseInLocation(logTimestampLayout, line[:len(logTimestampLayout)], location)
-	return timestamp, err == nil
+func sanitizeReport(report, home string) string {
+	return redact.Text(report, home)
 }
 
 func writeBugReport(path, report string) error {

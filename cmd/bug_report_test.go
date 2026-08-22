@@ -9,8 +9,43 @@ import (
 
 	"github.com/nicksenap/grove/internal/config"
 	"github.com/nicksenap/grove/internal/logging"
-	"github.com/nicksenap/grove/internal/redact"
 )
+
+func TestTailLog(t *testing.T) {
+	dir := t.TempDir()
+	logging.LogDir = dir
+
+	// Write a log file with 10 lines
+	var lines []string
+	for i := 1; i <= 10; i++ {
+		lines = append(lines, "2026-01-01 00:00:00 INFO - line "+string(rune('0'+i)))
+	}
+	content := strings.Join(lines, "\n") + "\n"
+	os.WriteFile(filepath.Join(dir, "grove.log"), []byte(content), 0o644)
+
+	// Tail last 3 lines
+	result := tailLog(3)
+	resultLines := strings.Split(strings.TrimRight(result, "\n"), "\n")
+	if len(resultLines) != 3 {
+		t.Errorf("expected 3 lines, got %d: %v", len(resultLines), resultLines)
+	}
+
+	// Tail more than available
+	result = tailLog(100)
+	resultLines = strings.Split(strings.TrimRight(result, "\n"), "\n")
+	if len(resultLines) != 10 {
+		t.Errorf("expected 10 lines, got %d", len(resultLines))
+	}
+}
+
+func TestTailLogMissing(t *testing.T) {
+	logging.LogDir = filepath.Join(t.TempDir(), "nonexistent")
+
+	result := tailLog(10)
+	if !strings.Contains(result, "no log file found") {
+		t.Errorf("expected 'no log file found', got %q", result)
+	}
+}
 
 func TestRecentLogsAreBoundedByCountAndAge(t *testing.T) {
 	dir := t.TempDir()
@@ -35,7 +70,7 @@ func TestRecentLogsAreBoundedByCountAndAge(t *testing.T) {
 	}
 }
 
-func TestRedactTextRedactsSensitiveValues(t *testing.T) {
+func TestSanitizeReportRedactsSensitiveValues(t *testing.T) {
 	home := t.TempDir()
 	input := strings.Join([]string{
 		"path=" + filepath.Join(home, "private", "repo"),
@@ -47,7 +82,7 @@ func TestRedactTextRedactsSensitiveValues(t *testing.T) {
 		"SOCKET_API_KEY=env-secret",
 		"url=HTTPS://user:pass@example.com/repo?token=query-secret#access_token=fragment-secret",
 	}, " ")
-	result := redact.Text(input, home)
+	result := sanitizeReport(input, home)
 
 	for _, secret := range []string{home, "abc123", "two words", "bearer-secret", "json-secret", "cli-secret", "env-secret", "user:pass", "query-secret", "fragment-secret"} {
 		if strings.Contains(result, secret) {

@@ -25,13 +25,13 @@ func Text(input, home string) string {
 	input = authorizationRE.ReplaceAllString(input, "$1[REDACTED]")
 	input = assignmentRE.ReplaceAllString(input, "$1[REDACTED]")
 	input = flagRE.ReplaceAllString(input, "$1[REDACTED]")
-	input = environmentRE.ReplaceAllStringFunc(input, redactEnvironmentValue)
+	input = environmentRE.ReplaceAllStringFunc(input, func(value string) string {
+		if i := strings.IndexByte(value, '='); i >= 0 {
+			return value[:i+1] + "[REDACTED]"
+		}
+		return value
+	})
 	return input
-}
-
-func redactEnvironmentValue(value string) string {
-	name, _, _ := strings.Cut(value, "=")
-	return name + "=[REDACTED]"
 }
 
 func sanitizeURL(raw string) string {
