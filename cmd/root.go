@@ -74,7 +74,6 @@ func init() {
 		runCmd,
 		exploreCmd,
 		pluginCmd,
-		wizardCmd,
 		bugReportCmd,
 	)
 }

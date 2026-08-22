@@ -10,7 +10,7 @@ import (
 
 	"github.com/nicksenap/grove/internal/config"
 	"github.com/nicksenap/grove/internal/console"
-	"github.com/nicksenap/grove/internal/lifecycle"
+	"github.com/nicksenap/grove/internal/operations"
 	"github.com/nicksenap/grove/internal/picker"
 	"github.com/nicksenap/grove/internal/state"
 	"github.com/spf13/cobra"
@@ -42,7 +42,7 @@ var goCmd = &cobra.Command{
 					}
 				}
 			}
-			if err := lifecycle.Run("on_close", lifecycle.Vars{}); errors.Is(err, lifecycle.ErrNoHook) {
+			if _, err := operations.NewService().Close(operations.CloseRequest{}); errors.Is(err, operations.ErrHookNotConfigured) {
 				exitError("No on_close hook configured. Set one in ~/.grove/config.toml:\n\n  [hooks]\n  on_close = \"gw zellij close-pane\"")
 			} else if err != nil {
 				exitError(err.Error())

@@ -1,17 +1,15 @@
 package cmd
 
 import (
-	"errors"
 	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/nicksenap/grove/internal/config"
 	"github.com/nicksenap/grove/internal/console"
 	"github.com/nicksenap/grove/internal/discover"
 	"github.com/nicksenap/grove/internal/gitops"
-	"github.com/nicksenap/grove/internal/lifecycle"
 	"github.com/nicksenap/grove/internal/models"
+	"github.com/nicksenap/grove/internal/operations"
 	"github.com/nicksenap/grove/internal/picker"
 	"github.com/nicksenap/grove/internal/state"
 	"github.com/nicksenap/grove/internal/workspace"
@@ -203,14 +201,7 @@ var createCmd = &cobra.Command{
 				}
 			}
 			console.Infof("Replacing workspace: deleting %s", currentWs.Name)
-			vars := lifecycle.Vars{Name: currentWs.Name, Path: currentWs.Path, Branch: currentWs.Branch}
-			if err := lifecycle.Run("pre_delete", vars); err != nil && !errors.Is(err, lifecycle.ErrNoHook) {
-				if lifecycle.ShouldAbort(err) {
-					exitError(err.Error())
-				}
-				console.Warning(err.Error())
-			}
-			if err := workspace.NewService().Delete(currentWs.Name); err != nil {
+			if _, err := operations.NewService().Delete(operations.DeleteRequest{Name: currentWs.Name}); err != nil {
 				exitError("failed to delete current workspace: " + err.Error())
 			}
 			replacedName = currentWs.Name
@@ -239,26 +230,11 @@ var createCmd = &cobra.Command{
 			opts.BranchMode = workspace.BranchModeTrack
 		}
 
-		if err := workspace.NewService().CreateWithOpts(name, opts); err != nil {
+		if _, err := operations.NewService().Create(operations.CreateRequest{Name: name, Options: opts}); err != nil {
 			if replacedName != "" {
 				exitError("failed to create new workspace (old workspace " + replacedName + " was already deleted): " + err.Error())
 			}
 			exitError(err.Error())
-		}
-
-		// Fire post_create hook if configured
-		wsPath := filepath.Join(cfg.WorkspaceDir, name)
-		vars := lifecycle.Vars{Name: name, Path: wsPath, Branch: branch}
-		if source != nil {
-			vars.SourceURL = source.URL
-			vars.SourceRef = source.Ref
-			vars.SourceTitle = source.Title
-		}
-		if err := lifecycle.Run("post_create", vars); err != nil && !errors.Is(err, lifecycle.ErrNoHook) {
-			if lifecycle.ShouldAbort(err) {
-				exitError(err.Error())
-			}
-			console.Warning(err.Error())
 		}
 	},
 }

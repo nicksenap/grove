@@ -69,7 +69,6 @@ Claude Code integration. Memory sync, session tracking, hook management.
 | `gw claude sync rehydrate <path>` | Copy memory from source repos to worktrees |
 | `gw claude sync harvest <path>` | Copy newer memory from worktrees back to source |
 | `gw claude sync migrate <old> <new>` | Rename/merge memory dir |
-| `gw claude copy-md <path>` | Copy CLAUDE.md from source repo parent into workspace |
 | `gw claude doctor` | Find orphaned memory directories |
 | `gw claude hook install` | Register session tracking hooks in ~/.claude/settings.json |
 | `gw claude hook uninstall` | Remove hooks |
@@ -79,7 +78,7 @@ Recommended hooks:
 
 ```toml
 [hooks]
-post_create = "gw claude sync rehydrate {path} && gw claude copy-md {path}"
+post_create = "gw claude sync rehydrate {path}"
 pre_delete = "gw claude sync harvest {path}"
 ```
 
@@ -111,9 +110,7 @@ Kanban-style TUI dashboard for monitoring Claude Code agents across workspaces.
 
 ## Quick setup
 
-```bash
-gw wizard    # detects your tools, installs plugins, configures hooks
-```
+Install the plugins you need with `gw plugin install`, then add their recommended lifecycle hooks to `~/.grove/config.toml`.
 
 ## Writing a plugin
 

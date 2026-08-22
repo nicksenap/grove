@@ -8,12 +8,12 @@ Global hooks live in `~/.grove/config.toml` under `[hooks]`. Grove fires these o
 
 ```toml
 [hooks]
-post_create = "gw claude sync rehydrate {path} && gw claude copy-md {path}"
+post_create = "gw claude sync rehydrate {path}"
 pre_delete = "gw claude sync harvest {path}"
 on_close = "gw zellij close-pane"
 ```
 
-Run `gw wizard` to configure these interactively.
+Edit `~/.grove/config.toml` directly to configure these hooks.
 
 ### Available hooks
 
@@ -40,7 +40,7 @@ Unused placeholders expand to an empty string.
 
 ```toml
 [hooks]
-post_create = "gw claude sync rehydrate {path} && gw claude copy-md {path}"
+post_create = "gw claude sync rehydrate {path}"
 pre_delete = "gw claude sync harvest {path}"
 on_close = "tmux kill-pane"
 ```

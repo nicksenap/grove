@@ -20,7 +20,7 @@ Keeping tool logic out of Grove core makes it:
 - **Extensible** — Anyone can write plugins without modifying Grove
 - **Composable** — Mix and match plugins (Claude + Zellij + Dash)
 
-Plugins register themselves as lifecycle hook handlers via `gw wizard` or manual config.
+Plugins are invoked by lifecycle hooks configured in `~/.grove/config.toml`.
 
 ---
 
@@ -30,13 +30,12 @@ Grove maintains reference implementations demonstrating the plugin model.
 
 ### `gw-claude` — Claude Code Integration
 
-Full integration with Claude Code for memory sync, session tracking, and .md file management.
+Full integration with Claude Code for memory sync and session tracking.
 
 #### Install
 
 ```bash
 gw plugin install nicksenap/gw-claude
-gw wizard  # Prompts to configure hooks
 ```
 
 #### Features
@@ -46,23 +45,18 @@ gw wizard  # Prompts to configure hooks
   - `gw claude sync harvest {path}` — Save memory from workspace before deletion
   - Memory is stored in `~/.grove/.claude-memory/` (per-workspace JSON)
 
-- **CLAUDE.md copy** — Project instructions automatically copied to new workspaces
-  - Looks for `CLAUDE.md` in source repo root
-  - Copies to workspace on creation
-  - Ensures Claude Code agents have consistent context
-
 - **Session tracking** — Records workspace lifecycle for the dashboard
   - Logs creation, deletion, and modifications
   - Enables `gw-dash` to show workspace history
 
 #### Usage
 
-Manual hook configuration (if not using `gw wizard`):
+Lifecycle hook configuration:
 
 ```toml
 # ~/.grove/config.toml
 [hooks]
-post_create = "gw claude sync rehydrate {path} && gw claude copy-md {path}"
+post_create = "gw claude sync rehydrate {path}"
 pre_delete = "gw claude sync harvest {path}"
 ```
 
@@ -70,7 +64,6 @@ pre_delete = "gw claude sync harvest {path}"
 
 **On workspace creation** (`post_create`):
 1. `gw claude sync rehydrate {path}` — Loads memory from the source repo into the workspace
-2. `gw claude copy-md {path}` — Copies `CLAUDE.md` from source to workspace
 
 **On workspace deletion** (`pre_delete`):
 1. `gw claude sync harvest {path}` — Saves any Claude Code updates back to source repo memory
@@ -85,7 +78,6 @@ pre_delete = "gw claude sync harvest {path}"
 ```bash
 gw claude sync rehydrate <path>    # Load memory into workspace
 gw claude sync harvest <path>      # Save memory from workspace
-gw claude copy-md <path>           # Copy CLAUDE.md to workspace
 gw claude hook install             # Register default hooks
 gw claude <subcommand> -h          # Help for subcommands
 ```
@@ -100,7 +92,6 @@ Integrates with Zellij terminal multiplexer for automatic workspace pane managem
 
 ```bash
 gw plugin install nicksenap/gw-zellij
-gw wizard  # Prompts to configure hooks
 ```
 
 #### Features
