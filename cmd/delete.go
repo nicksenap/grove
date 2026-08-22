@@ -1,10 +1,7 @@
 package cmd
 
 import (
-	"errors"
-
-	"github.com/nicksenap/grove/internal/console"
-	"github.com/nicksenap/grove/internal/lifecycle"
+	"github.com/nicksenap/grove/internal/operations"
 	"github.com/nicksenap/grove/internal/picker"
 	"github.com/nicksenap/grove/internal/state"
 	"github.com/nicksenap/grove/internal/workspace"
@@ -56,20 +53,9 @@ func doDelete(args []string) {
 	}
 
 	for _, name := range names {
-		// pre_delete is the safety-policy extension point: configure a hook with
-		// on_failure = "abort" to inspect or block this destructive operation.
-		ws, _ := state.GetWorkspace(name)
-		if ws != nil {
-			vars := lifecycle.Vars{Name: name, Path: ws.Path, Branch: ws.Branch}
-			if err := lifecycle.Run("pre_delete", vars); err != nil && !errors.Is(err, lifecycle.ErrNoHook) {
-				if lifecycle.ShouldAbort(err) {
-					exitError(err.Error())
-				}
-				console.Warning(err.Error())
-			}
-		}
-
-		if err := workspace.NewService().DeleteWithOptions(name, workspace.RemoveOptions{Force: true}); err != nil {
+		if _, err := operations.NewService().Delete(operations.DeleteRequest{
+			Name: name, Options: workspace.RemoveOptions{Force: true},
+		}); err != nil {
 			exitError(err.Error())
 		}
 	}

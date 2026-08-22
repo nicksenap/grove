@@ -521,7 +521,9 @@ func (s *Service) runSetupHooks(ws models.Workspace) {
 
 // RemoveOptions controls destructive worktree cleanup.
 type RemoveOptions struct {
-	Force bool
+	Force             bool
+	ExpectedCreatedAt string
+	ExpectedPath      string
 }
 
 // Delete removes a workspace using safe defaults.
@@ -537,6 +539,9 @@ func (s *Service) DeleteWithOptions(name string, opts RemoveOptions) error {
 	}
 	if ws == nil {
 		return fmt.Errorf("workspace %s not found", name)
+	}
+	if err := verifyExpectedWorkspace(ws, opts); err != nil {
+		return err
 	}
 
 	if err := preflightRemovals(ws.Repos, opts.Force); err != nil {
@@ -562,6 +567,16 @@ func (s *Service) DeleteWithOptions(name string, opts RemoveOptions) error {
 	return nil
 }
 
+func verifyExpectedWorkspace(ws *models.Workspace, opts RemoveOptions) error {
+	if opts.ExpectedCreatedAt != "" && ws.CreatedAt != opts.ExpectedCreatedAt {
+		return fmt.Errorf("workspace %s changed after pre-delete checks", ws.Name)
+	}
+	if opts.ExpectedPath != "" && ws.Path != opts.ExpectedPath {
+		return fmt.Errorf("workspace %s changed after pre-delete checks", ws.Name)
+	}
+	return nil
+}
+
 func (s *Service) deleteLocked(name string, opts RemoveOptions) (*models.Workspace, error) {
 	ws, err := s.State.GetWorkspace(name)
 	if err != nil {
@@ -569,6 +584,9 @@ func (s *Service) deleteLocked(name string, opts RemoveOptions) (*models.Workspa
 	}
 	if ws == nil {
 		return nil, fmt.Errorf("workspace %s not found", name)
+	}
+	if err := verifyExpectedWorkspace(ws, opts); err != nil {
+		return nil, err
 	}
 	if err := preflightRemovals(ws.Repos, opts.Force); err != nil {
 		return nil, err

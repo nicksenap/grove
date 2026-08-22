@@ -16,8 +16,8 @@ import (
 	"github.com/nicksenap/grove/internal/console"
 	"github.com/nicksenap/grove/internal/discover"
 	"github.com/nicksenap/grove/internal/gitops"
-	"github.com/nicksenap/grove/internal/lifecycle"
 	"github.com/nicksenap/grove/internal/models"
+	"github.com/nicksenap/grove/internal/operations"
 	"github.com/nicksenap/grove/internal/recipe"
 	"github.com/nicksenap/grove/internal/workspace"
 	"github.com/spf13/cobra"
@@ -105,49 +105,46 @@ func runRecipeCreate(cmd *cobra.Command, args []string) error {
 	ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	var report recipe.Report
-	svc := workspace.NewService()
-	err = svc.CreateWithPreparation(name, workspace.PreparationOpts{
-		CreateOpts: workspace.CreateOpts{
-			Branch: branch, Repos: resolved.Names, RepoMap: resolved.RepoMap, Cfg: cfg, Source: source,
+	result, err := operations.NewService().Create(operations.CreateRequest{
+		Name: name,
+		Preparation: &operations.Preparation{
+			Options: workspace.PreparationOpts{
+				CreateOpts: workspace.CreateOpts{
+					Branch: branch, Repos: resolved.Names, RepoMap: resolved.RepoMap, Cfg: cfg, Source: source,
+				},
+				BaseCommits: resolved.BaseCommits,
+			},
+			Run: func(ws models.Workspace) error {
+				worktrees := make(map[string]string, len(ws.Repos))
+				for _, repoWorktree := range ws.Repos {
+					worktrees[repoWorktree.RepoName] = repoWorktree.WorktreePath
+				}
+				var executeErr error
+				report, executeErr = (recipe.Executor{Output: cmd.ErrOrStderr()}).Execute(ctx, parsed.Recipe, worktrees)
+				return executeErr
+			},
 		},
-		BaseCommits: resolved.BaseCommits,
-	}, func(ws models.Workspace) error {
-		worktrees := make(map[string]string, len(ws.Repos))
-		for _, repoWorktree := range ws.Repos {
-			worktrees[repoWorktree.RepoName] = repoWorktree.WorktreePath
-		}
-		var executeErr error
-		report, executeErr = (recipe.Executor{Output: cmd.ErrOrStderr()}).Execute(ctx, parsed.Recipe, worktrees)
-		return executeErr
 	})
-	wsPath := filepath.Join(cfg.WorkspaceDir, name)
 	if err != nil {
+		var hookErr *operations.HookError
+		if errors.As(err, &hookErr) && hookErr.Hook == "post_create" {
+			failure := recipeCreateErrorOutput{Code: createErrorPostCreateFailed, Message: err.Error()}
+			if createJSON {
+				if encodeErr := json.NewEncoder(cmd.OutOrStdout()).Encode(recipeCreateOutput{
+					Created: true, Name: name, Path: result.Workspace.Path, Recipe: parsed.Recipe.Name, Jobs: &report.Jobs, Error: &failure,
+				}); encodeErr != nil {
+					return encodeErr
+				}
+			}
+			return &recipeCreateRunError{output: failure, cause: err}
+		}
 		failure := recipeCreateFailureFromError(err)
 		return writeRecipeCreateFailure(cmd, name, parsed.Recipe.Name, false, failure, err)
 	}
 
-	vars := lifecycle.Vars{Name: name, Path: wsPath, Branch: branch}
-	if source != nil {
-		vars.SourceURL, vars.SourceRef, vars.SourceTitle = source.URL, source.Ref, source.Title
-	}
-	if hookErr := lifecycle.Run("post_create", vars); hookErr != nil && !errors.Is(hookErr, lifecycle.ErrNoHook) {
-		if lifecycle.ShouldAbort(hookErr) {
-			failure := recipeCreateErrorOutput{Code: createErrorPostCreateFailed, Message: hookErr.Error()}
-			if createJSON {
-				if err := json.NewEncoder(cmd.OutOrStdout()).Encode(recipeCreateOutput{
-					Created: true, Name: name, Path: wsPath, Recipe: parsed.Recipe.Name, Jobs: &report.Jobs, Error: &failure,
-				}); err != nil {
-					return err
-				}
-			}
-			return &recipeCreateRunError{output: failure, cause: hookErr}
-		}
-		console.Warning(hookErr.Error())
-	}
-
 	if createJSON {
 		return json.NewEncoder(cmd.OutOrStdout()).Encode(recipeCreateOutput{
-			Created: true, Name: name, Path: wsPath, Recipe: parsed.Recipe.Name, Jobs: &report.Jobs,
+			Created: true, Name: name, Path: result.Workspace.Path, Recipe: parsed.Recipe.Name, Jobs: &report.Jobs,
 		})
 	}
 	return nil
