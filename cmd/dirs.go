@@ -34,7 +34,7 @@ var addDirCmd = &cobra.Command{
 			exitError(err.Error())
 		}
 
-		repos := discover.FindRepos([]string{absPath})
+		repos := discover.DiscoverReposWithCache([]string{absPath})
 		console.Successf("Added repo dir: %s (%d repos found)", absPath, len(repos))
 	},
 }

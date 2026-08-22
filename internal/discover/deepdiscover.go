@@ -21,6 +21,32 @@ func RemoteCachePath() string {
 	return filepath.Join(config.GroveDir, "cache", "remotes.json")
 }
 
+// RepoMap returns a repository name to local path mapping.
+func RepoMap(repos []RepoInfo) map[string]string {
+	repoMap := make(map[string]string, len(repos))
+	for _, repo := range repos {
+		if _, exists := repoMap[repo.Name]; !exists {
+			repoMap[repo.Name] = repo.Path
+		}
+	}
+	return repoMap
+}
+
+// UniqueByName returns the first repository for each folder name.
+// Results from discovery are sorted, making collisions deterministic.
+func UniqueByName(repos []RepoInfo) []RepoInfo {
+	unique := make([]RepoInfo, 0, len(repos))
+	seen := make(map[string]bool, len(repos))
+	for _, repo := range repos {
+		if seen[repo.Name] {
+			continue
+		}
+		seen[repo.Name] = true
+		unique = append(unique, repo)
+	}
+	return unique
+}
+
 // DiscoverReposWithCache is the production entry point — loads cache from disk,
 // uses gitops.RemoteURL for cache misses, saves cache after resolution.
 func DiscoverReposWithCache(dirs []string) []RepoInfo {
@@ -126,6 +152,9 @@ func DiscoverReposWithRemoteCache(dirs []string, cache map[string]CacheEntry, fe
 		infos = append(infos, e.info)
 	}
 	sort.Slice(infos, func(i, j int) bool {
+		if infos[i].DisplayName == infos[j].DisplayName {
+			return infos[i].Path < infos[j].Path
+		}
 		return infos[i].DisplayName < infos[j].DisplayName
 	})
 	return infos

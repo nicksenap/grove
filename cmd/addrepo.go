@@ -54,7 +54,7 @@ var addRepoCmd = &cobra.Command{
 		}
 
 		cfg := config.RequireConfig()
-		repos := discover.FindAllRepos(cfg.RepoDirs)
+		repos := discover.UniqueByName(discover.DiscoverReposWithCache(cfg.RepoDirs))
 		repoMap := discover.RepoMap(repos)
 
 		var repoNames []string

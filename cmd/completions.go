@@ -14,7 +14,7 @@ func completeRepoNames(cmd *cobra.Command, args []string, toComplete string) ([]
 		return nil, cobra.ShellCompDirectiveNoFileComp
 	}
 
-	repos := discover.FindAllRepos(cfg.RepoDirs)
+	repos := discover.UniqueByName(discover.DiscoverReposWithCache(cfg.RepoDirs))
 	names := make([]string, len(repos))
 	for i, r := range repos {
 		names[i] = r.Name

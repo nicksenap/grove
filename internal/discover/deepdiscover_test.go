@@ -157,6 +157,23 @@ func TestDiscoverReposSortedByDisplayName(t *testing.T) {
 	}
 }
 
+func TestDiscoverReposSortsNameTiesByPath(t *testing.T) {
+	dir1 := t.TempDir()
+	dir2 := t.TempDir()
+	first := makeFakeRepo(t, dir1, "api")
+	second := makeFakeRepo(t, dir2, "api")
+
+	results := DiscoverRepos([]string{dir2, dir1}, func(string) string { return "" })
+
+	wantFirst := first
+	if second < first {
+		wantFirst = second
+	}
+	if len(results) != 2 || results[0].Path != wantFirst {
+		t.Fatalf("name tie was not sorted by path: %#v", results)
+	}
+}
+
 func TestDiscoverReposEmptyDirs(t *testing.T) {
 	results := DiscoverRepos([]string{}, func(string) string { return "" })
 	if len(results) != 0 {
@@ -206,5 +223,60 @@ func TestDiscoverReposMultipleDirs(t *testing.T) {
 
 	if len(results) != 2 {
 		t.Fatalf("expected 2 repos from 2 dirs, got %d", len(results))
+	}
+}
+
+func TestDiscoverReposFindsNestedRepos(t *testing.T) {
+	dir := t.TempDir()
+	makeFakeRepo(t, filepath.Join(dir, "org"), "nested-repo")
+
+	results := DiscoverRepos([]string{dir}, func(string) string { return "" })
+
+	if len(results) != 1 || results[0].Name != "nested-repo" {
+		t.Fatalf("nested repo not discovered: %#v", results)
+	}
+}
+
+func TestDiscoverReposSkipsIgnoredDirectories(t *testing.T) {
+	dir := t.TempDir()
+	makeFakeRepo(t, filepath.Join(dir, "node_modules"), "dependency")
+	makeFakeRepo(t, filepath.Join(dir, "__pycache__"), "cached")
+	makeFakeRepo(t, filepath.Join(dir, ".hidden"), "hidden")
+	makeFakeRepo(t, dir, "visible")
+
+	results := DiscoverRepos([]string{dir}, func(string) string { return "" })
+
+	if len(results) != 1 || results[0].Name != "visible" {
+		t.Fatalf("ignored directories were scanned: %#v", results)
+	}
+}
+
+func TestRepoMapKeepsFirstDuplicateName(t *testing.T) {
+	repos := []RepoInfo{{Name: "api", Path: "/src/first"}, {Name: "api", Path: "/src/second"}}
+
+	repoMap := RepoMap(repos)
+
+	if repoMap["api"] != "/src/first" {
+		t.Fatalf("duplicate name resolved to %q, want first repo", repoMap["api"])
+	}
+}
+
+func TestUniqueByNameKeepsFirstRepo(t *testing.T) {
+	repos := []RepoInfo{{Name: "api", Path: "/src/first"}, {Name: "web", Path: "/src/web"}, {Name: "api", Path: "/src/second"}}
+
+	unique := UniqueByName(repos)
+
+	if len(unique) != 2 || unique[0].Path != "/src/first" || unique[1].Name != "web" {
+		t.Fatalf("unexpected unique repos: %#v", unique)
+	}
+}
+
+func TestRepoMap(t *testing.T) {
+	repos := []RepoInfo{{Name: "api", Path: "/src/api"}, {Name: "web", Path: "/src/web"}}
+
+	repoMap := RepoMap(repos)
+
+	if repoMap["api"] != "/src/api" || repoMap["web"] != "/src/web" {
+		t.Fatalf("unexpected repo map: %#v", repoMap)
 	}
 }

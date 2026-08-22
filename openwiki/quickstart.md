@@ -37,8 +37,7 @@ eval "$(gw shell-init)"
 # Register your repo directories
 gw init ~/dev ~/work/microservices
 
-# Optionally: deep-scan to discover nested repos (2–3 levels)
-gw explore
+# Configured directories are scanned recursively for nested repos
 
 # Create a workspace for a feature branch (interactive)
 gw create feat/login
@@ -113,7 +112,6 @@ setup = ["npm install", "npm run build"]  # run after worktree creation
 | Command | Purpose |
 |---------|---------|
 | `gw init <dirs>` | Register repo directories |
-| `gw explore` | Deep-scan for nested repos |
 | `gw create [NAME]` | Create a workspace (interactive or with `-b -r`/`-p`) |
 | `gw list [-s]` | List workspaces (with `-s` shows git status) |
 | `gw ws show <name>` | Show workspace details |
@@ -163,7 +161,7 @@ All repos are discovered once at command start via `internal/discover/`, then ma
 - `internal/state/state.go` — State persistence
 - `internal/models/models.go` — Data structures (Workspace, Preset, Hook, Config)
 - `internal/config/config.go` — Config file loading
-- `internal/discover/discover.go` — Repository discovery
+- `internal/discover/deepdiscover.go` — Recursive repository discovery and remote deduplication
 - `internal/gitops/gitops.go` — Git subprocess wrappers
 - `internal/lifecycle/lifecycle.go` — Lifecycle hooks
 - `internal/plugin/` — Plugin management
