@@ -1028,21 +1028,33 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# Test: explore
+# Test: recursive repository discovery
 # ---------------------------------------------------------------------------
-section "Explore"
+section "Recursive repository discovery"
 
-explore_out=$(gw explore 2>&1)
-if echo "${explore_out}" | grep -q "svc-auth"; then
-    pass "explore finds repos"
+NESTED_REPOS_DIR="${GROVE_HOME}/nested-repos"
+mkdir -p "${NESTED_REPOS_DIR}/team"
+git init -q "${NESTED_REPOS_DIR}/team/svc-nested"
+(cd "${NESTED_REPOS_DIR}/team/svc-nested" && git commit --allow-empty -q -m "initial commit")
+
+add_dir_out=$(gw add-dir "${NESTED_REPOS_DIR}" 2>&1)
+if echo "${add_dir_out}" | grep -q "1 repos found"; then
+    pass "add-dir counts nested repos"
 else
-    fail "explore did not find svc-auth"
+    fail "add-dir did not discover nested repo: ${add_dir_out}"
 fi
 
-if echo "${explore_out}" | grep -q "repos found"; then
-    pass "explore shows summary"
+if gw create nested-discovery -b feat/nested-discovery -r svc-nested >/dev/null 2>&1; then
+    pass "create uses nested repo discovery"
+    gw -n delete nested-discovery >/dev/null 2>&1
 else
-    fail "explore missing summary line"
+    fail "create could not use nested repo"
+fi
+
+if gw --help 2>&1 | grep -qE '^  explore[[:space:]]'; then
+    fail "explore command is still advertised"
+else
+    pass "explore command removed"
 fi
 
 # ---------------------------------------------------------------------------

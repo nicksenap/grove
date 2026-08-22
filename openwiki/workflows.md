@@ -23,12 +23,9 @@ This page explains the main user workflows and how they map to code.
    - Sets `repo_dirs = ["~/dev", "~/work/microservices"]`
    - Creates `~/.grove/state.json` (empty workspace list)
 
-2. **Optionally: Deep scan for nested repos**
-   ```bash
-   gw explore
-   ```
-   - Recursively scans 2–3 levels deep for `.git` directories (unlike `gw init` which only scans one level)
-   - Useful if you have nested project structures
+2. **Nested repositories are discovered automatically**
+   - Configured directories are recursively scanned up to three levels deep
+   - Hidden directories, `node_modules`, and `__pycache__` are skipped
 
 3. **Add more directories later**
    ```bash
@@ -39,10 +36,10 @@ This page explains the main user workflows and how they map to code.
 ### Code Flow
 
 - **`cmd/init_cmd.go`** — Calls `config.Save()` to persist directories
-- **`cmd/explore.go`** — Calls `discover.FindRepos()` recursively and displays results
+- **`internal/discover/deepdiscover.go`** — Recursively discovers repositories, deduplicates clones by remote URL, and caches remotes
 - **`internal/config/config.go`** — `Save()` writes to TOML file; `Load()` reads and validates
 
-**Key source**: `internal/discover/discover.go` scans directories for `.git` folders.
+**Key source**: `internal/discover/deepdiscover.go` scans configured directories for repositories.
 
 ---
 

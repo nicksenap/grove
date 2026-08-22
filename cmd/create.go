@@ -48,7 +48,7 @@ var createCmd = &cobra.Command{
 		}
 
 		cfg := config.RequireConfig()
-		repos := discover.FindAllRepos(cfg.RepoDirs)
+		repos := discover.UniqueByName(discover.DiscoverReposWithCache(cfg.RepoDirs))
 		repoMap := discover.RepoMap(repos)
 
 		var repoNames []string
@@ -265,7 +265,7 @@ func deriveName(branch string) string {
 	return name
 }
 
-func repoNamesList(repos []discover.Repo) []string {
+func repoNamesList(repos []discover.RepoInfo) []string {
 	names := make([]string, len(repos))
 	for i, r := range repos {
 		names[i] = r.Name

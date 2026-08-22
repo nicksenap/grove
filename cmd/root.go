@@ -72,7 +72,6 @@ func init() {
 		addDirCmd,
 		removeDirCmd,
 		runCmd,
-		exploreCmd,
 		pluginCmd,
 		bugReportCmd,
 	)

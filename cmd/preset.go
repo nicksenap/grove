@@ -55,7 +55,7 @@ var presetAddCmd = &cobra.Command{
 			}
 		} else {
 			// Interactive: pick repos
-			available := discover.FindAllRepos(cfg.RepoDirs)
+			available := discover.UniqueByName(discover.DiscoverReposWithCache(cfg.RepoDirs))
 			if len(available) == 0 {
 				exitError("No repos found. Run: gw add-dir <path>")
 			}

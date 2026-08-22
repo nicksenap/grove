@@ -19,7 +19,7 @@ var initCmd = &cobra.Command{
 
 		console.Success("Initialized Grove")
 
-		repos := discover.FindAllRepos(cfg.RepoDirs)
+		repos := discover.DiscoverReposWithCache(cfg.RepoDirs)
 		if len(repos) > 0 {
 			console.Infof("Found %d repo(s) in configured directories", len(repos))
 		}

@@ -554,13 +554,11 @@ Expected times for typical workspaces (5–10 repos):
 
 ### Repo Discovery
 
-`gw init` and `gw explore` scan the filesystem:
-- `gw init` — One level deep, fast
-- `gw explore` — 2–3 levels deep, slower but finds nested repos
+Configured repository directories are recursively scanned up to three levels deep. Hidden directories, `node_modules`, and `__pycache__` are skipped.
 
 ### Caching
 
-Grove does **not** cache repo discovery. Each command rescans `repo_dirs`. If your repo directories are large, consider using multiple `repo_dirs` or moving to a monorepo.
+Grove caches resolved remote URLs under `~/.grove/cache/`, while filesystem discovery runs for each command. Repositories that share a remote are deduplicated, with a direct child of a configured directory preferred over a nested clone.
 
 ---
 

@@ -150,10 +150,10 @@ Fires hooks at key moments:
 
 #### Repository Discovery (`internal/discover/`)
 Finds git repos in configured directories:
-- `FindRepos(dirs)` — Scan one level deep for `.git` directories
-- Returns sorted list of `Repo{Name, Path}`
-- Used to populate repo choices for workspace creation
-- Caches repo list locally to avoid repeated filesystem scans
+- `DiscoverReposWithCache(dirs)` — Recursively scan up to three levels deep
+- Returns sorted `RepoInfo` values with local and remote identities
+- Deduplicates clones by remote URL, preferring direct children over nested clones
+- Caches remote URL resolution while rescanning the filesystem for each command
 
 #### Plugin System (`internal/plugin/`)
 Manages external commands:
@@ -188,7 +188,7 @@ Structured debug logging:
 1. **cmd/create.go**
    - Parses `-b` (branch), `-r` (repos) flags
    - Loads config from `~/.grove/config.toml`
-   - Discovers all repos via `discover.FindAllRepos()`
+   - Discovers all repos via `discover.DiscoverReposWithCache()`
    - Validates that `svc-a` and `svc-b` exist
    - Calls `workspace.Service.Create()`
 
@@ -298,7 +298,7 @@ Test fixtures often create temporary directories with real git repos, allowing t
 | `internal/state/state.go` | State persistence | ~200 lines, atomic writes |
 | `internal/models/models.go` | Data structures | ~300 lines, JSON serialization |
 | `internal/config/config.go` | Config loading | TOML parsing, legacy migration |
-| `internal/discover/discover.go` | Repo discovery | ~100 lines, simple filesystem scan |
+| `internal/discover/deepdiscover.go` | Repo discovery | Recursive scan, remote deduplication, and cache integration |
 | `internal/gitops/gitops.go` | Git wrappers | ~600 lines, subprocess management |
 | `internal/lifecycle/lifecycle.go` | Hook system | ~300 lines, placeholder expansion |
 | `internal/plugin/` | Plugin management | Install, upgrade, remove |

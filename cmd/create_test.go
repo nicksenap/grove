@@ -29,7 +29,7 @@ func TestDeriveName(t *testing.T) {
 }
 
 func TestRepoNamesList(t *testing.T) {
-	repos := []discover.Repo{
+	repos := []discover.RepoInfo{
 		{Name: "api"},
 		{Name: "web"},
 		{Name: "worker"},
