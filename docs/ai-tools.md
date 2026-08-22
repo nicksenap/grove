@@ -24,12 +24,12 @@ Add to `~/.grove/config.toml`:
 
 ```toml
 [hooks]
-post_create = "gw claude sync rehydrate {path} && gw claude copy-md {path}"
+post_create = "gw claude sync rehydrate {path}"
 pre_delete = "gw claude sync harvest {path}"
 on_close = "gw zellij close-pane"
 ```
 
-That gives you memory sync on create/delete, `CLAUDE.md` in every workspace, session tracking, and Zellij pane closing on navigate-away.
+That gives you memory sync on create/delete, session tracking, and Zellij pane closing on navigate-away.
 
 ---
 
@@ -38,7 +38,6 @@ That gives you memory sync on create/delete, `CLAUDE.md` in every workspace, ses
 Install the [gw-claude](https://github.com/nicksenap/gw-claude) plugin to get:
 
 - **Memory sync** — Claude Code memory carries over from source repos to worktrees and back
-- **CLAUDE.md copy** — your project `CLAUDE.md` is copied into new workspaces automatically
 - **Session tracking** — hook events are recorded for the dashboard
 
 ```bash
@@ -50,7 +49,7 @@ Configure the lifecycle hooks in `~/.grove/config.toml`:
 
 ```toml
 [hooks]
-post_create = "gw claude sync rehydrate {path} && gw claude copy-md {path}"
+post_create = "gw claude sync rehydrate {path}"
 pre_delete = "gw claude sync harvest {path}"
 ```
 
