@@ -75,7 +75,7 @@ frontend = { repos = ["web-app", "design-system"] }
 [hooks]
 post_create = "./scripts/workspace-created {path}"
 pre_delete = "./scripts/workspace-closing {path}"
-on_close = "gw zellij close-pane"
+on_close = "./scripts/close-workspace-pane {path}"
 
 [hooks.post_create]
 command     = "npm install && npm run build"
@@ -264,8 +264,8 @@ Plugins extend Grove with custom commands. They're standalone binaries prefixed 
 
 #### From GitHub
 ```bash
-gw plugin install nicksenap/gw-dash
-gw plugin install github.com/nicksenap/gw-zellij
+gw plugin install nicksenap/gw-dispatch
+gw plugin install igor-kupczynski/gw-code
 ```
 
 Downloads the latest release binary for your OS/arch from GitHub Releases. Expects naming convention: `gw-<name>_<version>_<os>_<arch>.tar.gz` (goreleaser standard).
@@ -283,9 +283,9 @@ Or place it anywhere on `$PATH`.
 
 ```bash
 gw plugin list                    # List installed plugins
-gw plugin upgrade dash            # Re-fetch latest release for dash
+gw plugin upgrade dispatch        # Re-fetch latest release for dispatch
 gw plugin upgrade                 # Upgrade all plugins
-gw plugin remove dash             # Uninstall a plugin
+gw plugin remove dispatch         # Uninstall a plugin
 ```
 
 ### How Plugins Work
@@ -310,26 +310,20 @@ The plugin gets full control of the terminal (no output capture). This enables T
 
 Plugins can be invoked by lifecycle hooks. Install the plugin using its real GitHub `OWNER/REPOSITORY` identifier, then add its recommended hook commands to `config.toml`. Grove fires them normally.
 
-### First-Party Plugins
+### Example Plugins
 
-Grove maintains reference plugins. Agent-specific memory or session integrations can use the same external plugin contract without adding vendor-specific behavior to core.
-
-#### `gw-zellij`
-Zellij terminal integration. Auto-create panes, close-pane commands.
+#### [`gw-dispatch`](https://github.com/nicksenap/gw-dispatch)
+Creates a Grove workspace and starts a selected coding agent there with an initial prompt.
 ```bash
-gw plugin install nicksenap/gw-zellij
+gw plugin install nicksenap/gw-dispatch
+gw dispatch -n -r api,web -P "Implement login"
 ```
 
-#### `gw-dash`
-Agent monitoring dashboard. Real-time workspace status.
+#### [`gw-code`](https://github.com/igor-kupczynski/gw-code)
+Generates and opens a multi-folder editor workspace for a Grove workspace.
 ```bash
-gw plugin install nicksenap/gw-dash
-```
-
-#### `gw-archive`
-Archive workspaces for later replay.
-```bash
-gw plugin install nicksenap/gw-archive
+gw plugin install igor-kupczynski/gw-code
+gw code my-workspace
 ```
 
 ---

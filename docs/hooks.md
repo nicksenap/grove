@@ -10,7 +10,7 @@ Global hooks live in `~/.grove/config.toml` under `[hooks]`. Grove fires these o
 [hooks]
 post_create = "./scripts/workspace-created {path}"
 pre_delete = "./scripts/workspace-closing {path}"
-on_close = "gw zellij close-pane"
+on_close = "./scripts/close-workspace-pane {path}"
 ```
 
 Edit `~/.grove/config.toml` directly to configure these hooks.
@@ -21,7 +21,7 @@ Edit `~/.grove/config.toml` directly to configure these hooks.
 |------|----------|------|---------|
 | `post_create` | `gw create` | After workspace creation | `./scripts/workspace-created {path}` |
 | `pre_delete` | `gw delete` | Before worktree removal | `./scripts/workspace-closing {path}` |
-| `on_close` | `gw go -c` | Close terminal pane | `gw zellij close-pane`, `tmux kill-pane` |
+| `on_close` | `gw go -c` | Close terminal pane | `./scripts/close-workspace-pane {path}`, `tmux kill-pane` |
 
 ### Placeholders
 

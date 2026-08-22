@@ -23,18 +23,23 @@ Grove does not embed a particular coding agent. Use lifecycle hooks to connect a
 [hooks]
 post_create = "./scripts/agent-workspace-created {path}"
 pre_delete = "./scripts/agent-workspace-closing {path}"
-on_close = "gw zellij close-pane"
+on_close = "./scripts/close-workspace-pane {path}"
 ```
 
 Hooks can prepare ignored files, notify an agent dashboard, persist external session metadata, or run any other workspace-level integration. See [hooks.md](hooks.md) and [plugins.md](plugins.md).
 
-## Agent dashboards and plugins
+## Agent dispatch plugin
 
-External plugins can use Grove's command protocol and environment variables without adding vendor-specific behavior to core. The [`gw-dash`](https://github.com/nicksenap/gw-dash) plugin is one example of a workspace dashboard:
+The [`gw-dispatch`](https://github.com/nicksenap/gw-dispatch) plugin creates a workspace and starts a selected coding agent there with an initial prompt:
 
 ```bash
-gw plugin install nicksenap/gw-dash
-gw dash
+gw plugin install nicksenap/gw-dispatch
+gw dispatch -n -r api,web -P "Implement login"
 ```
 
-See the plugin's own documentation for supported agent/session integrations.
+For editor workflows, [`gw-code`](https://github.com/igor-kupczynski/gw-code) generates and opens a multi-folder editor workspace:
+
+```bash
+gw plugin install igor-kupczynski/gw-code
+gw code my-workspace
+```

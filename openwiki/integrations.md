@@ -1,13 +1,13 @@
 ---
 type: "Reference"
 title: "Integrations"
-description: "Vendor-neutral Grove integration points, including external plugins, lifecycle hooks, coding agents, dashboards, and terminal multiplexers."
+description: "Vendor-neutral Grove integration points, including external plugins, lifecycle hooks, coding agents, and editors."
 tags: [grove, integrations, plugins, hooks, agents]
 ---
 
 # Integrations
 
-Grove core is a Git worktree orchestrator. Coding agents, terminal multiplexers, dashboards, notifications, and archival systems integrate through external plugins and lifecycle hooks rather than vendor-specific core behavior.
+Grove core is a Git worktree orchestrator. Coding agents, editors, dashboards, notifications, and other tools integrate through external plugins and lifecycle hooks rather than vendor-specific core behavior.
 
 ## Plugin model
 
@@ -24,20 +24,34 @@ Install released plugins by passing their real GitHub `OWNER/REPOSITORY` identif
 
 See [Plugin documentation](../docs/plugins.md) for installation, command dispatch, and authoring details.
 
-## Coding-agent integration
+## Example plugins
 
-Grove is agent-agnostic. Repository-specific instructions live in `AGENTS.md`, while reusable workflows such as review, testing, or release preparation belong in agent skills or an equivalent extension mechanism.
+### [gw-dispatch](https://github.com/nicksenap/gw-dispatch)
 
-A typical workflow is:
+`gw-dispatch` creates a Grove workspace and starts a selected coding agent in it with an initial prompt. It is agent-agnostic and supports built-in or user-defined agent commands.
 
 ```bash
-gw create agent-task -p backend -b feat/agent-task
-cd "$(gw go agent-task)"
-<your-agent-command>
-gw delete agent-task
+gw plugin install nicksenap/gw-dispatch
+gw dispatch -n -r api,web -P "Implement login"
+gw dispatch -b feat/login -p backend --agent pi -P "Implement login"
 ```
 
-Use hooks when an external agent system needs workspace lifecycle events:
+### [gw-code](https://github.com/igor-kupczynski/gw-code)
+
+`gw-code` generates a multi-folder editor workspace for a Grove workspace and opens it in VS Code. Its configuration can select another compatible editor executable.
+
+```bash
+gw plugin install igor-kupczynski/gw-code
+gw code my-workspace
+gw code my-workspace --refresh
+gw code my-workspace --path
+```
+
+## Coding-agent guidance
+
+Repository-specific instructions live in `AGENTS.md`, while reusable workflows such as review, testing, or release preparation belong in agent skills or an equivalent extension mechanism.
+
+Use hooks when an external system needs workspace lifecycle events:
 
 ```toml
 [hooks]
@@ -45,46 +59,7 @@ post_create = "./scripts/workspace-created {path} {name}"
 pre_delete = "./scripts/workspace-closing {path} {name}"
 ```
 
-Possible integrations include preparing ignored files, publishing task metadata, recording an external session, or notifying a dashboard. Grove does not prescribe the storage format or agent vendor.
-
-## Terminal multiplexer integration
-
-The `gw-zellij` plugin demonstrates terminal integration:
-
-```bash
-gw plugin install nicksenap/gw-zellij
-```
-
-```toml
-[hooks]
-on_close = "gw zellij close-pane"
-```
-
-Other terminal multiplexers can use the same hook contract.
-
-## Dashboards
-
-The `gw-dash` plugin provides a workspace TUI:
-
-```bash
-gw plugin install nicksenap/gw-dash
-gw dash
-```
-
-Dashboard-specific agent/session support belongs to the dashboard plugin and should be documented there rather than in Grove core.
-
-## Workspace archival
-
-The `gw-archive` plugin provides external workspace export and restore workflows:
-
-```bash
-gw plugin install nicksenap/gw-archive
-gw archive export <name> <file>
-gw archive import <file>
-gw archive list
-```
-
-Archive formats and retention policy belong to the plugin rather than Grove core.
+Possible integrations include preparing ignored files, publishing task metadata, recording an external session, or notifying another service. Grove does not prescribe the storage format or tool vendor.
 
 ## Source provenance
 
@@ -124,7 +99,7 @@ pre_delete = "gw notify closing {path} {name}"
 2. Accept documented placeholders explicitly.
 3. Keep hooks fast or configure `stream` and `timeout` metadata.
 4. Fail gracefully when optional external tooling is unavailable.
-5. Keep vendor-specific state and behavior outside Grove core.
+5. Keep tool-specific state and behavior outside Grove core.
 6. Test against real Git worktrees.
 
 ## Troubleshooting

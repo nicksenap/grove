@@ -1,91 +1,76 @@
 # Plugins
 
-Grove supports external plugins that add new commands. Plugins are standalone executables named `gw-<name>` — when you run `gw foo`, Grove looks for a `gw-foo` binary and executes it.
+Grove supports external plugins that add commands. A plugin is a standalone executable named `gw-<name>`; when a built-in command does not match, `gw foo` resolves and executes `gw-foo`.
 
 ## Install methods
 
 ### From GitHub
 
 ```bash
-gw plugin install nicksenap/gw-dash
-gw plugin install github.com/user/gw-something
+gw plugin install nicksenap/gw-dispatch
+gw plugin install igor-kupczynski/gw-code
 ```
 
-This downloads the latest release binary for your OS/architecture from the repo's GitHub Releases. The naming convention follows [goreleaser](https://goreleaser.com/) defaults: `gw-dash_0.1.0_darwin_arm64.tar.gz`.
-
-Public releases require no token: Grove uses GitHub's public `releases/latest` redirect and downloads conventionally named assets directly without consuming the REST API quota.
+Grove downloads the latest release binary for the current OS and architecture. Public releases require no token.
 
 ### Manual
 
-Drop any executable named `gw-<name>` into `~/.grove/plugins/`:
+Put an executable named `gw-<name>` in `~/.grove/plugins/` or on `$PATH`:
 
 ```bash
 cp my-plugin ~/.grove/plugins/gw-myplugin
 chmod +x ~/.grove/plugins/gw-myplugin
 ```
 
-Or place it anywhere on your `$PATH`.
-
 ## Managing plugins
 
 ```bash
-gw plugin list                    # list installed plugins
-gw plugin upgrade dash            # re-fetch latest release
-gw plugin upgrade                 # upgrade all plugins
-gw plugin remove dash             # uninstall
+gw plugin list
+gw plugin upgrade dispatch
+gw plugin upgrade
+gw plugin remove dispatch
 ```
 
-`upgrade` works for plugins installed via `gw plugin install` — it remembers the source repo. Manually installed plugins are skipped.
+`upgrade` works for plugins installed through `gw plugin install`; manually installed plugins are skipped.
 
 ## How plugins work
 
-When you run `gw <name>`, Grove first checks its built-in commands. If no match is found, it looks for `gw-<name>` in:
+Grove checks built-in commands first, then searches:
 
 1. `~/.grove/plugins/`
 2. `$PATH`
 
-If found, Grove replaces its own process with the plugin (`exec`), passing these environment variables:
+The plugin receives control of the terminal and these environment variables:
 
 | Variable | Description |
 |---|---|
 | `GROVE_DIR` | Path to `~/.grove` |
 | `GROVE_CONFIG` | Path to `config.toml` |
 | `GROVE_STATE` | Path to `state.json` |
-| `GROVE_WORKSPACE` | Current workspace name (if cwd is inside one) |
+| `GROVE_WORKSPACE` | Current workspace name, when cwd is inside one |
 
-The plugin gets full control of the terminal — this means TUI plugins (like `gw-dash`) work seamlessly.
+## Example plugins
 
-## First-party plugins
+### [gw-dispatch](https://github.com/nicksenap/gw-dispatch)
 
-### gw-zellij
+Agent-agnostic plugin that creates a Grove workspace and starts a selected coding agent there with an initial prompt.
 
-Zellij terminal multiplexer integration.
-
-- **Repo:** https://github.com/nicksenap/gw-zellij
-- **Install:** `gw plugin install nicksenap/gw-zellij`
-
-| Command | Description |
-|---|---|
-| `gw zellij close-pane` | Close current Zellij pane |
-
-Recommended hooks:
-
-```toml
-[hooks]
-on_close = "gw zellij close-pane"
+```bash
+gw plugin install nicksenap/gw-dispatch
+gw dispatch -n -r api,web -P "Implement login"
+gw dispatch -b feat/login -p backend --agent pi -P "Implement login"
 ```
 
-### gw-dash
+### [gw-code](https://github.com/igor-kupczynski/gw-code)
 
-Workspace dashboard and TUI.
+Generates a multi-folder editor workspace for a Grove workspace and opens it in VS Code. Its configuration can select another compatible editor executable.
 
-- **Repo:** https://github.com/nicksenap/gw-dash
-- **Install:** `gw plugin install nicksenap/gw-dash`
-- **Usage:** `gw dash`
-
-## Quick setup
-
-Install the plugins you need with `gw plugin install`, then add their recommended lifecycle hooks to `~/.grove/config.toml`.
+```bash
+gw plugin install igor-kupczynski/gw-code
+gw code my-workspace
+gw code my-workspace --refresh
+gw code my-workspace --path
+```
 
 ## Writing a plugin
 
@@ -94,15 +79,11 @@ A plugin can be any executable in any language. The simplest plugin is a shell s
 ```bash
 #!/bin/sh
 # ~/.grove/plugins/gw-hello
-echo "Hello! GROVE_DIR=$GROVE_DIR"
+printf 'Hello from workspace %s\n' "${GROVE_WORKSPACE:-none}"
 ```
 
-For distributable plugins, use Go with [goreleaser](https://goreleaser.com/) so that `gw plugin install` can find the right binary. See [gw-dash](https://github.com/nicksenap/gw-dash) for a reference implementation.
+For released plugins, publish binaries using the conventional `gw-<name>` executable name and release archives supported by `gw plugin install`.
 
 ### Reading Grove state
 
-Plugins read Grove's data files directly — no shared libraries or IPC:
-
-- **`$GROVE_DIR/state.json`** — array of workspaces, each with name, path, branch, and repos
-- **`$GROVE_DIR/config.toml`** — global config (repo_dirs, workspace_dir, presets)
-- **`$GROVE_DIR/status/*.json`** — live agent state files (for dashboard-style plugins)
+Plugins can read `GROVE_STATE` for workspace data and `GROVE_CONFIG` for configuration. Treat these files as Grove-owned: use Grove commands for mutations rather than editing state directly.

@@ -247,7 +247,7 @@ gw delete feat-login
   - Calls `git worktree remove --force <path>` to remove the worktree
   - Calls `git branch -D <branch>` to delete the branch
 - Removes remaining Grove-owned workspace metadata and the workspace from state
-- Optionally: runs `on_close` hook (e.g., `gw zellij close-pane`)
+- Optionally: runs the configured `on_close` hook (for example, a terminal-specific pane-closing script)
 
 ### Code Flow
 
