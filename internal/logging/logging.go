@@ -69,33 +69,21 @@ func SetLiveWriter(w io.Writer) {
 
 // Debug logs a debug message (only when verbose).
 func Debug(format string, args ...interface{}) {
-	if !verbose || logFile == nil {
-		return
-	}
 	write("DEBUG", format, args...)
 }
 
 // Info logs an info message.
 func Info(format string, args ...interface{}) {
-	if logFile == nil {
-		return
-	}
 	write("INFO", format, args...)
 }
 
 // Warn logs a warning message.
 func Warn(format string, args ...interface{}) {
-	if logFile == nil {
-		return
-	}
 	write("WARN", format, args...)
 }
 
 // Error logs an error message.
 func Error(format string, args ...interface{}) {
-	if logFile == nil {
-		return
-	}
 	write("ERROR", format, args...)
 }
 
@@ -103,7 +91,7 @@ func write(level, format string, args ...interface{}) {
 	mu.Lock()
 	defer mu.Unlock()
 
-	if logFile == nil {
+	if logFile == nil || (level == "DEBUG" && !verbose) {
 		return
 	}
 
