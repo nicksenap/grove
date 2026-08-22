@@ -5,6 +5,7 @@ import (
 	"os/exec"
 
 	"github.com/nicksenap/grove/internal/config"
+	"github.com/nicksenap/grove/internal/gitops"
 	"github.com/nicksenap/grove/internal/state"
 	"github.com/nicksenap/grove/internal/stats"
 )
@@ -26,6 +27,13 @@ func NewService() *Service {
 		RunCmd:       prodRunCmd,
 		RunCmdSilent: prodRunCmdSilent,
 	}
+}
+
+func (s *Service) removeWorktree(repo, path string, force bool) error {
+	if s.RemoveWorktree != nil {
+		return s.RemoveWorktree(repo, path, force)
+	}
+	return gitops.WorktreeRemove(repo, path, force)
 }
 
 func prodRunCmd(dir, cmdStr string) error {
