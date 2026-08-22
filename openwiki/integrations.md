@@ -20,7 +20,7 @@ Keeping tool logic out of Grove core makes it:
 - **Extensible** — Anyone can write plugins without modifying Grove
 - **Composable** — Mix and match plugins (Claude + Zellij + Dash)
 
-Plugins register themselves as lifecycle hook handlers via `gw wizard` or manual config.
+Plugins are invoked by lifecycle hooks configured in `~/.grove/config.toml`.
 
 ---
 
@@ -36,7 +36,6 @@ Full integration with Claude Code for memory sync, session tracking, and .md fil
 
 ```bash
 gw plugin install nicksenap/gw-claude
-gw wizard  # Prompts to configure hooks
 ```
 
 #### Features
@@ -57,7 +56,7 @@ gw wizard  # Prompts to configure hooks
 
 #### Usage
 
-Manual hook configuration (if not using `gw wizard`):
+Lifecycle hook configuration:
 
 ```toml
 # ~/.grove/config.toml
@@ -100,7 +99,6 @@ Integrates with Zellij terminal multiplexer for automatic workspace pane managem
 
 ```bash
 gw plugin install nicksenap/gw-zellij
-gw wizard  # Prompts to configure hooks
 ```
 
 #### Features

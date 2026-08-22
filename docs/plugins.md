@@ -111,9 +111,7 @@ Kanban-style TUI dashboard for monitoring Claude Code agents across workspaces.
 
 ## Quick setup
 
-```bash
-gw wizard    # detects your tools, installs plugins, configures hooks
-```
+Install the plugins you need with `gw plugin install`, then add their recommended lifecycle hooks to `~/.grove/config.toml`.
 
 ## Writing a plugin
 

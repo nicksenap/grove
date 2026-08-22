@@ -116,6 +116,40 @@ func TestNoHookBypassesLifecycleForCreateAndDelete(t *testing.T) {
 	assertOrder(t, order, "create", "delete")
 }
 
+func TestCloseRequiresConfiguredHook(t *testing.T) {
+	svc := Service{RunHook: func(string, lifecycle.Vars) error { return lifecycle.ErrNoHook }}
+
+	result, err := svc.Close(CloseRequest{})
+	if !errors.Is(err, ErrHookNotConfigured) || result.Closed {
+		t.Fatalf("result = %+v, error = %v", result, err)
+	}
+}
+
+func TestCloseReturnsOnCloseFailure(t *testing.T) {
+	hookErr := &lifecycle.HookError{Hook: "on_close", Err: errors.New("failed")}
+	svc := Service{RunHook: func(name string, vars lifecycle.Vars) error {
+		if name != "on_close" || vars != (lifecycle.Vars{}) {
+			t.Fatalf("unexpected hook call: %s %+v", name, vars)
+		}
+		return hookErr
+	}}
+
+	result, err := svc.Close(CloseRequest{})
+	var operationHookErr *HookError
+	if !errors.As(err, &operationHookErr) || operationHookErr.Hook != "on_close" || !errors.Is(err, hookErr) || result.Closed {
+		t.Fatalf("result = %+v, error = %v", result, err)
+	}
+}
+
+func TestCloseReportsSuccess(t *testing.T) {
+	svc := Service{RunHook: func(string, lifecycle.Vars) error { return nil }}
+
+	result, err := svc.Close(CloseRequest{})
+	if err != nil || !result.Closed {
+		t.Fatalf("result = %+v, error = %v", result, err)
+	}
+}
+
 func TestCreateStateReloadErrorIsNotAHookError(t *testing.T) {
 	var order []string
 	deps := &fakeWorkspace{workspace: models.Workspace{Name: "feature"}, order: &order, getErr: errors.New("state unavailable")}

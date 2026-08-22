@@ -13,7 +13,7 @@ pre_delete = "gw claude sync harvest {path}"
 on_close = "gw zellij close-pane"
 ```
 
-Run `gw wizard` to configure these interactively.
+Edit `~/.grove/config.toml` directly to configure these hooks.
 
 ### Available hooks
 

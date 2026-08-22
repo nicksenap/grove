@@ -29,9 +29,7 @@ pre_delete = "gw claude sync harvest {path}"
 on_close = "gw zellij close-pane"
 ```
 
-Or just run `gw wizard` to do this interactively.
-
-That gives you: memory sync on create/delete, CLAUDE.md in every workspace, session tracking dashboard, and Zellij pane close on navigate-away.
+That gives you memory sync on create/delete, `CLAUDE.md` in every workspace, session tracking, and Zellij pane closing on navigate-away.
 
 ---
 
@@ -45,10 +43,10 @@ Install the [gw-claude](https://github.com/nicksenap/gw-claude) plugin to get:
 
 ```bash
 gw plugin install nicksenap/gw-claude
-gw wizard   # configures hooks interactively
+gw claude hook install
 ```
 
-Or configure manually in `~/.grove/config.toml`:
+Configure the lifecycle hooks in `~/.grove/config.toml`:
 
 ```toml
 [hooks]

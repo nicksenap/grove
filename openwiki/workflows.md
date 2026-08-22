@@ -259,7 +259,7 @@ gw delete feat-login
 3. **`internal/workspace/workspace.go`** — `Delete()` method
    - Calls `gitops.DeleteWorktree()` for each repo
    - Calls `state.DeleteWorkspace()` to remove from state
-4. **`internal/lifecycle/lifecycle.go`** — Fires `on_close` hook (if closing via `gw go -c`)
+4. **`internal/operations/service.go`** — Applies the required `on_close` policy, then delegates hook execution to `internal/lifecycle/lifecycle.go`
 
 ### Key Decisions When Modifying
 

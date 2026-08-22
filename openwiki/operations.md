@@ -308,15 +308,13 @@ The plugin gets full control of the terminal (no output capture). This enables T
 
 ### Plugin Lifecycle Hooks
 
-Plugins can register themselves as lifecycle hook handlers. Example:
+Plugins can be invoked by lifecycle hooks. Example:
 
 ```bash
 gw plugin install nicksenap/gw-claude
-gw wizard
-# → Prompts to configure gw-claude hooks (post_create, pre_delete, etc.)
 ```
 
-The plugin adds its hook command to `config.toml`, and Grove fires it normally.
+Add the plugin's recommended hook commands to `config.toml`, and Grove fires them normally.
 
 ### First-Party Plugins
 
@@ -345,21 +343,6 @@ Archive workspaces for later replay.
 ```bash
 gw plugin install nicksenap/gw-archive
 ```
-
----
-
-## Interactive Setup: `gw wizard`
-
-Configure plugins and hooks interactively:
-
-```bash
-gw wizard
-```
-
-Guides you through:
-1. Install plugins (offers list of available plugins)
-2. Configure hooks (maps plugin commands to lifecycle events)
-3. Sets up shell integration if needed
 
 ---
 

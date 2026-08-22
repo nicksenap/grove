@@ -26,6 +26,10 @@ type WorkspaceStore interface {
 	GetWorkspace(name string) (*models.Workspace, error)
 }
 
+// ErrHookNotConfigured reports that an operation requires a lifecycle hook that
+// is absent (or globally disabled).
+var ErrHookNotConfigured = errors.New("required lifecycle hook not configured")
+
 // Service coordinates workspace primitives and global lifecycle hooks.
 type Service struct {
 	Workspace WorkspaceService
@@ -135,24 +139,52 @@ func (s *Service) Delete(req DeleteRequest) (DeleteResult, error) {
 	return result, nil
 }
 
-func (s *Service) runHook(name string, vars lifecycle.Vars) error {
-	runHook := s.RunHook
-	if runHook == nil {
-		runHook = lifecycle.Run
+// CloseRequest is the typed input for the command-specific close operation.
+type CloseRequest struct{}
+
+// CloseResult reports whether the configured close hook ran successfully.
+type CloseResult struct {
+	Closed bool
+}
+
+// Close invokes the required on_close hook through operation-level policy.
+func (s *Service) Close(CloseRequest) (CloseResult, error) {
+	err := s.callHook("on_close", lifecycle.Vars{})
+	if errors.Is(err, lifecycle.ErrNoHook) {
+		return CloseResult{}, fmt.Errorf("%w: on_close", ErrHookNotConfigured)
 	}
-	err := runHook(name, vars)
+	if err != nil {
+		return CloseResult{}, &HookError{Hook: "on_close", Err: err}
+	}
+	return CloseResult{Closed: true}, nil
+}
+
+func (s *Service) runHook(name string, vars lifecycle.Vars) error {
+	err := s.callHook(name, vars)
 	if err == nil || errors.Is(err, lifecycle.ErrNoHook) {
 		return nil
 	}
 	if lifecycle.ShouldAbort(err) {
 		return err
 	}
+	s.warn(err)
+	return nil
+}
+
+func (s *Service) callHook(name string, vars lifecycle.Vars) error {
+	runHook := s.RunHook
+	if runHook == nil {
+		runHook = lifecycle.Run
+	}
+	return runHook(name, vars)
+}
+
+func (s *Service) warn(err error) {
 	warn := s.Warn
 	if warn == nil {
 		warn = console.Warning
 	}
 	warn(err.Error())
-	return nil
 }
 
 func expectedWorkspace(req CreateRequest) models.Workspace {

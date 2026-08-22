@@ -293,7 +293,6 @@ Test fixtures often create temporary directories with real git repos, allowing t
 | `cmd/status.go` | Status query | Calls `workspace.Status()` |
 | `cmd/sync_cmd.go` | Rebase | Calls `workspace.Sync()` |
 | `cmd/preset.go` | Preset management | CRUD for presets |
-| `cmd/wizard.go` | Interactive setup | Guides plugin/hook config |
 | `internal/workspace/workspace.go` | Core orchestration | 27K — main business logic |
 | `internal/workspace/workspace_test.go` | Workspace tests | 51K — comprehensive test suite |
 | `internal/state/state.go` | State persistence | ~200 lines, atomic writes |
