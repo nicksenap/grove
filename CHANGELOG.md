@@ -1,5 +1,18 @@
 # Changelog
 
+## v1.1.13
+
+### Improvements
+
+- Repository-selecting commands now use the same bounded recursive discovery, so nested repositories are found consistently without a separate exploration step.
+- Workspace lifecycle commands now share one operation path, keeping hook ordering and failure handling consistent across create, delete, and `gw go --delete`.
+
+### Maintenance
+
+- Removed the unfinished built-in MCP server, automatic `.mcp.json` generation, and its SQLite dependency. Agent integrations should use Grove's CLI and plugin interface instead.
+- Removed the obsolete interactive `gw explore` and `gw wizard` commands; repository discovery is automatic, while plugins and hooks are configured explicitly.
+- Split workspace orchestration and tests into focused files to make safety-sensitive mutation paths easier to review and maintain.
+
 ## v1.1.12
 
 ### Features
