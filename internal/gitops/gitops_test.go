@@ -308,6 +308,73 @@ func TestCurrentBranch(t *testing.T) {
 	}
 }
 
+func TestSwitch(t *testing.T) {
+	repo := initTestRepo(t)
+	home := currentBranch(t, repo)
+
+	if err := CreateBranch(repo, "feat/other", ""); err != nil {
+		t.Fatalf("create branch: %v", err)
+	}
+	if err := Switch(repo, "feat/other", false); err != nil {
+		t.Fatalf("switch: %v", err)
+	}
+	got, err := CurrentBranch(repo)
+	if err != nil {
+		t.Fatalf("current branch: %v", err)
+	}
+	if got != "feat/other" {
+		t.Errorf("branch after switch: got %q, want feat/other", got)
+	}
+
+	if err := Switch(repo, home, false); err != nil {
+		t.Fatalf("switch back: %v", err)
+	}
+}
+
+func TestSwitchDiscard(t *testing.T) {
+	repo := initTestRepo(t)
+	home := currentBranch(t, repo)
+	original, err := os.ReadFile(filepath.Join(repo, "README.md"))
+	if err != nil {
+		t.Fatalf("read README: %v", err)
+	}
+
+	if err := CreateBranch(repo, "feat/other", ""); err != nil {
+		t.Fatalf("create branch: %v", err)
+	}
+	if err := Switch(repo, "feat/other", false); err != nil {
+		t.Fatalf("switch: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "README.md"), []byte("dirty"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	if err := Switch(repo, home, true); err != nil {
+		t.Fatalf("switch --discard-changes: %v", err)
+	}
+	got, err := CurrentBranch(repo)
+	if err != nil {
+		t.Fatalf("current branch: %v", err)
+	}
+	if got != home {
+		t.Errorf("branch: got %q, want %q", got, home)
+	}
+	content, err := os.ReadFile(filepath.Join(repo, "README.md"))
+	if err != nil {
+		t.Fatalf("read README: %v", err)
+	}
+	if string(content) != string(original) {
+		t.Errorf("README after discard: got %q, want %q", content, original)
+	}
+}
+
+func TestSwitchMissingBranch(t *testing.T) {
+	repo := initTestRepo(t)
+	if err := Switch(repo, "does-not-exist", false); err == nil {
+		t.Fatal("expected error switching to missing branch")
+	}
+}
+
 func TestFetch(t *testing.T) {
 	repo := initTestRepo(t)
 

@@ -86,6 +86,7 @@ gw create -b feat/login -r svc-a,svc-b    # …or an ad-hoc repo list
 gw go my-feature       # cd into the workspace
 gw status my-feature   # git status across every repo
 gw sync my-feature     # rebase all repos onto their base branch
+gw reset my-feature    # switch every repo back to the workspace branch, then sync
 gw run my-feature      # run dev processes (TUI)
 
 # Clean up when done (destructive; use a pre_delete hook to enforce policy)

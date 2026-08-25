@@ -79,6 +79,27 @@ func TestLoggingSync(t *testing.T) {
 	}
 }
 
+func TestLoggingReset(t *testing.T) {
+	readLog := setupLogging(t)
+	env := setupTestEnv(t)
+	env.createRepoWithRemote("api")
+
+	err := env.createWorkspace("reset-log-ws", "feat/resetlog", []string{"api"})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	err = env.svc.Reset("reset-log-ws", false)
+	if err != nil {
+		t.Fatalf("reset: %v", err)
+	}
+
+	log := readLog()
+	if !strings.Contains(log, `resetting workspace "reset-log-ws"`) {
+		t.Errorf("log should contain reset start, got:\n%s", log)
+	}
+}
+
 func TestLoggingAddAndRemoveRepos(t *testing.T) {
 	readLog := setupLogging(t)
 	env := setupTestEnv(t)

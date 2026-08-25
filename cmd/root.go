@@ -64,6 +64,7 @@ func init() {
 		reposCmd,
 		renameCmd,
 		syncCmd,
+		resetCmd,
 		doctorCmd,
 		statsCmd,
 		shellInitCmd,

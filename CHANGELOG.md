@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Features
+
+- `gw reset [NAME]` puts every worktree back on the branch Grove recorded for the workspace, then runs the same rebase as `gw sync`. Repos that wandered off and are dirty stay put. `--discard` throws away tracked local changes so those can switch too. `gw sync` still rebases whatever branch you are on.
+
 ## v1.1.13
 
 ### Improvements
