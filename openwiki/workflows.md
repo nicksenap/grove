@@ -98,7 +98,7 @@ The `create` command also supports:
    - Validates selections and branch name
    - Calls `workspace.Service.Create()` or `workspace.Service.CreateWithOpts()`
 
-2. **`internal/workspace/workspace.go`** — Core creation logic
+2. **`internal/workspace/create.go`** (through `workspace.Service`) — Core creation logic
    - **`CreateWithOpts()`** — Main orchestrator
      - Checks for duplicate workspace (error if exists)
      - Resolves branch name (default: workspace name with `/` → `-`)
@@ -159,6 +159,28 @@ gw sync feat-login
 - For each repo: runs `git rebase origin/<base-branch>`
 - Useful after new commits are pushed to main/master
 
+### Return Repositories to the Workspace Branch
+
+```bash
+# Detect the workspace from the current directory
+gw reset
+
+# Or name it explicitly
+gw reset feat-login
+
+# Allow switching away from a different branch with tracked local changes
+gw reset feat-login --discard
+```
+
+`reset` first resolves the workspace, then processes its repositories concurrently. A repository already on its recorded workspace branch goes directly through the normal sync path. A repository on another branch is switched back only when its working tree is clean; dirty repositories are skipped unless `--discard` is supplied. Detached `HEAD` is treated as a branch different from the recorded branch. After a successful switch, reset runs the same fetch/status/base-branch/rebase behavior as `gw sync`, including per-repository `pre_sync` and `post_sync` commands. Failures are reported per repository while the other repositories continue.
+
+**Code flow**:
+
+- **`cmd/reset.go`** — Resolves an explicit name or auto-detects from the current directory and passes the `--discard` flag to the service.
+- **`internal/workspace/reset.go`** — Compares the live branch with the recorded branch, protects dirty worktrees, switches with `gitops.Switch`, and calls `syncOneRepo`.
+- **`internal/workspace/sync.go`** — Shared sync implementation: fetches, skips dirty trees, determines the base branch, and rebases when behind.
+- **`internal/gitops/gitops.go`** — Provides the branch/status/switch subprocess wrappers used by reset.
+
 ### Add a Repo to Existing Workspace
 
 ```bash
@@ -183,12 +205,13 @@ gw remove-repo feat-login -r svc-a
 
 - **`cmd/status.go`** — Calls `workspace.Service.Status()` and displays results
 - **`cmd/sync_cmd.go`** — Calls `workspace.Service.Sync()` for rebase
+- **`cmd/reset.go`** — Resolves the workspace and calls `workspace.Service.Reset()`; `--discard` controls switching dirty repos
 - **`cmd/addrepo.go`** / **`cmd/removerepo.go`** — Add/remove logic
-- **`internal/workspace/workspace.go`**
-  - `Status()` — Spawns goroutines for concurrent `git status` calls
-  - `Sync()` — Spawns goroutines for concurrent `git rebase` calls
-  - `AddRepo()` — Calls `CreateWorktree()` and persists updated workspace
-  - `RemoveRepo()` — Calls `gitops.DeleteWorktree()` and persists update
+- **`internal/workspace/status.go`** — Spawns goroutines for concurrent `git status` calls
+- **`internal/workspace/sync.go`** — Spawns goroutines for concurrent `git rebase` calls
+- **`internal/workspace/reset.go`** — Compares each live branch with the recorded branch, skips dirty wanderers unless requested, switches clean repos, and invokes sync
+- **`internal/workspace/repos.go`** — Add/remove workspace repositories
+- **`internal/gitops/gitops.go`** — Provides the Git subprocess wrappers, including `Switch()`
 
 ### Key Decisions When Modifying
 
@@ -253,7 +276,7 @@ gw delete feat-login
 
 1. **`cmd/delete.go`** — Runs `pre_delete` and orchestrates destructive deletion
 2. **`internal/lifecycle/lifecycle.go`** — Fires `pre_delete` hook with `{path}` placeholder
-3. **`internal/workspace/workspace.go`** — `Delete()` method
+3. **`internal/workspace/remove.go`** — `Delete()` method
    - Calls `gitops.DeleteWorktree()` for each repo
    - Calls `state.DeleteWorkspace()` to remove from state
 4. **`internal/operations/service.go`** — Applies the required `on_close` policy, then delegates hook execution to `internal/lifecycle/lifecycle.go`
@@ -318,7 +341,7 @@ gw rename feat-login --to login-v2
 ### Code Flow
 
 - **`cmd/rename.go`** — Parses the new name and calls `workspace.Service.Rename()`
-- **`internal/workspace/workspace.go`** — `Rename()` method
+- **`internal/workspace/rename.go`** — `Rename()` method
   - Renames the workspace directory on disk
   - Updates the `Workspace.Name` and all `RepoWorktree.WorktreePath` entries
   - Persists updated state

@@ -46,6 +46,7 @@ Cobra command handlers that:
 - `cmd/delete.go` — Destroy workspace (clean up worktrees + branches)
 - `cmd/status.go` — Show git status across repos
 - `cmd/sync_cmd.go` — Rebase all repos
+- `cmd/reset.go` — Return repos to their recorded workspace branch, then sync
 - `cmd/add_repo.go`, `cmd/remove_repo.go` — Modify existing workspace
 - `cmd/run.go` — Launch interactive TUI for running per-repo processes
 - `cmd/preset.go` — Manage presets (named repo groups)
@@ -56,6 +57,7 @@ Cobra command handlers that:
 - `Delete()` — Clean up worktrees and branches
 - `Status()` — Query git status across repos (concurrent)
 - `Sync()` — Rebase all repos onto their base branches
+- `Reset()` — Switch repos to their recorded workspace branches, then sync
 - `AddRepo()`, `RemoveRepo()` — Modify existing workspace
 - `Run()` — Execute per-repo commands (from `.grove.toml` [run] sections)
 
@@ -133,6 +135,7 @@ Subprocess wrappers around git commands:
 - `Clone()` — Clone a remote repo
 - `CreateWorktree()` — Create a new worktree
 - `Checkout()` — Check out a branch
+- `Switch()` — Switch a worktree to a branch, optionally discarding tracked changes
 - `Fetch()` — Fetch latest refs
 - `Status()` — Get short git status
 - `IsGitURL()` — Validate git URL format
@@ -192,7 +195,7 @@ Structured debug logging:
    - Validates that `svc-a` and `svc-b` exist
    - Calls `workspace.Service.Create()`
 
-2. **internal/workspace/workspace.go**
+2. **internal/workspace/create.go** (through `workspace.Service`)
    - Checks if `my-feature` already exists (error if so)
    - For each repo (`svc-a`, `svc-b`):
      - Calls `gitops.CreateWorktree(sourceRepo, workspacePath, branchName)`
@@ -240,10 +243,14 @@ Hooks are not an afterthought; they're central to the design:
 - Support shell integration (terminal multiplexer panes)
 - Allow automation (CI/CD on workspace creation)
 
-### 6. **Plugin Extensibility**
+### 6. **Workspace Operations Are Split by Responsibility**
+
+The workspace service remains the orchestration boundary, but its operations are implemented in focused files such as `internal/workspace/create.go`, `status.go`, `sync.go`, `remove.go`, `rename.go`, and `reset.go`. This keeps command-specific lifecycle behavior close to its implementation while preserving one service API for the CLI. The reset path uses `internal/gitops.Switch()` to restore each recorded branch before reusing the existing sync operation.
+
+### 7. **Plugin Extensibility**
 Rather than embedding tool-specific logic for coding agents, terminal multiplexers, or dashboards, Grove exposes hooks and environment variables. Plugins decide what to do with workspace lifecycle events.
 
-### 7. **Per-Repo Configuration**
+### 8. **Per-Repo Configuration**
 Each repo can have its own `.grove.toml` to define:
 - Default base branch (override main/master)
 - Setup commands to run after worktree creation
@@ -276,7 +283,7 @@ No explicit queuing or scheduling — the OS scheduler handles fairness.
 ## Testing
 
 - **Unit tests**: `*_test.go` files throughout (`cmd/`, `internal/`), testing individual functions
-- **Integration tests**: `internal/workspace/workspace_test.go` tests the full workspace lifecycle
+- **Integration tests**: focused `internal/workspace/*_test.go` files test each workspace operation, including `reset_test.go` for branch restoration and discard behavior
 - **End-to-end tests**: `/e2e/run.sh` spins up a temporary repo directory and exercises real `gw` commands
 - **Run tests**: `just check` (tests + vet), `just e2e` (end-to-end)
 
@@ -292,9 +299,11 @@ Test fixtures often create temporary directories with real git repos, allowing t
 | `cmd/delete.go` | Cleanup | Removes worktrees and branches |
 | `cmd/status.go` | Status query | Calls `workspace.Status()` |
 | `cmd/sync_cmd.go` | Rebase | Calls `workspace.Sync()` |
+| `cmd/reset.go` | Workspace recovery | Calls `workspace.Service.Reset()`; supports `--discard` |
 | `cmd/preset.go` | Preset management | CRUD for presets |
-| `internal/workspace/workspace.go` | Core orchestration | 27K — main business logic |
-| `internal/workspace/workspace_test.go` | Workspace tests | 51K — comprehensive test suite |
+| `internal/workspace/service.go` | Core service boundary | Coordinates focused workspace operations |
+| `internal/workspace/reset.go` | Workspace recovery | Restores recorded branches, skips dirty wanderers, then syncs |
+| `internal/workspace/*_test.go` | Workspace tests | Focused tests by operation, including `reset_test.go` |
 | `internal/state/state.go` | State persistence | ~200 lines, atomic writes |
 | `internal/models/models.go` | Data structures | ~300 lines, JSON serialization |
 | `internal/config/config.go` | Config loading | TOML parsing, legacy migration |

@@ -158,7 +158,8 @@ All repos are discovered once at command start via `internal/discover/`, then ma
 - `cmd/root.go` — Cobra setup and command registration
 - `cmd/create.go` — Workspace creation
 - `cmd/delete.go` — Cleanup
-- `internal/workspace/workspace.go` — Core orchestration logic
+- `internal/workspace/service.go` — Core service boundary
+- `internal/workspace/create.go`, `sync.go`, `reset.go` — Focused workspace operations
 - `internal/state/state.go` — State persistence
 - `internal/models/models.go` — Data structures (Workspace, Preset, Hook, Config)
 - `internal/config/config.go` — Config file loading
