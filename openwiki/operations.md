@@ -479,10 +479,12 @@ just check
 # or: go test ./...
 ```
 
-Test a single package:
+Test the workspace package:
 ```bash
 go test ./internal/workspace -v
 ```
+
+The workspace tests are split by responsibility (`create_test.go`, `doctor_test.go`, `remove_test.go`, `rename_test.go`, `repos_test.go`, `status_test.go`, `sync_test.go`, and `reset_test.go`), so run the focused file's package tests when changing one operation. `reset_test.go` covers branch restoration and the `--discard` safety path.
 
 Test a single test function:
 ```bash
