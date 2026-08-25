@@ -643,7 +643,7 @@ else
     fail "dirty wanderer should stay on feat/wander2, got: ${dirty_branch}"
 fi
 
-gw delete reset-ws --force 2>&1
+gw delete reset-ws 2>&1
 
 # ---------------------------------------------------------------------------
 # Test: doctor (healthy state)
