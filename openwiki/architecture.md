@@ -284,7 +284,7 @@ No explicit queuing or scheduling — the OS scheduler handles fairness.
 
 - **Unit tests**: `*_test.go` files throughout (`cmd/`, `internal/`), testing individual functions
 - **Integration tests**: focused `internal/workspace/*_test.go` files test each workspace operation, including `reset_test.go` for branch restoration and discard behavior
-- **End-to-end tests**: `/e2e/run.sh` spins up a temporary repo directory and exercises real `gw` commands
+- **End-to-end tests**: `e2e/` invokes the compiled `gw` binary against isolated temporary homes and git fixtures
 - **Run tests**: `just check` (tests + vet), `just e2e` (end-to-end)
 
 Test fixtures often create temporary directories with real git repos, allowing tests to verify worktree creation and cleanup.
