@@ -495,9 +495,10 @@ go test ./internal/workspace -run TestCreateWorkspace -v
 
 ```bash
 just e2e
+GW_BIN="$PWD/gw" go test ./e2e -run TestCreateWorkspace -count=1 -v
 ```
 
-Creates temporary directories with real git repos and exercises `gw` commands.
+Each scenario uses an isolated temporary `HOME` and real git fixtures, then invokes the compiled `gw` binary. The public GitHub HTTPS clone is opt-in via `GROVE_EXTERNAL_E2E=1`.
 
 ### Code Coverage
 

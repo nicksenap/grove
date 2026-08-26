@@ -173,7 +173,7 @@ All repos are discovered once at command start via `internal/discover/`, then ma
 ```bash
 just check         # Run tests + vet
 just build         # Build the gw binary
-just e2e           # Run end-to-end tests
+just e2e           # Run Go end-to-end tests against the gw binary
 go test ./internal/workspace -v  # Test specific package
 ```
 

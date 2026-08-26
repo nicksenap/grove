@@ -49,9 +49,10 @@ staticcheck:
 build:
     go build -ldflags "-X github.com/nicksenap/grove/cmd.Version=$(git describe --tags --always)" -o gw ./cmd/gw
 
-# Run e2e tests
+# Run e2e tests against the built gw binary.
+# Set GROVE_EXTERNAL_E2E=1 to include the opt-in public HTTPS clone check.
 e2e: build
-    bash e2e/run.sh
+    GW_BIN="{{justfile_directory()}}/gw" go test ./e2e -count=1
 
 # Set up dev environment (git hooks)
 dev:

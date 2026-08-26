@@ -23,7 +23,7 @@ Git Worktree Workspace Orchestrator — CLI tool invoked as `gw`. Manages multi-
 - Run `just check` for tests + vet
 - Run `just build` to build the `gw` binary
 - Run a single test: `go test ./internal/workspace -run TestName -v`
-- Run e2e tests: `just e2e`
+- Run e2e tests: `just e2e` (Go tests in `e2e/`; set `GROVE_EXTERNAL_E2E=1` for the opt-in HTTPS clone)
 
 ## Release Process
 

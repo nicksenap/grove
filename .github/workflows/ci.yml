@@ -17,7 +17,7 @@ jobs:
           cache-dependency-path: go.sum
 
       - name: Test
-        run: go test ./...
+        run: go test ./cmd/... ./internal/...
         env:
           GIT_CEILING_DIRECTORIES: /
 
@@ -38,6 +38,7 @@ jobs:
         run: go build -o gw ./cmd/gw
 
       - name: Run e2e tests
-        run: bash e2e/run.sh
+        run: go test ./e2e -count=1
         env:
           GW_BIN: ${{ github.workspace }}/gw
+          GIT_CEILING_DIRECTORIES: /
