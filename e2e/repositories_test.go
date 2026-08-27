@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"testing"
 )
 
@@ -170,6 +171,114 @@ func TestAddRepoCwdAutoDetect(t *testing.T) {
 	env.mustGWIn(env.worktree("test-ws", "svc-auth"), "add-repo", "--repos", "svc-gateway")
 	if got := len(env.showWorkspace("test-ws").Repos); got != 2 {
 		t.Fatalf("expected 2 repos from subdir detect, got %d", got)
+	}
+}
+
+func TestRemoveRepoCwdAutoDetect(t *testing.T) {
+	env := newEnv(t)
+	env.createRepo("svc-auth")
+	env.createRepo("svc-gateway")
+	env.createRepo("svc-api")
+	env.init()
+	env.mustGW("create", "test-ws", "--branch", "feat/e2e", "--repos", "svc-auth,svc-gateway")
+	// A second workspace keeps the picker from auto-selecting the only choice.
+	env.mustGW("create", "other-ws", "--branch", "feat/other", "--repos", "svc-api")
+
+	env.mustGWIn(env.workspacePath("test-ws"), "remove-repo", "--repos", "svc-gateway", "--force")
+	if got := len(env.showWorkspace("test-ws").Repos); got != 1 {
+		t.Fatalf("expected 1 repo after cwd-detected remove-repo, got %d", got)
+	}
+
+	env.mustGW("add-repo", "test-ws", "--repos", "svc-gateway")
+	env.mustGWIn(env.worktree("test-ws", "svc-auth"), "remove-repo", "--repos", "svc-gateway", "--force")
+	if got := len(env.showWorkspace("test-ws").Repos); got != 1 {
+		t.Fatalf("expected 1 repo from subdir detect, got %d", got)
+	}
+}
+
+func TestAddAndRemoveRepoRequireWorkspace(t *testing.T) {
+	env := newEnv(t)
+	env.createRepo("svc-auth")
+	env.createRepo("svc-gateway")
+	env.init()
+	env.mustGW("create", "test-ws", "--branch", "feat/e2e", "--repos", "svc-auth")
+	// A second workspace keeps the picker from auto-selecting the only choice.
+	env.mustGW("create", "other-ws", "--branch", "feat/other", "--repos", "svc-gateway")
+
+	add := env.gw("add-repo", "--repos", "svc-gateway")
+	add.mustFail(t)
+	env.requireContains(add.combined(), "not inside a workspace", "add-repo outside workspace")
+
+	remove := env.gw("remove-repo", "--repos", "svc-auth", "--force")
+	remove.mustFail(t)
+	env.requireContains(remove.combined(), "not inside a workspace", "remove-repo outside workspace")
+}
+
+func TestRemoveRepoCompletesWorkspaceReposOnly(t *testing.T) {
+	env := newEnv(t)
+	env.createRepo("svc-auth")
+	env.createRepo("svc-gateway")
+	env.init()
+	env.mustGW("create", "test-ws", "--branch", "feat/e2e", "--repos", "svc-auth")
+
+	res := env.mustGW("__complete", "remove-repo", "test-ws", "--repos", "")
+	out := res.combined()
+	env.requireContains(out, "svc-auth", "complete workspace repo")
+	if strings.Contains(out, "svc-gateway") {
+		t.Fatalf("remove-repo completion should not include repos outside the workspace:\n%s", out)
+	}
+}
+
+func TestAddRepoCompletesReposNotInWorkspace(t *testing.T) {
+	env := newEnv(t)
+	env.createRepo("svc-auth")
+	env.createRepo("svc-gateway")
+	env.init()
+	env.mustGW("create", "test-ws", "--branch", "feat/e2e", "--repos", "svc-auth")
+
+	res := env.mustGW("__complete", "add-repo", "test-ws", "--repos", "")
+	out := res.combined()
+	env.requireContains(out, "svc-gateway", "complete repo not in workspace")
+	if strings.Contains(out, "svc-auth") {
+		t.Fatalf("add-repo completion should not include repos already in the workspace:\n%s", out)
+	}
+}
+
+func TestAddAndRemoveRepoCompleteFromCwd(t *testing.T) {
+	env := newEnv(t)
+	env.createRepo("svc-auth")
+	env.createRepo("svc-gateway")
+	env.init()
+	env.mustGW("create", "test-ws", "--branch", "feat/e2e", "--repos", "svc-auth")
+
+	wsDir := env.workspacePath("test-ws")
+	add := env.mustGWIn(wsDir, "__complete", "add-repo", "--repos", "").combined()
+	env.requireContains(add, "svc-gateway", "cwd add-repo completion")
+	if strings.Contains(add, "svc-auth") {
+		t.Fatalf("cwd add-repo completion should not include repos already in the workspace:\n%s", add)
+	}
+
+	remove := env.mustGWIn(wsDir, "__complete", "remove-repo", "--repos", "").combined()
+	env.requireContains(remove, "svc-auth", "cwd remove-repo completion")
+	if strings.Contains(remove, "svc-gateway") {
+		t.Fatalf("cwd remove-repo completion should not include repos outside the workspace:\n%s", remove)
+	}
+}
+
+func TestAddAndRemoveRepoCompleteOutsideWorkspace(t *testing.T) {
+	env := newEnv(t)
+	env.createRepo("svc-auth")
+	env.createRepo("svc-gateway")
+	env.init()
+	env.mustGW("create", "test-ws", "--branch", "feat/e2e", "--repos", "svc-auth")
+
+	for _, name := range []string{"add-repo", "remove-repo"} {
+		out := env.mustGW("__complete", name, "--repos", "").combined()
+		for _, repo := range []string{"svc-auth", "svc-gateway"} {
+			if strings.Contains(out, repo) {
+				t.Fatalf("%s completion outside a workspace should not include %s:\n%s", name, repo, out)
+			}
+		}
 	}
 }
 

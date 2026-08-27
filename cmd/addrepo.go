@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"os"
 	"strings"
 
 	"github.com/nicksenap/grove/internal/config"
@@ -9,7 +8,6 @@ import (
 	"github.com/nicksenap/grove/internal/discover"
 	"github.com/nicksenap/grove/internal/gitops"
 	"github.com/nicksenap/grove/internal/picker"
-	"github.com/nicksenap/grove/internal/state"
 	"github.com/nicksenap/grove/internal/workspace"
 	"github.com/spf13/cobra"
 )
@@ -19,38 +17,16 @@ var addRepoRepos string
 var addRepoCmd = &cobra.Command{
 	Use:   "add-repo [NAME]",
 	Short: "Add repos to an existing workspace",
+	Long:  "Auto-detects workspace from cwd if name omitted.",
 	Args:  cobra.MaximumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
-		var wsName string
+		name := ""
 		if len(args) > 0 {
-			wsName = args[0]
-		} else {
-			// Auto-detect workspace from cwd and use it as default.
-			if cwd, err := os.Getwd(); err == nil {
-				if currentWs, _ := state.FindWorkspaceByPath(cwd); currentWs != nil {
-					wsName = currentWs.Name
-					console.Infof("Using current workspace: %s", wsName)
-				}
-			}
-
-			if wsName == "" {
-				workspaces, err := state.Load()
-				if err != nil {
-					exitError(err.Error())
-				}
-				if len(workspaces) == 0 {
-					exitError("No workspaces")
-				}
-				choices := make([]string, len(workspaces))
-				for i, ws := range workspaces {
-					choices[i] = ws.Name
-				}
-				selected, err := picker.PickOne("Select workspace:", choices)
-				if err != nil {
-					exitOnPickerErr(err)
-				}
-				wsName = selected
-			}
+			name = args[0]
+		}
+		ws, err := workspace.ResolveWorkspace(name)
+		if err != nil {
+			exitError(err.Error())
 		}
 
 		cfg := config.RequireConfig()
@@ -59,38 +35,27 @@ var addRepoCmd = &cobra.Command{
 
 		var repoNames []string
 		if addRepoRepos != "" {
-			repoNames = strings.Split(addRepoRepos, ",")
-			for i := range repoNames {
-				repoNames[i] = strings.TrimSpace(repoNames[i])
-			}
+			repoNames = parseRepoFlag(addRepoRepos)
 			// Clone any remote URLs into the first repo_dir
-			for i, name := range repoNames {
-				if gitops.IsGitURL(name) {
+			for i, repoName := range repoNames {
+				if gitops.IsGitURL(repoName) {
 					if len(cfg.RepoDirs) == 0 {
 						exitError("No repo_dirs configured — cannot clone remote repo")
 					}
-					console.Infof("Cloning %s ...", name)
-					clonedPath, repoName, err := gitops.Clone(name, cfg.RepoDirs[0])
+					console.Infof("Cloning %s ...", repoName)
+					clonedPath, clonedName, err := gitops.Clone(repoName, cfg.RepoDirs[0])
 					if err != nil {
 						exitError(err.Error())
 					}
-					if existing, ok := repoMap[repoName]; ok && existing != clonedPath {
-						exitError("repo name conflict: " + repoName + " already exists locally at " + existing)
+					if existing, ok := repoMap[clonedName]; ok && existing != clonedPath {
+						exitError("repo name conflict: " + clonedName + " already exists locally at " + existing)
 					}
-					repoMap[repoName] = clonedPath
-					repoNames[i] = repoName
-					console.Successf("Cloned %s into %s", repoName, clonedPath)
+					repoMap[clonedName] = clonedPath
+					repoNames[i] = clonedName
+					console.Successf("Cloned %s into %s", clonedName, clonedPath)
 				}
 			}
 		} else {
-			// Interactive: show repos not already in workspace
-			ws, err := state.GetWorkspace(wsName)
-			if err != nil {
-				exitError(err.Error())
-			}
-			if ws == nil {
-				exitError("Workspace not found: " + wsName)
-			}
 			existing := make(map[string]bool)
 			for _, r := range ws.Repos {
 				existing[r.RepoName] = true
@@ -111,7 +76,7 @@ var addRepoCmd = &cobra.Command{
 			repoNames = selected
 		}
 
-		if err := workspace.NewService().AddRepos(wsName, repoNames, repoMap); err != nil {
+		if err := workspace.NewService().AddRepos(ws.Name, repoNames, repoMap); err != nil {
 			exitError(err.Error())
 		}
 	},
@@ -119,6 +84,14 @@ var addRepoCmd = &cobra.Command{
 
 func init() {
 	addRepoCmd.Flags().StringVarP(&addRepoRepos, "repos", "r", "", "Comma-separated repo names or git URLs")
-	addRepoCmd.RegisterFlagCompletionFunc("repos", completeRepoNames)
+	addRepoCmd.RegisterFlagCompletionFunc("repos", completeAddRepoNames)
 	addRepoCmd.ValidArgsFunction = completeWorkspaceNames
+}
+
+func parseRepoFlag(value string) []string {
+	parts := strings.Split(value, ",")
+	for i := range parts {
+		parts[i] = strings.TrimSpace(parts[i])
+	}
+	return parts
 }
