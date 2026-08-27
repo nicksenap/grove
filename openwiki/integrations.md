@@ -26,6 +26,15 @@ See [Plugin documentation](../docs/plugins.md) for installation, command dispatc
 
 ## Example plugins
 
+### [gw-run](https://github.com/nicksenap/gw-run)
+
+Runs per-repo `.grove.toml` `run` hooks across a workspace, prefixing output with `[repo]`.
+
+```bash
+gw plugin install nicksenap/gw-run
+gw run my-workspace
+```
+
 ### [gw-dispatch](https://github.com/nicksenap/gw-dispatch)
 
 `gw-dispatch` creates a Grove workspace and starts a selected coding agent in it with an initial prompt. It is agent-agnostic and supports built-in or user-defined agent commands.

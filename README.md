@@ -87,7 +87,6 @@ gw go my-feature       # cd into the workspace
 gw status my-feature   # git status across every repo
 gw sync my-feature     # rebase all repos onto their base branch
 gw reset my-feature    # switch every repo back to the workspace branch, then sync
-gw run my-feature      # run dev processes (TUI)
 
 # Clean up when done (destructive; use a pre_delete hook to enforce policy)
 gw delete my-feature   # removes worktrees, branches, and workspace files
@@ -103,13 +102,13 @@ Full documentation lives in the [OpenWiki](openwiki/quickstart.md) — start wit
 
 - [Quickstart](openwiki/quickstart.md) — install, first commands, key concepts, and a source map
 - [Architecture](openwiki/architecture.md) — layered design, data model, concurrency, and key decisions
-- [Workflows](openwiki/workflows.md) — how each command maps to code (create, sync, run, delete, presets…)
+- [Workflows](openwiki/workflows.md) — how each command maps to code (create, sync, delete, presets…)
 - [Operations](openwiki/operations.md) — configuration, hooks, state, troubleshooting, and release process
 - [Integrations](openwiki/integrations.md) — plugins and workspace source provenance
 
 ### Focused topic guides
 
-- [Hooks](docs/hooks.md) — global hooks (terminal integration) & per-repo hooks (`.grove.toml`, `gw run`)
+- [Hooks](docs/hooks.md) — global hooks (terminal integration) & per-repo hooks (`.grove.toml`)
 - [Plugins](docs/plugins.md) — extend gw with external commands
 - [Recipes](docs/recipe-v1.md) — strict schema, [workspace creation](docs/recipe-execution.md), and the [prepared-claim spike](docs/prepared-workspace-claim-spike.md)
 - [AI coding tools](docs/ai-tools.md) — vendor-neutral agent workflows

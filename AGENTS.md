@@ -61,7 +61,7 @@ Tool-specific integrations (coding agents, terminal multiplexers, archives, and 
 - **internal/plugin/** — Plugin install/upgrade/remove from GitHub releases.
 - **internal/state/** — Workspace state persisted to `~/.grove/state.json`. Uses atomic writes.
 - **internal/stats/** — Workspace usage stats and heatmap.
-- **internal/streamio/** — Per-line prefixing writer (e.g. `[post_create] ...`). Shared by `gw run` and the lifecycle hook paths for live/streamed output.
+- **internal/streamio/** — Per-line prefixing writer (e.g. `[post_create] ...`). Shared by lifecycle hooks and Recipe execution for live/streamed output.
 - **internal/update/** — Non-blocking version check.
 - **internal/workspace/** — Core worktree orchestration (create, delete, status, sync). Uses goroutines for concurrent multi-repo operations.
 

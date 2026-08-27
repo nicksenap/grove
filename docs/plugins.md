@@ -7,6 +7,7 @@ Grove supports external plugins that add commands. A plugin is a standalone exec
 ### From GitHub
 
 ```bash
+gw plugin install nicksenap/gw-run
 gw plugin install nicksenap/gw-dispatch
 gw plugin install igor-kupczynski/gw-code
 ```
@@ -50,6 +51,16 @@ The plugin receives control of the terminal and these environment variables:
 | `GROVE_WORKSPACE` | Current workspace name, when cwd is inside one |
 
 ## Example plugins
+
+### [gw-run](https://github.com/nicksenap/gw-run)
+
+Runs per-repo `.grove.toml` `run` hooks across a workspace, prefixing output with `[repo]`.
+
+```bash
+gw plugin install nicksenap/gw-run
+gw run
+gw run my-feature
+```
 
 ### [gw-dispatch](https://github.com/nicksenap/gw-dispatch)
 

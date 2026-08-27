@@ -108,9 +108,9 @@ setup = "pnpm install"             # run after worktree creation
 teardown = "rm -rf node_modules"   # run before worktree removal
 pre_sync = "pnpm run build:check"  # run before rebase during sync
 post_sync = "pnpm install"         # run after successful rebase
-pre_run = "docker compose pull"    # run before gw run starts
-run = "pnpm dev"                   # started by gw run (foreground)
-post_run = "docker compose down"   # run on gw run exit / Ctrl+C
+pre_run = "docker compose pull"    # consumed by the gw-run plugin
+run = "pnpm dev"                   # consumed by the gw-run plugin
+post_run = "docker compose down"   # consumed by the gw-run plugin
 ```
 
 All hook keys accept a string or a list of commands:
@@ -130,15 +130,8 @@ The hook system follows the npm-style `pre`/`post` convention: one primitive (`r
 | Worktree created | `setup` | `pnpm install`, inject secrets, seed DB |
 | Worktree removed | `teardown` | `rm -rf node_modules`, revoke temp creds |
 | Before/after rebase | `pre_sync`, `post_sync` | Type-check before rebase, reinstall after |
-| Dev session | `pre_run`, `run`, `post_run` | Pull containers, start dev server, tear down |
+| Dev session | `pre_run`, `run`, `post_run` | Pull containers, start dev server, tear down. Executed by the [gw-run](https://github.com/nicksenap/gw-run) plugin, not Grove core. |
 
 ## `gw run`
 
-`gw run` executes `run` hooks across all repos in a workspace, printing output with `[repo]` prefixes. It auto-detects the workspace from your current directory, or takes a name argument.
-
-```bash
-gw run              # auto-detect workspace from cwd
-gw run my-feature   # explicit workspace name
-```
-
-Pre-run hooks fire before the processes start, post-run hooks fire after they exit. Ctrl+C gracefully terminates all processes.
+Process supervision is a plugin. Install it with `gw plugin install nicksenap/gw-run`, then see [gw-run](https://github.com/nicksenap/gw-run). Grove still parses `run` / `pre_run` / `post_run` in `.grove.toml`.
