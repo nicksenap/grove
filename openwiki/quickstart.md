@@ -51,7 +51,8 @@ gw go my-feature
 # Check status across all repos
 gw status my-feature
 
-# Run dev processes with a TUI
+# Run per-repo processes via the gw-run plugin
+gw plugin install nicksenap/gw-run
 gw run my-feature
 
 # Clean up when done
@@ -121,7 +122,7 @@ setup = ["npm install", "npm run build"]  # run after worktree creation
 | `gw reset <name>` | Switch every repo back to the workspace branch, then sync |
 | `gw add-repo <name> -r <repo>` | Add a repo to existing workspace |
 | `gw remove-repo <name> -r <repo>` | Remove a repo from workspace |
-| `gw run <name>` | Run dev processes (interactive TUI) |
+| `gw run <name>` | Plugin: run `.grove.toml` processes (`gw plugin install nicksenap/gw-run`) |
 | `gw rename <name> --to <new>` | Rename a workspace |
 | `gw delete <name>` | Clean up workspace (worktrees + branches) |
 | `gw plugin install <repo>` | Install a plugin from GitHub |

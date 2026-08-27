@@ -45,4 +45,8 @@ func TestPlugins(t *testing.T) {
 	env.requireMissing(pluginPath)
 	env.gw("plugin", "remove", "nonexistent").mustFail(t)
 	env.gw("nonexistent-cmd").mustFail(t)
+
+	missingRun := env.gw("run", "anything")
+	missingRun.mustFail(t)
+	env.requireContains(missingRun.combined(), `unknown command "run"`, "gw run without plugin")
 }

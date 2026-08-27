@@ -225,32 +225,14 @@ gw remove-repo feat-login -r svc-a
 
 **Goal**: Run per-repo commands (e.g., tests, builds) in a coordinated way.
 
-### Interactive TUI
+Process supervision is not part of Grove core. Install [gw-run](https://github.com/nicksenap/gw-run):
 
 ```bash
+gw plugin install nicksenap/gw-run
 gw run feat-login
 ```
 
-- Lists available commands from all repos' `.grove.toml`
-- Opens a split-pane TUI (similar to tmux layout)
-- Runs selected commands in parallel, shows output live
-
-### Code Flow
-
-- **`cmd/run.go`** — Calls `workspace.Service.Run()`
-- **`internal/workspace/run.go`** — TUI implementation and command orchestration
-  - Parses `[run]` sections from each repo's `.grove.toml`
-  - Builds a list of available commands (e.g., "npm test", "npm run build")
-  - Launches an interactive picker (type-to-search, multi-select)
-  - For each selected command, spawns a goroutine to run it
-  - Uses `internal/streamio/` to prefix each line with the repo name
-  - Displays output live in the terminal
-
-### Key Source Files
-
-- `internal/workspace/run.go` — Main TUI and execution logic
-- `internal/streamio/` — Per-line prefixing writer (e.g., `[svc-a] npm test output`)
-- `.grove.toml` — Per-repo `[run]` section defines available commands
+Without the plugin, `gw run` is an unknown command.
 
 ---
 

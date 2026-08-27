@@ -123,12 +123,10 @@ setup = [
   "npm run build"
 ]
 
-# Commands available in `gw run` interactive menu
-[run]
-test = "npm test"
-build = "npm run build"
-lint = "npm run lint"
-dev = "npm run dev"
+# Consumed by the gw-run plugin (not Grove core)
+run = "npm run dev"
+pre_run = "echo starting"
+post_run = "echo stopped"
 ```
 
 #### Fields
@@ -137,7 +135,7 @@ dev = "npm run dev"
 |-------|------|---------|
 | `base_branch` | `string` | Default branch for new worktrees (e.g., `stage` instead of `main`) |
 | `setup` | `string` or `[string]` | Command(s) to run after worktree creation |
-| `[run]` | `[table]` | Available commands in `gw run` TUI (name → command) |
+| `run` / `pre_run` / `post_run` | `string` or `[string]` | Process commands for the [gw-run](https://github.com/nicksenap/gw-run) plugin |}
 
 #### Setup Commands
 - Run sequentially after worktree is created

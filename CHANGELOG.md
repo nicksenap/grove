@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Changed
+
+- `gw run` is no longer a builtin command. Install the first-party plugin with `gw plugin install nicksenap/gw-run`. Without it, `gw run` follows the normal unknown-command path. Core still parses `.grove.toml` `run` / `pre_run` / `post_run` keys (ownership decision tracked separately).
+
 ### Fixes
 
 - `gw add-repo` and `gw remove-repo` now share workspace resolution: omitted NAME uses the workspace containing cwd, and both fail with "not inside a workspace" otherwise. `--repos` completion is inverse: add lists discovered repos not already in the workspace; remove lists only repos already in it. Both return no candidates outside a workspace.

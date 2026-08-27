@@ -48,7 +48,6 @@ Cobra command handlers that:
 - `cmd/sync_cmd.go` — Rebase all repos
 - `cmd/reset.go` — Return repos to their recorded workspace branch, then sync
 - `cmd/add_repo.go`, `cmd/remove_repo.go` — Modify existing workspace
-- `cmd/run.go` — Launch interactive TUI for running per-repo processes
 - `cmd/preset.go` — Manage presets (named repo groups)
 
 ### 3. **Core Layer** (`internal/workspace/`)
@@ -59,7 +58,6 @@ Cobra command handlers that:
 - `Sync()` — Rebase all repos onto their base branches
 - `Reset()` — Switch repos to their recorded workspace branches, then sync
 - `AddRepo()`, `RemoveRepo()` — Modify existing workspace
-- `Run()` — Execute per-repo commands (from `.grove.toml` [run] sections)
 
 Uses goroutines to parallelize git operations (e.g., `Status()` runs `git status` in all repos concurrently).
 
@@ -254,7 +252,6 @@ Rather than embedding tool-specific logic for coding agents, terminal multiplexe
 Each repo can have its own `.grove.toml` to define:
 - Default base branch (override main/master)
 - Setup commands to run after worktree creation
-- Run commands for `gw run`
 
 This enables a single Grove config to work across diverse monorepo structures.
 
