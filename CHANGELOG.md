@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Fixes
+
+- `gw add-repo` and `gw remove-repo` now share workspace resolution: omitted NAME uses the workspace containing cwd, and both fail with "not inside a workspace" otherwise. `--repos` completion is inverse: add lists discovered repos not already in the workspace; remove lists only repos already in it. Both return no candidates outside a workspace.
+
 ## v1.1.14
 
 ### Features

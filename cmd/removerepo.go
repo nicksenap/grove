@@ -6,7 +6,6 @@ import (
 
 	"github.com/nicksenap/grove/internal/console"
 	"github.com/nicksenap/grove/internal/picker"
-	"github.com/nicksenap/grove/internal/state"
 	"github.com/nicksenap/grove/internal/workspace"
 	"github.com/spf13/cobra"
 )
@@ -19,50 +18,26 @@ var (
 var removeRepoCmd = &cobra.Command{
 	Use:   "remove-repo [NAME]",
 	Short: "Remove repos from a workspace",
+	Long:  "Auto-detects workspace from cwd if name omitted.",
 	Args:  cobra.MaximumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
-		var wsName string
+		name := ""
 		if len(args) > 0 {
-			wsName = args[0]
-		} else {
-			workspaces, err := state.Load()
-			if err != nil {
-				exitError(err.Error())
-			}
-			if len(workspaces) == 0 {
-				exitError("No workspaces")
-			}
-			choices := make([]string, len(workspaces))
-			for i, ws := range workspaces {
-				choices[i] = ws.Name
-			}
-			selected, err := picker.PickOne("Select workspace:", choices)
-			if err != nil {
-				exitOnPickerErr(err)
-			}
-			wsName = selected
+			name = args[0]
+		}
+		ws, err := workspace.ResolveWorkspace(name)
+		if err != nil {
+			exitError(err.Error())
 		}
 
 		var repoNames []string
 		if removeRepoRepos != "" {
-			repoNames = strings.Split(removeRepoRepos, ",")
-			for i := range repoNames {
-				repoNames[i] = strings.TrimSpace(repoNames[i])
-			}
+			repoNames = parseRepoFlag(removeRepoRepos)
 		} else {
-			// Interactive: pick from repos in workspace
-			ws, err := state.GetWorkspace(wsName)
-			if err != nil {
-				exitError(err.Error())
-			}
-			if ws == nil {
-				exitError("Workspace not found: " + wsName)
-			}
 			if len(ws.Repos) == 0 {
 				exitError("No repos in workspace")
 			}
-			choices := ws.RepoNames()
-			selected, err := picker.PickMany("Select repos to remove:", choices)
+			selected, err := picker.PickMany("Select repos to remove:", ws.RepoNames())
 			if err != nil {
 				exitOnPickerErr(err)
 			}
@@ -70,12 +45,12 @@ var removeRepoCmd = &cobra.Command{
 		}
 
 		if !removeRepoForce {
-			if !console.Confirm(fmt.Sprintf("Remove %s from %s?", strings.Join(repoNames, ", "), wsName), false) {
+			if !console.Confirm(fmt.Sprintf("Remove %s from %s?", strings.Join(repoNames, ", "), ws.Name), false) {
 				return
 			}
 		}
 
-		if err := workspace.NewService().RemoveReposWithOptions(wsName, repoNames, workspace.RemoveOptions{Force: removeRepoForce}); err != nil {
+		if err := workspace.NewService().RemoveReposWithOptions(ws.Name, repoNames, workspace.RemoveOptions{Force: removeRepoForce}); err != nil {
 			exitError(err.Error())
 		}
 	},
@@ -84,6 +59,6 @@ var removeRepoCmd = &cobra.Command{
 func init() {
 	removeRepoCmd.Flags().StringVarP(&removeRepoRepos, "repos", "r", "", "Comma-separated repo names")
 	removeRepoCmd.Flags().BoolVarP(&removeRepoForce, "force", "f", false, "Skip worktree safety checks and confirmation")
-	removeRepoCmd.RegisterFlagCompletionFunc("repos", completeRepoNames)
+	removeRepoCmd.RegisterFlagCompletionFunc("repos", completeRemoveRepoNames)
 	removeRepoCmd.ValidArgsFunction = completeWorkspaceNames
 }
