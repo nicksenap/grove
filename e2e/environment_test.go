@@ -123,7 +123,31 @@ func newEnv(t *testing.T) *env {
 	e.git(home, "config", "--global", "user.email", "e2e@grove.test")
 	e.git(home, "config", "--global", "user.name", "Grove E2E")
 	e.git(home, "config", "--global", "init.defaultBranch", "main")
+	// gw delete/prune spawn unlink-trash in the background. Wait for it before
+	// t.TempDir cleanup, otherwise Linux RemoveAll fails with ENOTEMPTY on .grove.
+	t.Cleanup(e.waitForBackgroundUnlink)
 	return e
+}
+
+func (e *env) waitForBackgroundUnlink() {
+	trash := filepath.Join(e.wsDir, ".trash")
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		entries, err := os.ReadDir(trash)
+		if err != nil {
+			if os.IsNotExist(err) {
+				return
+			}
+			return
+		}
+		if len(entries) == 0 {
+			return
+		}
+		if !time.Now().Before(deadline) {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
 }
 
 func (e *env) init() {
