@@ -4,6 +4,9 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
+	"strconv"
+	"time"
 
 	"github.com/nicksenap/grove/internal/console"
 	"github.com/nicksenap/grove/internal/gitops"
@@ -45,12 +48,19 @@ func (s *Service) DeleteWithOptions(name string, opts RemoveOptions) error {
 	s.runTeardownHooks(ws.Repos)
 
 	var deleted *models.Workspace
+	var trashPath string
 	if err := s.State.WithLock(func() error {
 		var err error
-		deleted, err = s.deleteLocked(name, opts)
+		deleted, trashPath, err = s.deleteLocked(name, opts)
 		return err
 	}); err != nil {
 		return err
+	}
+
+	// Bytes in .trash are no longer on the workspace path. Unlink is best-effort
+	// and must not hold state.lock — leftover trash must not keep the workspace in state.
+	if trashPath != "" {
+		s.scheduleUnlink(trashPath)
 	}
 
 	s.Stats.RecordDeleted(*deleted)
@@ -69,58 +79,149 @@ func verifyExpectedWorkspace(ws *models.Workspace, opts RemoveOptions) error {
 	return nil
 }
 
-func (s *Service) deleteLocked(name string, opts RemoveOptions) (*models.Workspace, error) {
+func (s *Service) deleteLocked(name string, opts RemoveOptions) (*models.Workspace, string, error) {
 	ws, err := s.State.GetWorkspace(name)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	if ws == nil {
-		return nil, fmt.Errorf("workspace %s not found", name)
+		return nil, "", fmt.Errorf("workspace %s not found", name)
 	}
 	if err := verifyExpectedWorkspace(ws, opts); err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	if err := preflightRemovals(ws.Repos, opts.Force); err != nil {
-		return nil, err
+		return nil, "", err
 	}
 
 	logging.Info("deleting workspace %q", name)
 	original := *ws
-	remaining := make([]models.RepoWorktree, 0, len(ws.Repos))
-	var cleanupErrs []error
 
+	trashPath, err := quarantineWorkspace(ws.Path)
+	if err != nil {
+		return nil, "", fmt.Errorf("quarantining workspace %s: %w", ws.Path, err)
+	}
+
+	var pruneErrs []error
 	for _, repo := range ws.Repos {
-		if err := s.removeWorktree(repo.SourceRepo, repo.WorktreePath, opts.Force); err != nil {
-			remaining = append(remaining, repo)
-			cleanupErrs = append(cleanupErrs, fmt.Errorf("%s: removing worktree: %w", repo.RepoName, err))
-			continue
+		if err := s.pruneWorktree(repo.SourceRepo); err != nil {
+			pruneErrs = append(pruneErrs, fmt.Errorf("%s: pruning worktree: %w", repo.RepoName, err))
 		}
+	}
+	if len(pruneErrs) > 0 {
+		if restoreErr := s.restoreQuarantinedWorkspace(ws, trashPath); restoreErr != nil {
+			return nil, "", errors.Join(append(pruneErrs, restoreErr)...)
+		}
+		return nil, "", errors.Join(pruneErrs...)
+	}
+
+	if err := s.removeState(name); err != nil {
+		if restoreErr := s.restoreQuarantinedWorkspace(ws, trashPath); restoreErr != nil {
+			return nil, "", errors.Join(err, restoreErr)
+		}
+		return nil, "", err
+	}
+
+	for _, repo := range original.Repos {
 		s.deleteBranch(repo, opts.Force)
 	}
+	return &original, trashPath, nil
+}
 
-	if len(remaining) > 0 {
-		ws.Repos = remaining
-		if err := s.State.UpdateWorkspace(*ws); err != nil {
-			cleanupErrs = append(cleanupErrs, fmt.Errorf("updating state: %w", err))
+func (s *Service) restoreQuarantinedWorkspace(ws *models.Workspace, trashPath string) error {
+	if renameErr := os.Rename(trashPath, ws.Path); renameErr != nil {
+		return fmt.Errorf("restoring workspace root %s: %w", ws.Path, renameErr)
+	}
+	var repairErrs []error
+	for _, repo := range ws.Repos {
+		if err := s.repairWorktree(repo.SourceRepo, repo.WorktreePath); err != nil {
+			repairErrs = append(repairErrs, fmt.Errorf("%s: repairing worktree: %w", repo.RepoName, err))
 		}
-		return nil, errors.Join(cleanupErrs...)
 	}
+	return errors.Join(repairErrs...)
+}
 
-	// Once all registered worktrees are safely removed, everything remaining in
-	// this Grove-owned root is workspace metadata and must not block deletion.
-	if removeRootErr := os.RemoveAll(ws.Path); removeRootErr != nil && !os.IsNotExist(removeRootErr) {
-		ws.Repos = nil
-		cleanupErrs = append(cleanupErrs, fmt.Errorf("removing workspace root %s: %w", ws.Path, removeRootErr))
-		if stateErr := s.State.UpdateWorkspace(*ws); stateErr != nil {
-			cleanupErrs = append(cleanupErrs, fmt.Errorf("updating state: %w", stateErr))
+func (s *Service) repairWorktree(repo, path string) error {
+	if s.RepairWorktree != nil {
+		return s.RepairWorktree(repo, path)
+	}
+	return gitops.WorktreeRepair(repo, path)
+}
+
+func (s *Service) removeState(name string) error {
+	if s.RemoveState != nil {
+		return s.RemoveState(name)
+	}
+	return s.State.RemoveWorkspace(name)
+}
+
+const trashDirName = ".trash"
+
+// UnlinkTrashPath removes a quarantined workspace directory. Paths whose parent
+// is not .trash are rejected so a detached unlink process cannot delete arbitrary trees.
+func UnlinkTrashPath(path string) error {
+	cleaned := filepath.Clean(path)
+	if !isTrashItem(cleaned) {
+		return fmt.Errorf("refusing to unlink %s: not a grove trash item", path)
+	}
+	var err error
+	for i := 0; i < 10; i++ {
+		err = os.RemoveAll(cleaned)
+		if err == nil || os.IsNotExist(err) {
+			return nil
 		}
-		return nil, errors.Join(cleanupErrs...)
+		time.Sleep(50 * time.Millisecond)
 	}
+	return err
+}
 
-	if err := s.State.RemoveWorkspace(name); err != nil {
-		return nil, err
+func isTrashItem(path string) bool {
+	parent := filepath.Base(filepath.Dir(path))
+	name := filepath.Base(path)
+	return parent == trashDirName && name != "" && name != "." && name != ".." && name != trashDirName
+}
+
+func quarantineWorkspace(path string) (string, error) {
+	trashRoot := filepath.Join(filepath.Dir(path), trashDirName)
+	if err := os.MkdirAll(trashRoot, 0o755); err != nil {
+		return "", err
 	}
-	return &original, nil
+	dest := filepath.Join(trashRoot, filepath.Base(path)+"-"+strconv.FormatInt(time.Now().UnixNano(), 10))
+	if err := os.Rename(path, dest); err != nil {
+		return "", err
+	}
+	return dest, nil
+}
+
+func (s *Service) scheduleUnlink(path string) {
+	if s.StartUnlink != nil {
+		if err := s.StartUnlink(path); err != nil {
+			logging.Warn("failed to spawn unlink for %s: %s", path, err)
+			s.syncUnlink(path)
+		}
+		return
+	}
+	s.syncUnlink(path)
+}
+
+func (s *Service) syncUnlink(path string) {
+	if err := s.unlinkTrash(path); err != nil && !os.IsNotExist(err) {
+		logging.Warn("failed to unlink quarantined workspace %s: %s", path, err)
+	}
+}
+
+func (s *Service) unlinkTrash(path string) error {
+	if s.UnlinkTrash != nil {
+		return s.UnlinkTrash(path)
+	}
+	return UnlinkTrashPath(path)
+}
+
+func (s *Service) pruneWorktree(repo string) error {
+	if s.PruneWorktree != nil {
+		return s.PruneWorktree(repo)
+	}
+	return gitops.WorktreePrune(repo)
 }
 
 func (s *Service) runTeardownHooks(repos []models.RepoWorktree) {

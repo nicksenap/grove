@@ -533,7 +533,7 @@ gw sync feat-login    # Runs git rebase in all repos concurrently
 Expected times for typical workspaces (5–10 repos):
 - `gw create` — 2–5 seconds (git clone, worktree setup)
 - `gw status` — 1–2 seconds (git status calls)
-- `gw delete` — <1 second (cleanup)
+- `gw delete` — <1 second for logical cleanup (path, git registrations, state); large trees unlink in the background
 
 ### Repo Discovery
 

@@ -248,10 +248,11 @@ gw delete feat-login
 
 - Destructively removes the workspace without a confirmation prompt
 - Pre-delete hook fires (for example, `./scripts/workspace-closing {path}` to save external state); configure `on_failure = "abort"` to enforce deletion policy
+- Renames the workspace root into `<workspace-dir>/.trash/` so the original path is free immediately
 - For each repo in workspace:
-  - Calls `git worktree remove --force <path>` to remove the worktree
+  - Calls `git worktree prune --expire=now` to drop the relocated worktree registration
   - Calls `git branch -D <branch>` to delete the branch
-- Removes remaining Grove-owned workspace metadata and the workspace from state
+- Removes the workspace from state, then unlinks the quarantined bytes in the background
 - Optionally: runs the configured `on_close` hook (for example, a terminal-specific pane-closing script)
 
 ### Code Flow
@@ -259,8 +260,8 @@ gw delete feat-login
 1. **`cmd/delete.go`** — Runs `pre_delete` and orchestrates destructive deletion
 2. **`internal/lifecycle/lifecycle.go`** — Fires `pre_delete` hook with `{path}` placeholder
 3. **`internal/workspace/remove.go`** — `Delete()` method
-   - Calls `gitops.DeleteWorktree()` for each repo
-   - Calls `state.DeleteWorkspace()` to remove from state
+   - Quarantines the workspace root, prunes Git worktree registrations, and deletes branches
+   - Removes the workspace from state, then schedules a background unlink
 4. **`internal/operations/service.go`** — Applies the required `on_close` policy, then delegates hook execution to `internal/lifecycle/lifecycle.go`
 
 ### Key Decisions When Modifying

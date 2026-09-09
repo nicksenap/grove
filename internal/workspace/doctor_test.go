@@ -86,6 +86,50 @@ func TestDoctorDetectsMissingWorkspaceDir(t *testing.T) {
 	}
 }
 
+func TestDoctorDetectsLeftoverTrash(t *testing.T) {
+	env := setupTestEnv(t)
+	item := filepath.Join(env.wsDir, ".trash", "old-ws-1")
+	if err := os.MkdirAll(item, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	issues, _, err := env.svc.Doctor(false)
+	if err != nil {
+		t.Fatalf("doctor: %v", err)
+	}
+	found := false
+	for _, issue := range issues {
+		if strings.Contains(issue.Issue, "leftover trash") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected leftover trash issue, got %+v", issues)
+	}
+	if _, err := os.Stat(item); err != nil {
+		t.Fatalf("doctor without --fix should leave trash: %v", err)
+	}
+}
+
+func TestDoctorFixRemovesLeftoverTrash(t *testing.T) {
+	env := setupTestEnv(t)
+	item := filepath.Join(env.wsDir, ".trash", "old-ws-1")
+	if err := os.MkdirAll(item, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	_, fixed, err := env.svc.Doctor(true)
+	if err != nil {
+		t.Fatalf("doctor fix: %v", err)
+	}
+	if fixed == 0 {
+		t.Fatal("expected leftover trash to be fixed")
+	}
+	if _, err := os.Stat(item); !os.IsNotExist(err) {
+		t.Fatalf("doctor --fix should remove leftover trash, got %v", err)
+	}
+}
+
 func TestAllWorkspacesSummaryEmpty(t *testing.T) {
 	env := setupTestEnv(t)
 	_ = env
