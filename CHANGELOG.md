@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Features
+
+- `gw prune [--min-age N]` lists workspaces created at least N days ago (default 7). Pass `--yes` to delete them with the same two-phase cleanup as `gw delete`: quarantine, prune git registrations, drop state, then unlink bytes in the background.
+
 ### Changed
 
 - `gw run` is no longer a builtin command. Install the first-party plugin with `gw plugin install nicksenap/gw-run`. Without it, `gw run` follows the normal unknown-command path. Core still parses `.grove.toml` `run` / `pre_run` / `post_run` keys (ownership decision tracked separately).

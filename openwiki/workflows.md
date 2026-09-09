@@ -255,14 +255,28 @@ gw delete feat-login
 - Removes the workspace from state, then unlinks the quarantined bytes in the background
 - Optionally: runs the configured `on_close` hook (for example, a terminal-specific pane-closing script)
 
+### Prune Command
+
+```bash
+gw prune
+gw prune --min-age 14
+gw prune --yes
+```
+
+- Lists workspaces whose `created_at` is at least `--min-age` days old (default 7)
+- Does not delete unless `--yes` is passed
+- `--yes` deletes matching workspaces through the same two-phase path as `gw delete` (quarantine, prune git registrations, drop state, background unlink)
+- Age is based on workspace creation time, not last use (`gw go` is not recorded)
+
 ### Code Flow
 
 1. **`cmd/delete.go`** — Runs `pre_delete` and orchestrates destructive deletion
-2. **`internal/lifecycle/lifecycle.go`** — Fires `pre_delete` hook with `{path}` placeholder
-3. **`internal/workspace/remove.go`** — `Delete()` method
+2. **`cmd/prune.go`** — Filters workspaces by `created_at` age; `--yes` calls the same delete operation as `gw delete`
+3. **`internal/lifecycle/lifecycle.go`** — Fires `pre_delete` hook with `{path}` placeholder
+4. **`internal/workspace/remove.go`** — `Delete()` method
    - Quarantines the workspace root, prunes Git worktree registrations, and deletes branches
    - Removes the workspace from state, then schedules a background unlink
-4. **`internal/operations/service.go`** — Applies the required `on_close` policy, then delegates hook execution to `internal/lifecycle/lifecycle.go`
+5. **`internal/operations/service.go`** — Applies the required `on_close` policy, then delegates hook execution to `internal/lifecycle/lifecycle.go`
 
 ### Key Decisions When Modifying
 

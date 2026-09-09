@@ -90,6 +90,8 @@ gw reset my-feature    # switch every repo back to the workspace branch, then sy
 
 # Clean up when done (destructive; use a pre_delete hook to enforce policy)
 gw delete my-feature   # removes worktrees, branches, and workspace files
+gw prune               # list workspaces older than 7 days
+gw prune --yes         # delete them (same two-phase cleanup as gw delete)
 ```
 
 Interactive menus support **type-to-search** filtering, arrow-key navigation (single-select), or arrow + tab (multi-select) with an `(all)` shortcut.
