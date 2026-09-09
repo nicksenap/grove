@@ -57,6 +57,7 @@ func init() {
 		listCmd,
 		wsCmd,
 		deleteCmd,
+		pruneCmd,
 		goCmd,
 		statusCmd,
 		addRepoCmd,

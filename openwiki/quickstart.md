@@ -125,6 +125,7 @@ setup = ["npm install", "npm run build"]  # run after worktree creation
 | `gw run <name>` | Plugin: run `.grove.toml` processes (`gw plugin install nicksenap/gw-run`) |
 | `gw rename <name> --to <new>` | Rename a workspace |
 | `gw delete <name>` | Clean up workspace (worktrees + branches) |
+| `gw prune [--min-age N] [--yes]` | List or delete workspaces older than N days (default 7) |
 | `gw plugin install <repo>` | Install a plugin from GitHub |
 | `gw doctor` | Diagnose workspace issues |
 
