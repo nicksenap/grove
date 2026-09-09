@@ -20,6 +20,7 @@ type Service struct {
 	RunCmdSilent   func(dir, cmd string) error
 	RemoveWorktree func(repo, path string, force bool) error // optional test seam
 	PruneWorktree  func(repo string) error                   // optional test seam
+	RepairWorktree func(repo, path string) error             // optional test seam
 	UnlinkTrash    func(path string) error                   // optional test seam
 	StartUnlink    func(path string) error                   // optional test seam
 	RemoveState    func(name string) error                   // optional test seam

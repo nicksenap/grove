@@ -139,6 +139,7 @@ func (s *Service) sweepLeftoverTrash(fix bool) ([]models.DoctorIssue, int) {
 	if err != nil {
 		workspaces = nil
 	}
+	ownedPrefixes := ownedTrashPrefixes(workspaces)
 	var issues []models.DoctorIssue
 	fixed := 0
 	for _, trashRoot := range leftoverTrashRoots(s, workspaces) {
@@ -148,6 +149,15 @@ func (s *Service) sweepLeftoverTrash(fix bool) ([]models.DoctorIssue, int) {
 		}
 		for _, entry := range entries {
 			item := filepath.Join(trashRoot, entry.Name())
+			if trashOwnedByWorkspace(entry.Name(), ownedPrefixes) {
+				issue := models.DoctorIssue{
+					Workspace:       entry.Name(),
+					Issue:           "leftover trash still belongs to a workspace",
+					SuggestedAction: "restore quarantined workspace or retry delete",
+				}
+				issues = append(issues, issue)
+				continue
+			}
 			issue := models.DoctorIssue{
 				Workspace:       entry.Name(),
 				Issue:           "leftover trash",
@@ -165,6 +175,23 @@ func (s *Service) sweepLeftoverTrash(fix bool) ([]models.DoctorIssue, int) {
 		}
 	}
 	return issues, fixed
+}
+
+func ownedTrashPrefixes(workspaces []models.Workspace) []string {
+	prefixes := make([]string, 0, len(workspaces))
+	for _, ws := range workspaces {
+		prefixes = append(prefixes, filepath.Base(ws.Path)+"-")
+	}
+	return prefixes
+}
+
+func trashOwnedByWorkspace(name string, prefixes []string) bool {
+	for _, prefix := range prefixes {
+		if strings.HasPrefix(name, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 func leftoverTrashRoots(s *Service, workspaces []models.Workspace) []string {
@@ -192,6 +219,15 @@ func (s *Service) checkWorkspaceExists(ws models.Workspace, fix bool) (int, []mo
 	if _, err := os.Stat(ws.Path); err == nil {
 		return 0, nil
 	}
+	if trashPath := matchingTrashItem(s, ws); trashPath != "" {
+		issue := models.DoctorIssue{
+			Workspace:       ws.Name,
+			Repo:            nil,
+			Issue:           "workspace directory missing; bytes remain in leftover trash",
+			SuggestedAction: "restore quarantined workspace or retry delete",
+		}
+		return 0, []models.DoctorIssue{issue}
+	}
 	issue := models.DoctorIssue{
 		Workspace:       ws.Name,
 		Repo:            nil,
@@ -203,6 +239,22 @@ func (s *Service) checkWorkspaceExists(ws models.Workspace, fix bool) (int, []mo
 		return 1, []models.DoctorIssue{issue}
 	}
 	return 0, []models.DoctorIssue{issue}
+}
+
+func matchingTrashItem(s *Service, ws models.Workspace) string {
+	prefix := filepath.Base(ws.Path) + "-"
+	for _, trashRoot := range leftoverTrashRoots(s, []models.Workspace{ws}) {
+		entries, err := os.ReadDir(trashRoot)
+		if err != nil {
+			continue
+		}
+		for _, entry := range entries {
+			if strings.HasPrefix(entry.Name(), prefix) {
+				return filepath.Join(trashRoot, entry.Name())
+			}
+		}
+	}
+	return ""
 }
 
 func (s *Service) checkWorkspaceRepos(ws *models.Workspace, fix bool) (int, []models.DoctorIssue) {

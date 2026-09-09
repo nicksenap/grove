@@ -178,6 +178,53 @@ func TestDeleteStateRemovalFailureRestoresPath(t *testing.T) {
 	}
 }
 
+func TestDeleteRepairFailureIsReported(t *testing.T) {
+	env := setupTestEnv(t)
+	env.createRepo("api")
+	if err := env.createWorkspace("repair-ws", "feat/repair", []string{"api"}); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	env.svc.PruneWorktree = func(repo string) error {
+		return fmt.Errorf("simulated prune failure")
+	}
+	env.svc.RepairWorktree = func(repo, path string) error {
+		return fmt.Errorf("simulated repair failure")
+	}
+
+	err := env.svc.Delete("repair-ws")
+	if err == nil || !strings.Contains(err.Error(), "repair") {
+		t.Fatalf("expected repair failure to be reported, got %v", err)
+	}
+}
+
+func TestDoctorFixDoesNotDeleteTrashForMissingWorkspace(t *testing.T) {
+	env := setupTestEnv(t)
+	env.createRepo("api")
+	if err := env.createWorkspace("ghost-ws", "feat/ghost", []string{"api"}); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	ws, _ := env.svc.State.GetWorkspace("ghost-ws")
+	trashItem := filepath.Join(env.wsDir, ".trash", "ghost-ws-1")
+	if err := os.MkdirAll(filepath.Dir(trashItem), 0o755); err != nil {
+		t.Fatalf("create trash dir: %v", err)
+	}
+	if err := os.Rename(ws.Path, trashItem); err != nil {
+		t.Fatalf("quarantine fixture: %v", err)
+	}
+
+	_, _, err := env.svc.Doctor(true)
+	if err != nil {
+		t.Fatalf("doctor fix: %v", err)
+	}
+	if saved, _ := env.svc.State.GetWorkspace("ghost-ws"); saved == nil {
+		t.Fatal("doctor --fix should not drop state while workspace bytes sit in .trash")
+	}
+	if _, err := os.Stat(trashItem); err != nil {
+		t.Fatalf("doctor --fix should not unlink trash that may still belong to a workspace: %v", err)
+	}
+}
+
 func TestDeletePruneFailureRestoresPathAndState(t *testing.T) {
 	env := setupTestEnv(t)
 	env.createRepo("api")

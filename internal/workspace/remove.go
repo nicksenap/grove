@@ -109,14 +109,14 @@ func (s *Service) deleteLocked(name string, opts RemoveOptions) (*models.Workspa
 		}
 	}
 	if len(pruneErrs) > 0 {
-		if restoreErr := restoreQuarantinedWorkspace(ws, trashPath); restoreErr != nil {
+		if restoreErr := s.restoreQuarantinedWorkspace(ws, trashPath); restoreErr != nil {
 			return nil, "", errors.Join(append(pruneErrs, restoreErr)...)
 		}
 		return nil, "", errors.Join(pruneErrs...)
 	}
 
 	if err := s.removeState(name); err != nil {
-		if restoreErr := restoreQuarantinedWorkspace(ws, trashPath); restoreErr != nil {
+		if restoreErr := s.restoreQuarantinedWorkspace(ws, trashPath); restoreErr != nil {
 			return nil, "", errors.Join(err, restoreErr)
 		}
 		return nil, "", err
@@ -128,14 +128,24 @@ func (s *Service) deleteLocked(name string, opts RemoveOptions) (*models.Workspa
 	return &original, trashPath, nil
 }
 
-func restoreQuarantinedWorkspace(ws *models.Workspace, trashPath string) error {
+func (s *Service) restoreQuarantinedWorkspace(ws *models.Workspace, trashPath string) error {
 	if renameErr := os.Rename(trashPath, ws.Path); renameErr != nil {
 		return fmt.Errorf("restoring workspace root %s: %w", ws.Path, renameErr)
 	}
+	var repairErrs []error
 	for _, repo := range ws.Repos {
-		_ = gitops.WorktreeRepair(repo.SourceRepo, repo.WorktreePath)
+		if err := s.repairWorktree(repo.SourceRepo, repo.WorktreePath); err != nil {
+			repairErrs = append(repairErrs, fmt.Errorf("%s: repairing worktree: %w", repo.RepoName, err))
+		}
 	}
-	return nil
+	return errors.Join(repairErrs...)
+}
+
+func (s *Service) repairWorktree(repo, path string) error {
+	if s.RepairWorktree != nil {
+		return s.RepairWorktree(repo, path)
+	}
+	return gitops.WorktreeRepair(repo, path)
 }
 
 func (s *Service) removeState(name string) error {
