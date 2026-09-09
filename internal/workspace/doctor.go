@@ -3,6 +3,7 @@ package workspace
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 
@@ -81,7 +82,12 @@ func (s *Service) AllWorkspacesSummary() ([]WorkspaceSummary, error) {
 // Doctor checks workspace health and returns issues.
 func (s *Service) Doctor(fix bool) ([]models.DoctorIssue, int, error) {
 	if !fix {
-		return s.doctor(false)
+		issues, _, err := s.doctor(false)
+		if err != nil {
+			return issues, 0, err
+		}
+		trashIssues, _ := s.sweepLeftoverTrash(false)
+		return append(issues, trashIssues...), 0, nil
 	}
 
 	var issues []models.DoctorIssue
@@ -91,7 +97,14 @@ func (s *Service) Doctor(fix bool) ([]models.DoctorIssue, int, error) {
 		issues, fixed, err = s.doctor(true)
 		return err
 	})
-	return issues, fixed, err
+	if err != nil {
+		return issues, fixed, err
+	}
+
+	// Unlink leftover trash outside the mutation lock so doctor --fix does not
+	// hold state.lock while walking large trees.
+	trashIssues, trashFixed := s.sweepLeftoverTrash(true)
+	return append(issues, trashIssues...), fixed + trashFixed, nil
 }
 
 func (s *Service) doctor(fix bool) ([]models.DoctorIssue, int, error) {
@@ -119,6 +132,60 @@ func (s *Service) doctor(fix bool) ([]models.DoctorIssue, int, error) {
 	}
 
 	return issues, fixed, nil
+}
+
+func (s *Service) sweepLeftoverTrash(fix bool) ([]models.DoctorIssue, int) {
+	workspaces, err := s.State.Load()
+	if err != nil {
+		workspaces = nil
+	}
+	var issues []models.DoctorIssue
+	fixed := 0
+	for _, trashRoot := range leftoverTrashRoots(s, workspaces) {
+		entries, err := os.ReadDir(trashRoot)
+		if err != nil {
+			continue
+		}
+		for _, entry := range entries {
+			item := filepath.Join(trashRoot, entry.Name())
+			issue := models.DoctorIssue{
+				Workspace:       entry.Name(),
+				Issue:           "leftover trash",
+				SuggestedAction: "remove quarantined workspace bytes",
+			}
+			if fix {
+				if err := UnlinkTrashPath(item); err != nil && !os.IsNotExist(err) {
+					issue.SuggestedAction = "remove quarantined workspace bytes (failed: " + err.Error() + ")"
+					issues = append(issues, issue)
+					continue
+				}
+				fixed++
+			}
+			issues = append(issues, issue)
+		}
+	}
+	return issues, fixed
+}
+
+func leftoverTrashRoots(s *Service, workspaces []models.Workspace) []string {
+	seen := map[string]struct{}{}
+	var roots []string
+	add := func(dir string) {
+		if dir == "" {
+			return
+		}
+		if _, ok := seen[dir]; ok {
+			return
+		}
+		seen[dir] = struct{}{}
+		roots = append(roots, filepath.Join(dir, trashDirName))
+	}
+	for _, ws := range workspaces {
+		add(filepath.Dir(ws.Path))
+	}
+	add(s.WorkspaceDir)
+	add(filepath.Join(filepath.Dir(s.State.Path), "workspaces"))
+	return roots
 }
 
 func (s *Service) checkWorkspaceExists(ws models.Workspace, fix bool) (int, []models.DoctorIssue) {

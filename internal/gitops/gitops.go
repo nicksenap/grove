@@ -188,6 +188,12 @@ func WorktreeRemove(repo, path string, force bool) error {
 	return err
 }
 
+// WorktreePrune drops registrations for worktrees whose directories are gone.
+func WorktreePrune(repo string) error {
+	_, err := runGit(repo, "worktree", "prune", "--expire=now")
+	return err
+}
+
 // WorktreeRepair repairs worktree references.
 func WorktreeRepair(repo, path string) error {
 	_, err := runGit(repo, "worktree", "repair", path)

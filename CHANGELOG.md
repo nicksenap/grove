@@ -6,6 +6,10 @@
 
 - `gw run` is no longer a builtin command. Install the first-party plugin with `gw plugin install nicksenap/gw-run`. Without it, `gw run` follows the normal unknown-command path. Core still parses `.grove.toml` `run` / `pre_run` / `post_run` keys (ownership decision tracked separately).
 
+### Improvements
+
+- Workspace deletion now quarantines the workspace with a same-filesystem rename, prunes Git worktree registrations, and unlinks the bytes in the background. `gw go -bd` and `gw delete` return as soon as the original path is free, so large `node_modules` trees no longer block navigation. Spawn failures fall back to a synchronous unlink; leftover trash is reported and removable with `gw doctor --fix`.
+
 ### Fixes
 
 - `gw add-repo` and `gw remove-repo` now share workspace resolution: omitted NAME uses the workspace containing cwd, and both fail with "not inside a workspace" otherwise. `--repos` completion is inverse: add lists discovered repos not already in the workspace; remove lists only repos already in it. Both return no candidates outside a workspace.

@@ -157,6 +157,30 @@ func TestWorktreeAddAndRemove(t *testing.T) {
 	}
 }
 
+func TestWorktreePruneDropsMissingDirectory(t *testing.T) {
+	repo := initTestRepo(t)
+	CreateBranch(repo, "feat/prune-test", "")
+	wtPath := filepath.Join(t.TempDir(), "worktree")
+	if err := WorktreeAdd(repo, wtPath, "feat/prune-test"); err != nil {
+		t.Fatalf("add: %v", err)
+	}
+	if err := os.RemoveAll(wtPath); err != nil {
+		t.Fatalf("remove worktree dir: %v", err)
+	}
+	if err := WorktreePrune(repo); err != nil {
+		t.Fatalf("prune: %v", err)
+	}
+	entries, err := WorktreeList(repo)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	for _, e := range entries {
+		if e.Branch == "feat/prune-test" {
+			t.Fatal("pruned worktree should not remain registered")
+		}
+	}
+}
+
 func TestRemoteBranchExists(t *testing.T) {
 	repo := initTestRepo(t)
 

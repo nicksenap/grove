@@ -74,6 +74,7 @@ func init() {
 		removeDirCmd,
 		pluginCmd,
 		bugReportCmd,
+		unlinkTrashCmd,
 	)
 }
 
