@@ -262,6 +262,7 @@ Plugins extend Grove with custom commands. They're standalone binaries prefixed 
 
 #### From GitHub
 ```bash
+gw plugin install nicksenap/gw-run
 gw plugin install nicksenap/gw-dispatch
 gw plugin install igor-kupczynski/gw-code
 ```
@@ -400,8 +401,25 @@ Checks for:
 - Missing git repos (in state but source repo deleted)
 - Worktree conflicts (path collisions)
 - Config issues (missing repo_dirs, invalid presets)
+- Leftover `.trash` entries from asynchronous deletion
 
-Suggests fixes for each issue.
+With `--fix`, it removes leftover trash that is not identified as belonging to a workspace. Trash that still matches a workspace path is reported for restoration or delete retry rather than removed automatically.
+
+### Workspace Cleanup and Pruning
+
+`gw delete` and `gw prune --yes` first rename the workspace root into `<workspace-dir>/.trash/`. Grove then prunes Git's registrations for the relocated worktrees, removes the workspace from `~/.grove/state.json`, deletes the recorded branches, and starts a detached `gw unlink-trash PATH` process to remove the quarantined files. This keeps the workspace path and logical state responsive even when the tree contains large build artifacts.
+
+The `unlink-trash` command is hidden and intended only for Grove's background cleanup. It refuses paths whose parent is not `.trash`; if the child process cannot start, Grove falls back to synchronous unlinking and logs failures as warnings. A leftover `.trash` item is not an active workspace, but should be removed after confirming no cleanup process is still running.
+
+Use age-based pruning to review stale workspaces before deleting them:
+
+```bash
+gw prune --json                 # machine-readable preview; default threshold is 7 days
+gw prune --min-age 14            # table preview for workspaces created at least 14 days ago
+gw prune --min-age 14 --yes      # delete matching workspaces
+```
+
+Pruning uses `created_at`, not last navigation time. It skips malformed timestamps and never deletes during preview mode. The JSON output includes `name`, `branch`, `created_at`, and `age_days`.
 
 ### Common Issues
 
@@ -437,9 +455,12 @@ Grove sets `GIT_TERMINAL_PROMPT=0` to disable interactive prompts. If auth fails
 #### "Worktree path exists"
 Grove cleans up worktrees on delete, but manual deletion of files can leave state inconsistent. Run:
 ```bash
-gw doctor         # Identifies orphaned entries
+gw doctor         # Identifies orphaned entries and leftover .trash items
+gw doctor --fix   # Removes unowned leftover trash
 gw delete <name>  # Destructively removes the registered workspace
 ```
+
+Deletion first moves the workspace into a sibling `.trash/` directory, removes Git registrations and state, and starts a detached `gw unlink-trash` process to remove the bytes. This keeps the original path available quickly, but a failed background unlink may leave data under `.trash/`; `gw doctor` is the recovery path. Do not manually pass arbitrary paths to `unlink-trash`: it is hidden and rejects paths that are not direct children of `.trash`.
 
 #### "Hook timeout"
 Long-running setup commands can exceed default timeout. Configure:

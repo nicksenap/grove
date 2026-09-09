@@ -43,7 +43,8 @@ Cobra command handlers that:
 
 **Key commands**:
 - `cmd/create.go` — Create a workspace with specified repos
-- `cmd/delete.go` — Destroy workspace (clean up worktrees + branches)
+- `cmd/delete.go` — Destroy workspace (quarantine worktree roots, clean up registrations + branches)
+- `cmd/prune.go` — Find and optionally delete workspaces older than a minimum age
 - `cmd/status.go` — Show git status across repos
 - `cmd/sync_cmd.go` — Rebase all repos
 - `cmd/reset.go` — Return repos to their recorded workspace branch, then sync
@@ -53,8 +54,9 @@ Cobra command handlers that:
 ### 3. **Core Layer** (`internal/workspace/`)
 **`workspace.Service`** is the orchestrator:
 - `Create()` / `CreateWithOpts()` — Create a workspace with worktrees
-- `Delete()` — Clean up worktrees and branches
+- `Delete()` — Quarantine workspace roots, prune Git registrations, remove state, and schedule unlink
 - `Status()` — Query git status across repos (concurrent)
+- `Doctor()` — Diagnose workspace and leftover-trash inconsistencies, optionally fixing unowned trash
 - `Sync()` — Rebase all repos onto their base branches
 - `Reset()` — Switch repos to their recorded workspace branches, then sync
 - `AddRepo()`, `RemoveRepo()` — Modify existing workspace
@@ -134,6 +136,8 @@ Subprocess wrappers around git commands:
 - `CreateWorktree()` — Create a new worktree
 - `Checkout()` — Check out a branch
 - `Switch()` — Switch a worktree to a branch, optionally discarding tracked changes
+- `WorktreePrune()` — Drop registrations for worktrees whose directories were relocated or removed
+- `WorktreeRepair()` — Restore worktree references after a failed quarantine rollback
 - `Fetch()` — Fetch latest refs
 - `Status()` — Get short git status
 - `IsGitURL()` — Validate git URL format
@@ -245,10 +249,14 @@ Hooks are not an afterthought; they're central to the design:
 
 The workspace service remains the orchestration boundary, but its operations are implemented in focused files such as `internal/workspace/create.go`, `status.go`, `sync.go`, `remove.go`, `rename.go`, and `reset.go`. This keeps command-specific lifecycle behavior close to its implementation while preserving one service API for the CLI. The reset path uses `internal/gitops.Switch()` to restore each recorded branch before reusing the existing sync operation.
 
-### 7. **Plugin Extensibility**
+### 7. **Quarantined Deletion and Safe Asynchronous Cleanup**
+
+Deletion separates logical cleanup from removal of potentially large directory trees. `internal/workspace/remove.go` first renames the workspace root into a sibling `.trash/<workspace>-<timestamp>` item, prunes Git worktree registrations, removes the workspace from state, and then starts the hidden `gw unlink-trash PATH` child process. `UnlinkTrashPath()` accepts only paths whose parent is `.trash`, retries removal, and logs failures without retaining the state lock. `gw doctor` inspects leftover trash, preserves items that still appear owned by a live workspace, and `--fix` removes unowned leftovers.
+
+### 8. **Plugin Extensibility**
 Rather than embedding tool-specific logic for coding agents, terminal multiplexers, or dashboards, Grove exposes hooks and environment variables. Plugins decide what to do with workspace lifecycle events.
 
-### 8. **Per-Repo Configuration**
+### 9. **Per-Repo Configuration**
 Each repo can have its own `.grove.toml` to define:
 - Default base branch (override main/master)
 - Setup commands to run after worktree creation

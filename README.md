@@ -20,6 +20,12 @@ One feature across three services means `git worktree add` three times, tracking
 
 Grove gives you the multi-repo worktree workflow that monorepos get for free. One command, one workspace, all repos on the same branch.
 
+## Origin
+
+Grove was inspired by [PostHog's `posthog-worktree` script](https://github.com/PostHog/posthog/blob/master/bin/posthog-worktree), which automates worktree creation and development environment setup for PostHog. The idea was simple: a new worktree should be ready to work in.
+
+Grove brings that convenience to projects spread across multiple repositories. It groups their worktrees into one workspace, with per-repo setup commands and hooks for your development tools. The goal is to stay simple, fast, and lightweight: a small Go binary focused on Git worktrees, with tool-specific integrations in plugins.
+
 ## Getting Started
 
 ### 1. Install Grove

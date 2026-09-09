@@ -266,7 +266,33 @@ gw prune --yes
 - Lists workspaces whose `created_at` is at least `--min-age` days old (default 7)
 - Does not delete unless `--yes` is passed
 - `--yes` deletes matching workspaces through the same two-phase path as `gw delete` (quarantine, prune git registrations, drop state, background unlink)
+- `--json` emits a JSON array of candidates with `name`, `branch`, `created_at`, and computed `age_days`; with `--yes`, it reports the candidates after deletion
+- A negative `--min-age` is rejected; workspaces with missing or unparseable `created_at` values are skipped
 - Age is based on workspace creation time, not last use (`gw go` is not recorded)
+
+```mermaid
+sequenceDiagram
+    participant CLI as gw prune
+    participant State as state.json
+    participant Service as operations service
+    participant Workspace as workspace removal
+    participant Trash as background unlink
+    CLI->>State: Load workspaces
+    CLI->>CLI: Filter created_at by min-age
+    alt Preview
+        CLI-->>CLI: Render table or JSON
+    else Delete with --yes
+        loop Each candidate
+            CLI->>Service: Delete with Force
+            Service->>Workspace: Quarantine root and prune registrations
+            Workspace->>State: Remove workspace
+            Workspace-->>Trash: Schedule unlink of .trash item
+        end
+        CLI-->>CLI: Render deleted candidates
+    end
+```
+
+This flow shows that pruning is a filter over persisted creation timestamps and that filesystem unlinking is decoupled from logical state removal.
 
 ### Code Flow
 
@@ -283,6 +309,7 @@ gw prune --yes
 - **Hook timing**: `pre_delete` fires before worktree removal (still has access to working directories)
 - **Deletion policy**: Deletion is destructive by default. A `pre_delete` hook with `on_failure = "abort"` is the extension point for safeguards.
 - **Hook bypass**: `--no-hooks` skips lifecycle hooks, including any configured deletion policy
+- **Trash safety**: `unlink-trash` is hidden and only accepts a direct child of `.trash`; leftover items are inspected by `gw doctor` before optional removal
 
 ---
 
