@@ -45,6 +45,18 @@ func TestExtractUnknownCommand(t *testing.T) {
 	}
 }
 
+func TestShouldShowUpdateNoticeRequiresTerminalStderr(t *testing.T) {
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+	defer w.Close()
+	if shouldShowUpdateNotice(w) {
+		t.Fatal("update notice should be suppressed when stderr is redirected")
+	}
+}
+
 func TestPluginArgs(t *testing.T) {
 	// Save and restore os.Args — tests mutate it.
 	orig := os.Args

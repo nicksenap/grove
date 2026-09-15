@@ -100,6 +100,29 @@ gw prune               # list workspaces older than 7 days
 gw prune --yes         # delete them (same two-phase cleanup as gw delete)
 ```
 
+### Pipelines and machine-readable output
+
+List-style commands support `--output` (`-o`) with `table`, `json`, `jsonl`, `tsv`, `name`, and `path` formats. `table` remains the default. Existing `--json` / `-j` flags remain supported as compatibility aliases for `--output json`.
+
+```bash
+# Select a workspace without parsing a table
+gw list -o name | fzf
+
+# Feed workspace paths into another command
+gw list -o path | while IFS= read -r path; do
+  printf '%s\n' "$path"
+done
+
+# Process one complete object per line
+gw status my-feature -o jsonl |
+  jq -r 'select(.status != "clean") | .repo'
+
+# Delete a reviewed set of workspaces from newline-delimited stdin
+gw list -o name | grep '^old-' | gw delete --stdin --yes
+```
+
+The output formats are available on `gw list`, `gw repos`, `gw status`, and `gw ws show`. Data is written to stdout; progress and diagnostics are written to stderr. ANSI styling is disabled when output is redirected or `NO_COLOR` is set.
+
 Interactive menus support **type-to-search** filtering, arrow-key navigation (single-select), or arrow + tab (multi-select) with an `(all)` shortcut.
 
 Presets, plugins, hooks, and the full command reference are covered in [Workflows](openwiki/workflows.md) and [Operations](openwiki/operations.md).

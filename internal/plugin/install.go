@@ -15,6 +15,8 @@ import (
 	"runtime"
 	"strings"
 	"time"
+
+	"github.com/nicksenap/grove/internal/console"
 )
 
 // ghRelease is a subset of the GitHub release API response.
@@ -79,8 +81,7 @@ func Install(repo string) error {
 	// Save metadata so we know where to upgrade from
 	saveMeta(pluginCmd, owner+"/"+name, release.TagName)
 
-	fmt.Fprintf(os.Stderr, "\033[1;32mok:\033[0m Installed %s %s → %s\n",
-		pluginCmd, release.TagName, destPath)
+	console.Successf("Installed %s %s → %s", pluginCmd, release.TagName, destPath)
 	return nil
 }
 
@@ -140,7 +141,7 @@ func UpgradeAll() ([]string, error) {
 			continue // manually installed, skip
 		}
 		if err := Upgrade(p.Name); err != nil {
-			fmt.Fprintf(os.Stderr, "\033[1;33mwarn:\033[0m %s: %s\n", p.Name, err)
+			console.Warningf("%s: %s", p.Name, err)
 			continue
 		}
 		upgraded = append(upgraded, p.Name)

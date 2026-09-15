@@ -2,12 +2,12 @@ package cmd
 
 import (
 	"errors"
-	"fmt"
 	"os"
 	"os/exec"
 	"strings"
 
 	"github.com/nicksenap/grove/internal/config"
+	"github.com/nicksenap/grove/internal/console"
 	"github.com/nicksenap/grove/internal/lifecycle"
 	"github.com/nicksenap/grove/internal/logging"
 	"github.com/nicksenap/grove/internal/picker"
@@ -29,8 +29,10 @@ var rootCmd = &cobra.Command{
 		if cmd.Annotations[offlineCommandAnnotation] == "true" {
 			return
 		}
-		if notice := update.NewChecker(config.GroveDir).FormatNotice(Version); notice != "" {
-			fmt.Fprintf(os.Stderr, "\033[2m%s\033[0m\n", notice)
+		if shouldShowUpdateNotice(os.Stderr) {
+			if notice := update.NewChecker(config.GroveDir).FormatNotice(Version); notice != "" {
+				console.Info(notice)
+			}
 		}
 		logging.Setup(verbose)
 		logging.Info("gw %s", cmd.Name())
@@ -92,7 +94,7 @@ func Execute() {
 						if errors.As(execErr, &exitErr) {
 							os.Exit(exitErr.ExitCode())
 						}
-						fmt.Fprintf(os.Stderr, "\033[1;31merror:\033[0m plugin %s: %s\n", name, execErr)
+						console.Errorf("plugin %s: %s", name, execErr)
 						os.Exit(1)
 					}
 					// If Exec used syscall.Exec (Unix), we never reach here.
@@ -101,9 +103,13 @@ func Execute() {
 			}
 		}
 		// Print the error ourselves since we silenced cobra
-		fmt.Fprintf(os.Stderr, "\033[1;31merror:\033[0m %s\n", err)
+		console.Error(err.Error())
 		os.Exit(1)
 	}
+}
+
+func shouldShowUpdateNotice(stderr *os.File) bool {
+	return console.IsTerminal(stderr)
 }
 
 // isUnknownCommandErr checks if the error is cobra's "unknown command" error.
@@ -139,7 +145,7 @@ func pluginArgs(name string) []string {
 
 // exitError prints error to stderr and exits.
 func exitError(msg string) {
-	fmt.Fprintf(os.Stderr, "\033[1;31merror:\033[0m %s\n", msg)
+	console.Error(msg)
 	os.Exit(1)
 }
 

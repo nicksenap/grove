@@ -1,9 +1,12 @@
 package workspace
 
 import (
+	"bytes"
+	"strings"
 	"testing"
 
 	"github.com/nicksenap/grove/internal/models"
+	"github.com/nicksenap/grove/internal/output"
 )
 
 func TestFormatSourceLine(t *testing.T) {
@@ -128,5 +131,43 @@ func TestStatusMultiRepoAllReported(t *testing.T) {
 	err := env.svc.Status("multi-status", StatusOptions{})
 	if err != nil {
 		t.Fatalf("status: %v", err)
+	}
+}
+
+func TestWriteStatusPathOutputsOneWorktreePerLine(t *testing.T) {
+	ws := &models.Workspace{
+		Name: "alpha",
+		Path: "/workspaces/alpha",
+		Repos: []models.RepoWorktree{
+			{RepoName: "api", WorktreePath: "/workspaces/alpha/api"},
+			{RepoName: "web", WorktreePath: "/workspaces/alpha/web"},
+		},
+	}
+	results := []repoStatusResult{{Repo: "api"}, {Repo: "web"}}
+	var stdout bytes.Buffer
+
+	if err := writeStatus(&stdout, ws, results, output.Path, StatusOptions{}); err != nil {
+		t.Fatalf("writeStatus: %v", err)
+	}
+	if got := stdout.String(); got != "/workspaces/alpha/api\n/workspaces/alpha/web\n" {
+		t.Fatalf("stdout = %q", got)
+	}
+}
+
+func TestWriteStatusJSONLinesIncludesWorkspaceAndRepoPaths(t *testing.T) {
+	ws := &models.Workspace{
+		Name:  "alpha",
+		Path:  "/workspaces/alpha",
+		Repos: []models.RepoWorktree{{RepoName: "api", WorktreePath: "/workspaces/alpha/api"}},
+	}
+	results := []repoStatusResult{{Repo: "api", Branch: "feat/a", Status: "clean", Ahead: "0", Behind: "0"}}
+	var stdout bytes.Buffer
+
+	if err := writeStatus(&stdout, ws, results, output.JSONLines, StatusOptions{}); err != nil {
+		t.Fatalf("writeStatus: %v", err)
+	}
+	got := stdout.String()
+	if !strings.Contains(got, `"workspace":"alpha"`) || !strings.Contains(got, `"path":"/workspaces/alpha/api"`) || strings.Count(got, "\n") != 1 {
+		t.Fatalf("unexpected JSONL: %q", got)
 	}
 }
