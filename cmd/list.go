@@ -69,7 +69,7 @@ func init() {
 }
 
 func doListAll() {
-	format, err := output.Resolve(listOutput, listJSON, output.Table, output.JSON, output.JSONLines, output.TSV, output.Name, output.Path)
+	format, err := resolveQueryOutput(listOutput, listJSON)
 	if err != nil {
 		exitError(err.Error())
 	}
@@ -109,7 +109,7 @@ func listWithStatus(format output.Format) {
 }
 
 func doShowOne(name string) {
-	format, err := output.Resolve(wsShowOutput, wsShowJSON, output.Table, output.JSON, output.JSONLines, output.TSV, output.Name, output.Path)
+	format, err := resolveQueryOutput(wsShowOutput, wsShowJSON)
 	if err != nil {
 		exitError(err.Error())
 	}

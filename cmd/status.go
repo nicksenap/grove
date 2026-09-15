@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"github.com/nicksenap/grove/internal/console"
-	"github.com/nicksenap/grove/internal/output"
 	"github.com/nicksenap/grove/internal/workspace"
 	"github.com/spf13/cobra"
 )
@@ -30,7 +29,7 @@ var statusCmd = &cobra.Command{
 			console.Warning("--all is deprecated. Use: gw list -s")
 		}
 
-		format, err := output.Resolve(statusOutput, statusJSON, output.Table, output.JSON, output.JSONLines, output.TSV, output.Name, output.Path)
+		format, err := resolveQueryOutput(statusOutput, statusJSON)
 		if err != nil {
 			exitError(err.Error())
 		}

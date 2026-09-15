@@ -2,7 +2,10 @@
 package output
 
 import (
+	"encoding/csv"
+	"encoding/json"
 	"fmt"
+	"io"
 	"strings"
 )
 
@@ -17,6 +20,39 @@ const (
 	Name      Format = "name"
 	Path      Format = "path"
 )
+
+// WriteJSON writes one indented JSON value.
+func WriteJSON(w io.Writer, value any) error {
+	encoder := json.NewEncoder(w)
+	encoder.SetIndent("", "  ")
+	return encoder.Encode(value)
+}
+
+// WriteJSONLine writes one compact JSON value followed by a newline.
+func WriteJSONLine(w io.Writer, value any) error {
+	return json.NewEncoder(w).Encode(value)
+}
+
+// WriteJSONLines writes each value as one compact JSON line.
+func WriteJSONLines[T any](w io.Writer, values []T) error {
+	encoder := json.NewEncoder(w)
+	for _, value := range values {
+		if err := encoder.Encode(value); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// WriteTSV writes rows using tab-separated CSV escaping rules.
+func WriteTSV(w io.Writer, rows [][]string) error {
+	writer := csv.NewWriter(w)
+	writer.Comma = '\t'
+	if err := writer.WriteAll(rows); err != nil {
+		return err
+	}
+	return writer.Error()
+}
 
 // Resolve validates an explicit --output value and maps the legacy --json flag
 // to the json format. Commands pass only the formats they support.

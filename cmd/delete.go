@@ -76,23 +76,24 @@ func doDelete(cmd *cobra.Command, args []string) {
 }
 
 func resolveDeleteNames(args []string, fromStdin, yes bool, stdin io.Reader) ([]string, error) {
-	if fromStdin && len(args) > 0 {
+	if !fromStdin {
+		return uniqueDeleteNames(args), nil
+	}
+	if len(args) > 0 {
 		return nil, fmt.Errorf("workspace arguments cannot be combined with --stdin")
 	}
-	if fromStdin {
-		if !yes {
-			return nil, fmt.Errorf("--yes is required when deleting workspaces from --stdin")
-		}
-		names, err := readDeleteNames(stdin)
-		if err != nil {
-			return nil, err
-		}
-		if len(names) == 0 {
-			return nil, fmt.Errorf("no workspace names received on stdin")
-		}
-		return names, nil
+	if !yes {
+		return nil, fmt.Errorf("--yes is required when deleting workspaces from --stdin")
 	}
-	return uniqueDeleteNames(args), nil
+
+	names, err := readDeleteNames(stdin)
+	if err != nil {
+		return nil, err
+	}
+	if len(names) == 0 {
+		return nil, fmt.Errorf("no workspace names received on stdin")
+	}
+	return names, nil
 }
 
 func readDeleteNames(r io.Reader) ([]string, error) {

@@ -34,7 +34,7 @@ var reposCmd = &cobra.Command{
 		"Use --json for machine-readable output.",
 	Args: cobra.NoArgs,
 	Run: func(cmd *cobra.Command, args []string) {
-		format, err := output.Resolve(reposOutput, reposJSON, output.Table, output.JSON, output.JSONLines, output.TSV, output.Name, output.Path)
+		format, err := resolveQueryOutput(reposOutput, reposJSON)
 		if err != nil {
 			exitError(err.Error())
 		}

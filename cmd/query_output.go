@@ -1,8 +1,6 @@
 package cmd
 
 import (
-	"encoding/csv"
-	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -15,34 +13,32 @@ import (
 	"github.com/nicksenap/grove/internal/workspace"
 )
 
-func writeJSON(w io.Writer, value any, lines bool) error {
-	encoder := json.NewEncoder(w)
-	if !lines {
-		encoder.SetIndent("", "  ")
-	}
-	return encoder.Encode(value)
+var queryOutputFormats = []output.Format{
+	output.Table,
+	output.JSON,
+	output.JSONLines,
+	output.TSV,
+	output.Name,
+	output.Path,
 }
 
-func writeTSV(w io.Writer, rows [][]string) error {
-	writer := csv.NewWriter(w)
-	writer.Comma = '\t'
-	if err := writer.WriteAll(rows); err != nil {
-		return err
+func resolveQueryOutput(value string, legacyJSON bool) (output.Format, error) {
+	return output.Resolve(value, legacyJSON, queryOutputFormats...)
+}
+
+func abbreviateHome(path, home string) string {
+	if home == "" {
+		return path
 	}
-	return writer.Error()
+	return strings.Replace(path, home, "~", 1)
 }
 
 func writeWorkspaceList(w io.Writer, workspaces []models.Workspace, format output.Format) error {
 	switch format {
 	case output.JSON:
-		return writeJSON(w, workspaces, false)
+		return output.WriteJSON(w, workspaces)
 	case output.JSONLines:
-		for _, ws := range workspaces {
-			if err := writeJSON(w, ws, true); err != nil {
-				return err
-			}
-		}
-		return nil
+		return output.WriteJSONLines(w, workspaces)
 	case output.Name:
 		for _, ws := range workspaces {
 			fmt.Fprintln(w, ws.Name)
@@ -58,7 +54,7 @@ func writeWorkspaceList(w io.Writer, workspaces []models.Workspace, format outpu
 		for _, ws := range workspaces {
 			rows = append(rows, []string{ws.Name, ws.Branch, strconv.Itoa(len(ws.Repos)), ws.CreatedAt})
 		}
-		return writeTSV(w, rows)
+		return output.WriteTSV(w, rows)
 	case output.Table:
 		table := console.NewTable(w, []string{"Name", "Branch", "Repos", "Created"})
 		for _, ws := range workspaces {
@@ -78,14 +74,9 @@ func writeWorkspaceList(w io.Writer, workspaces []models.Workspace, format outpu
 func writeWorkspaceSummaries(w io.Writer, summaries []workspace.WorkspaceSummary, format output.Format) error {
 	switch format {
 	case output.JSON:
-		return writeJSON(w, summaries, false)
+		return output.WriteJSON(w, summaries)
 	case output.JSONLines:
-		for _, summary := range summaries {
-			if err := writeJSON(w, summary, true); err != nil {
-				return err
-			}
-		}
-		return nil
+		return output.WriteJSONLines(w, summaries)
 	case output.Name:
 		for _, summary := range summaries {
 			fmt.Fprintln(w, summary.Name)
@@ -101,16 +92,12 @@ func writeWorkspaceSummaries(w io.Writer, summaries []workspace.WorkspaceSummary
 		for _, summary := range summaries {
 			rows = append(rows, []string{summary.Name, summary.Branch, strconv.Itoa(summary.Repos), summary.Status, summary.Path})
 		}
-		return writeTSV(w, rows)
+		return output.WriteTSV(w, rows)
 	case output.Table:
 		home, _ := os.UserHomeDir()
 		table := console.NewTable(w, []string{"Name", "Branch", "Repos", "Status", "Path"})
 		for _, summary := range summaries {
-			path := summary.Path
-			if home != "" {
-				path = strings.Replace(path, home, "~", 1)
-			}
-			table.AddRow([]string{summary.Name, summary.Branch, strconv.Itoa(summary.Repos), summary.Status, path})
+			table.AddRow([]string{summary.Name, summary.Branch, strconv.Itoa(summary.Repos), summary.Status, abbreviateHome(summary.Path, home)})
 		}
 		table.Render()
 		return nil
@@ -121,8 +108,10 @@ func writeWorkspaceSummaries(w io.Writer, summaries []workspace.WorkspaceSummary
 
 func writeWorkspaceShow(w io.Writer, ws *models.Workspace, format output.Format) error {
 	switch format {
-	case output.JSON, output.JSONLines:
-		return writeJSON(w, ws, format == output.JSONLines)
+	case output.JSON:
+		return output.WriteJSON(w, ws)
+	case output.JSONLines:
+		return output.WriteJSONLine(w, ws)
 	case output.Name:
 		_, err := fmt.Fprintln(w, ws.Name)
 		return err
@@ -130,59 +119,50 @@ func writeWorkspaceShow(w io.Writer, ws *models.Workspace, format output.Format)
 		_, err := fmt.Fprintln(w, ws.Path)
 		return err
 	case output.TSV:
-		return writeTSV(w, [][]string{
+		return output.WriteTSV(w, [][]string{
 			{"NAME", "PATH", "BRANCH", "CREATED", "REPOS"},
 			{ws.Name, ws.Path, ws.Branch, ws.CreatedAt, strconv.Itoa(len(ws.Repos))},
 		})
 	case output.Table:
-		home, _ := os.UserHomeDir()
-		wsPath := ws.Path
-		if home != "" {
-			wsPath = strings.Replace(wsPath, home, "~", 1)
-		}
-		created := ws.CreatedAt
-		if len(created) > 19 {
-			created = created[:19]
-		}
-		fmt.Fprintf(w, "Name:      %s\n", ws.Name)
-		fmt.Fprintf(w, "Branch:    %s\n", ws.Branch)
-		fmt.Fprintf(w, "Path:      %s\n", wsPath)
-		fmt.Fprintf(w, "Created:   %s\n", created)
-		fmt.Fprintf(w, "Repos:     %d\n\n", len(ws.Repos))
-
-		wsPrefix := ws.Path + "/"
-		table := console.NewTable(w, []string{"Repo", "Branch", "Worktree", "Source"})
-		for _, repo := range ws.Repos {
-			worktree := repo.WorktreePath
-			if after, ok := strings.CutPrefix(worktree, wsPrefix); ok {
-				worktree = after
-			} else if home != "" {
-				worktree = strings.Replace(worktree, home, "~", 1)
-			}
-			source := repo.SourceRepo
-			if home != "" {
-				source = strings.Replace(source, home, "~", 1)
-			}
-			table.AddRow([]string{repo.RepoName, repo.Branch, worktree, source})
-		}
-		table.Render()
+		writeWorkspaceTable(w, ws)
 		return nil
 	default:
 		return fmt.Errorf("unsupported workspace show output %q", format)
 	}
 }
 
+func writeWorkspaceTable(w io.Writer, ws *models.Workspace) {
+	home, _ := os.UserHomeDir()
+	created := ws.CreatedAt
+	if len(created) > 19 {
+		created = created[:19]
+	}
+	fmt.Fprintf(w, "Name:      %s\n", ws.Name)
+	fmt.Fprintf(w, "Branch:    %s\n", ws.Branch)
+	fmt.Fprintf(w, "Path:      %s\n", abbreviateHome(ws.Path, home))
+	fmt.Fprintf(w, "Created:   %s\n", created)
+	fmt.Fprintf(w, "Repos:     %d\n\n", len(ws.Repos))
+
+	workspacePrefix := ws.Path + "/"
+	table := console.NewTable(w, []string{"Repo", "Branch", "Worktree", "Source"})
+	for _, repo := range ws.Repos {
+		worktree := repo.WorktreePath
+		if relative, ok := strings.CutPrefix(worktree, workspacePrefix); ok {
+			worktree = relative
+		} else {
+			worktree = abbreviateHome(worktree, home)
+		}
+		table.AddRow([]string{repo.RepoName, repo.Branch, worktree, abbreviateHome(repo.SourceRepo, home)})
+	}
+	table.Render()
+}
+
 func writeRepoList(w io.Writer, entries []repoEntry, format output.Format) error {
 	switch format {
 	case output.JSON:
-		return writeJSON(w, entries, false)
+		return output.WriteJSON(w, entries)
 	case output.JSONLines:
-		for _, entry := range entries {
-			if err := writeJSON(w, entry, true); err != nil {
-				return err
-			}
-		}
-		return nil
+		return output.WriteJSONLines(w, entries)
 	case output.Name:
 		for _, entry := range entries {
 			fmt.Fprintln(w, entry.Name)
@@ -198,16 +178,12 @@ func writeRepoList(w io.Writer, entries []repoEntry, format output.Format) error
 		for _, entry := range entries {
 			rows = append(rows, []string{entry.Name, entry.DisplayName, entry.Path})
 		}
-		return writeTSV(w, rows)
+		return output.WriteTSV(w, rows)
 	case output.Table:
 		home, _ := os.UserHomeDir()
 		table := console.NewTable(w, []string{"Name", "Owner/Repo", "Path"})
 		for _, entry := range entries {
-			path := entry.Path
-			if home != "" {
-				path = strings.Replace(path, home, "~", 1)
-			}
-			table.AddRow([]string{entry.Name, entry.DisplayName, path})
+			table.AddRow([]string{entry.Name, entry.DisplayName, abbreviateHome(entry.Path, home)})
 		}
 		table.Render()
 		return nil

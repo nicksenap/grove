@@ -1,8 +1,6 @@
 package workspace
 
 import (
-	"encoding/csv"
-	"encoding/json"
 	"fmt"
 	"io"
 	"strings"
@@ -101,17 +99,9 @@ func statusLines(ws *models.Workspace, results []repoStatusResult) []statusLine 
 func writeStatus(w io.Writer, ws *models.Workspace, results []repoStatusResult, format output.Format, opts StatusOptions) error {
 	switch format {
 	case output.JSON:
-		encoder := json.NewEncoder(w)
-		encoder.SetIndent("", "  ")
-		return encoder.Encode(statusOutput{Workspace: ws.Name, Path: ws.Path, Source: ws.Source, Repos: results})
+		return output.WriteJSON(w, statusOutput{Workspace: ws.Name, Path: ws.Path, Source: ws.Source, Repos: results})
 	case output.JSONLines:
-		encoder := json.NewEncoder(w)
-		for _, line := range statusLines(ws, results) {
-			if err := encoder.Encode(line); err != nil {
-				return err
-			}
-		}
-		return nil
+		return output.WriteJSONLines(w, statusLines(ws, results))
 	case output.Name:
 		for _, result := range results {
 			fmt.Fprintln(w, result.Repo)
@@ -134,10 +124,7 @@ func writeStatus(w io.Writer, ws *models.Workspace, results []repoStatusResult, 
 			}
 			rows = append(rows, row)
 		}
-		writer := csv.NewWriter(w)
-		writer.Comma = '\t'
-		writer.WriteAll(rows)
-		return writer.Error()
+		return output.WriteTSV(w, rows)
 	case output.Table:
 		printStatusTable(w, ws, results, opts)
 		return nil
