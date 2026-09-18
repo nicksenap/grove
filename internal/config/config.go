@@ -7,6 +7,7 @@ import (
 	"regexp"
 
 	"github.com/BurntSushi/toml"
+	"github.com/nicksenap/grove/internal/console"
 	"github.com/nicksenap/grove/internal/models"
 )
 
@@ -65,11 +66,11 @@ func Load() (*models.Config, error) {
 func RequireConfig() *models.Config {
 	cfg, err := Load()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "\033[1;31merror:\033[0m %s\n", err)
+		console.Error(err.Error())
 		os.Exit(1)
 	}
 	if cfg == nil {
-		fmt.Fprintf(os.Stderr, "\033[1;31merror:\033[0m Grove not initialized. Run: gw init <repo-dir>\n")
+		console.Error("Grove not initialized. Run: gw init <repo-dir>")
 		os.Exit(1)
 	}
 	return cfg

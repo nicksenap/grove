@@ -249,6 +249,15 @@ func TestActivityByDate(t *testing.T) {
 	}
 }
 
+func TestBuildHeatmapWithoutColorOmitsANSI(t *testing.T) {
+	tr := testTracker(t)
+	events := []models.StatsEvent{{Event: "workspace_created", Timestamp: tr.NowFn().Format("2006-01-02T15:04:05")}}
+	lines := tr.buildHeatmap(events, 2, false)
+	if strings.ContainsRune(strings.Join(lines, "\n"), '\x1b') {
+		t.Fatal("plain heatmap contains ANSI escapes")
+	}
+}
+
 // stripANSI removes ANSI escape sequences for width testing.
 func stripANSI(s string) string {
 	result := ""

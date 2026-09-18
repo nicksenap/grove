@@ -1,18 +1,19 @@
 package cmd
 
 import (
-	"encoding/json"
-	"fmt"
 	"os"
-	"strings"
 
 	"github.com/nicksenap/grove/internal/config"
 	"github.com/nicksenap/grove/internal/console"
 	"github.com/nicksenap/grove/internal/discover"
+	"github.com/nicksenap/grove/internal/output"
 	"github.com/spf13/cobra"
 )
 
-var reposJSON bool
+var (
+	reposJSON   bool
+	reposOutput string
+)
 
 // repoEntry is the machine-readable shape emitted by `gw repos --json`.
 // It pairs each discovered repo's local path with its remote identity so that
@@ -33,6 +34,11 @@ var reposCmd = &cobra.Command{
 		"Use --json for machine-readable output.",
 	Args: cobra.NoArgs,
 	Run: func(cmd *cobra.Command, args []string) {
+		format, err := resolveQueryOutput(reposOutput, reposJSON)
+		if err != nil {
+			exitError(err.Error())
+		}
+
 		cfg := config.RequireConfig()
 		if len(cfg.RepoDirs) == 0 {
 			console.Error("No repo directories configured. Run: gw add-dir <path>")
@@ -50,30 +56,17 @@ var reposCmd = &cobra.Command{
 			}
 		}
 
-		if reposJSON {
-			data, _ := json.MarshalIndent(entries, "", "  ")
-			fmt.Println(string(data))
-			return
-		}
-
-		if len(entries) == 0 {
+		if len(entries) == 0 && format == output.Table {
 			console.Info("No repos found.")
 			return
 		}
-
-		home, _ := os.UserHomeDir()
-		table := console.NewTable(os.Stdout, []string{"Name", "Owner/Repo", "Path"})
-		for _, e := range entries {
-			path := e.Path
-			if home != "" {
-				path = strings.Replace(path, home, "~", 1)
-			}
-			table.AddRow([]string{e.Name, e.DisplayName, path})
+		if err := writeRepoList(os.Stdout, entries, format); err != nil {
+			exitError(err.Error())
 		}
-		table.Render()
 	},
 }
 
 func init() {
-	reposCmd.Flags().BoolVarP(&reposJSON, "json", "j", false, "Output as JSON")
+	reposCmd.Flags().BoolVarP(&reposJSON, "json", "j", false, "Output as JSON (compatibility alias for --output json)")
+	reposCmd.Flags().StringVarP(&reposOutput, "output", "o", "", "Output format: table, json, jsonl, tsv, name, path")
 }

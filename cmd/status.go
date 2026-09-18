@@ -8,6 +8,7 @@ import (
 
 var (
 	statusJSON    bool
+	statusOutput  string
 	statusVerbose bool
 	statusPR      bool
 	statusAll     bool
@@ -28,13 +29,18 @@ var statusCmd = &cobra.Command{
 			console.Warning("--all is deprecated. Use: gw list -s")
 		}
 
+		format, err := resolveQueryOutput(statusOutput, statusJSON)
+		if err != nil {
+			exitError(err.Error())
+		}
+
 		ws, err := workspace.ResolveWorkspace(name)
 		if err != nil {
 			exitError(err.Error())
 		}
 
 		if err := workspace.NewService().Status(ws.Name, workspace.StatusOptions{
-			JSON:    statusJSON,
+			Format:  format,
 			Verbose: statusVerbose,
 			PR:      statusPR,
 		}); err != nil {
@@ -44,7 +50,8 @@ var statusCmd = &cobra.Command{
 }
 
 func init() {
-	statusCmd.Flags().BoolVarP(&statusJSON, "json", "j", false, "Output as JSON")
+	statusCmd.Flags().BoolVarP(&statusJSON, "json", "j", false, "Output as JSON (compatibility alias for --output json)")
+	statusCmd.Flags().StringVarP(&statusOutput, "output", "o", "", "Output format: table, json, jsonl, tsv, name, path")
 	statusCmd.Flags().BoolVarP(&statusVerbose, "verbose", "V", false, "Show full git status")
 	statusCmd.Flags().BoolVarP(&statusPR, "pr", "P", false, "Show PR/MR status (requires gh or glab)")
 	statusCmd.Flags().BoolVarP(&statusAll, "all", "a", false, "Show all workspaces (deprecated, use: gw list -s)")

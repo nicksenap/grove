@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"strings"
+
+	"golang.org/x/term"
 )
 
 // ANSI color codes
@@ -16,9 +18,25 @@ const (
 	boldYellow = "\033[1;33m"
 )
 
+func colorEnabled(terminal bool) bool {
+	return terminal && os.Getenv("NO_COLOR") == ""
+}
+
+// ColorEnabled reports whether ANSI styling should be emitted to f.
+func ColorEnabled(f *os.File) bool {
+	return colorEnabled(IsTerminal(f))
+}
+
+func styled(code, text string, f *os.File) string {
+	if !ColorEnabled(f) {
+		return text
+	}
+	return code + text + reset
+}
+
 // Error prints an error message to stderr.
 func Error(msg string) {
-	fmt.Fprintf(os.Stderr, "%serror:%s %s\n", boldRed, reset, msg)
+	fmt.Fprintf(os.Stderr, "%s %s\n", styled(boldRed, "error:", os.Stderr), msg)
 }
 
 // Errorf prints a formatted error message to stderr.
@@ -28,7 +46,7 @@ func Errorf(format string, args ...any) {
 
 // Success prints a success message to stderr.
 func Success(msg string) {
-	fmt.Fprintf(os.Stderr, "%sok:%s %s\n", boldGreen, reset, msg)
+	fmt.Fprintf(os.Stderr, "%s %s\n", styled(boldGreen, "ok:", os.Stderr), msg)
 }
 
 // Successf prints a formatted success message to stderr.
@@ -38,7 +56,7 @@ func Successf(format string, args ...any) {
 
 // Info prints an info message to stderr.
 func Info(msg string) {
-	fmt.Fprintf(os.Stderr, "%s%s%s\n", dim, msg, reset)
+	fmt.Fprintln(os.Stderr, styled(dim, msg, os.Stderr))
 }
 
 // Infof prints a formatted info message to stderr.
@@ -48,7 +66,7 @@ func Infof(format string, args ...any) {
 
 // Warning prints a warning message to stderr.
 func Warning(msg string) {
-	fmt.Fprintf(os.Stderr, "%swarn:%s %s\n", boldYellow, reset, msg)
+	fmt.Fprintf(os.Stderr, "%s %s\n", styled(boldYellow, "warn:", os.Stderr), msg)
 }
 
 // Warningf prints a formatted warning message to stderr.
@@ -99,9 +117,5 @@ func PromptDefault(label, defaultValue string) string {
 
 // IsTerminal returns true if the given file is a terminal.
 func IsTerminal(f *os.File) bool {
-	fi, err := f.Stat()
-	if err != nil {
-		return false
-	}
-	return (fi.Mode() & os.ModeCharDevice) != 0
+	return term.IsTerminal(int(f.Fd()))
 }

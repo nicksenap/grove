@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/nicksenap/grove/internal/console"
 	"github.com/nicksenap/grove/internal/models"
 )
 
@@ -137,18 +138,28 @@ var heatmapLevels = []string{
 	"\033[38;5;214m█\033[0m",
 }
 
+var plainHeatmapLevels = []string{"·", "█", "█", "█", "█"}
+
 var heatmapDayLabels = []string{"Mon", "   ", "Wed", "   ", "Fri", "   ", "   "}
 
 // BuildHeatmap generates a GitHub-style contribution grid.
 func (t *Tracker) BuildHeatmap(events []models.StatsEvent, weeks int) []string {
+	return t.buildHeatmap(events, weeks, true)
+}
+
+func (t *Tracker) buildHeatmap(events []models.StatsEvent, weeks int, color bool) []string {
 	counts := activityByDate(events)
 	grid, maxCols := t.buildHeatmapGrid(counts, weeks)
 	maxCount := maxCountValue(counts)
+	levels := plainHeatmapLevels
+	if color {
+		levels = heatmapLevels
+	}
 	data := heatmapData{
 		grid:     grid,
 		maxCols:  maxCols,
 		maxCount: maxCount,
-		levels:   heatmapLevels,
+		levels:   levels,
 		labels:   heatmapDayLabels,
 	}
 
@@ -338,7 +349,7 @@ func (t *Tracker) PrintStats() error {
 		return nil
 	}
 
-	heatmapLines := t.BuildHeatmap(events, 52)
+	heatmapLines := t.buildHeatmap(events, 52, console.ColorEnabled(os.Stderr))
 	fmt.Fprintln(os.Stderr)
 	for _, line := range heatmapLines {
 		fmt.Fprintln(os.Stderr, line)
