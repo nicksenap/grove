@@ -1,624 +1,317 @@
 ---
-type: "Reference"
-title: "Operations"
-description: "Operational guidance for installing, configuring, maintaining, troubleshooting, and validating Grove workspaces and its local runtime state."
+type: Reference
+title: Operations
+description: Runbook for installing and operating Grove (`gw`), configuring repositories and hooks, understanding its state and cache surfaces, and recovering from failed cleanup or diagnostics. It also separates end-user troubleshooting from source-development checks and releases.
 tags: [grove, operations, configuration, troubleshooting, maintenance]
+verified:
+  - by: openwiki/0.5.0
+    at: 2026-09-18T19:54:31.983Z
+sources:
+  - id: openwiki-source-b9c955598bb697de900ff315
+    resource: repo://.goreleaser.yml
+  - id: openwiki-source-4a20513926f0658ee53b3ddf
+    resource: repo://cmd/doctor.go
+  - id: openwiki-source-c713337c253fefedba109b9e
+    resource: repo://cmd/prune.go
+  - id: openwiki-source-d88dd56dbc4620bda4c35f1c
+    resource: repo://cmd/root.go
+  - id: openwiki-source-bdbdd96d4e411ce150e48b0f
+    resource: repo://cmd/unlink_trash.go
+  - id: openwiki-source-a8910515ddd14810ad43f5c1
+    resource: repo://internal/config/config.go
+  - id: openwiki-source-372e83c8b8d28982a038615c
+    resource: repo://internal/discover/cache.go
+  - id: openwiki-source-4258a83a93bef1b2aadaf678
+    resource: repo://internal/discover/deepdiscover.go
+  - id: openwiki-source-6e2ef7bffba8b16154bfe6e4
+    resource: repo://internal/lifecycle/lifecycle.go
+  - id: openwiki-source-a5147957bc4eb2270289c610
+    resource: repo://internal/logging/logging.go
+  - id: openwiki-source-1d1ad5865ebad91142ed8aee
+    resource: repo://internal/models/models.go
+  - id: openwiki-source-16cd47b644535c3977cf86c1
+    resource: repo://internal/plugin/install.go
+  - id: openwiki-source-ab647e2cb1e7b3b70e7883be
+    resource: repo://internal/plugin/plugin.go
+  - id: openwiki-source-a31375378633c98afe544d37
+    resource: repo://internal/state/lock.go
+  - id: openwiki-source-04df3322ec2dc26efbad1e6f
+    resource: repo://internal/state/state.go
+  - id: openwiki-source-828d325fa34da8ff9b108c1a
+    resource: repo://internal/update/update.go
+  - id: openwiki-source-0af407bb538616acaaa4baca
+    resource: repo://internal/workspace/doctor.go
+  - id: openwiki-source-c98f76c921b18fb02cf31e14
+    resource: repo://internal/workspace/remove.go
+  - id: openwiki-source-14e6a4e1ddc06973b783ff20
+    resource: repo://Justfile
+generated: { by: "openwiki/0.5.0", at: "2026-09-18T19:54:31.983Z" }
 ---
 
 # Operations
 
-This page covers configuration, maintenance, troubleshooting, and runtime operations.
+Grove is a static `gw` binary for macOS and Linux; it requires `git` on `PATH`. It does not store credentials. Git authentication remains the responsibility of the user's SSH agent, `~/.ssh`, and Git credential helpers.
 
-## Installation & Setup
+## Install and shell integration
 
-### Install Methods
+Choose one installation path:
 
-#### Homebrew (Recommended)
 ```bash
+# Homebrew (macOS or Linux)
 brew install nicksenap/grove/grove
-```
 
-#### Go Install
-```bash
+# Official install script (macOS or Linux)
+curl -fsSL https://raw.githubusercontent.com/nicksenap/grove/master/scripts/install.sh | sh
+
+# Go toolchain
 go install github.com/nicksenap/grove/cmd/gw@latest
 ```
 
-#### From Source
+The install script verifies the release checksum and chooses `/usr/local/bin`, falling back to `~/.local/bin`; `GW_INSTALL_DIR` and `GW_VERSION` override those choices. A source checkout can be built with `go build -o gw ./cmd/gw`, but that is a development path rather than an end-user upgrade method.
+
+Install shell integration so commands that need to change the caller's directory can do so:
+
 ```bash
-git clone https://github.com/nicksenap/grove.git
-cd grove && go build -o gw ./cmd/gw
-mv gw /usr/local/bin/
-```
-
-#### Upgrading
-```bash
-brew update && brew upgrade grove
-```
-
-### Shell Integration
-
-**Required** for `gw go` to change your working directory in the current shell.
-
-**Bash / Zsh** — Add to `.zshrc` or `.bashrc`:
-```bash
+# Bash or Zsh: add to ~/.bashrc or ~/.zshrc
 eval "$(gw shell-init)"
 ```
 
-**Nushell** — Generate and source init file:
-```nushell
+For Nushell:
+
+```nu
 gw shell-init --shell nu | save -f ~/.config/nushell/grove.nu
-# then add to config.nu:
+# Add to config.nu:
 source grove.nu
 ```
 
-**Effect**: After shell init, `gw go <workspace>` changes your directory and `gw create` auto-cds into new workspaces.
+The integration makes `gw go` change directory and lets `gw create` auto-cd into a newly created workspace. Without it, Grove cannot change the parent shell's directory. `gw create` uses `GROVE_CD_FILE` internally for the generated shell wrapper; do not set that variable manually unless debugging the shell integration.
 
----
+Upgrade according to the installation method:
 
-## Configuration
+```bash
+brew update && brew upgrade grove
+# For the install script, run the curl command again.
+go install github.com/nicksenap/grove/cmd/gw@latest
+```
 
-### Global Config: `~/.grove/config.toml`
+Normal commands may print a cached GitHub release notice. The check is non-blocking, refreshes at most every 24 hours, and stores its result separately in `~/.grove/update-check.json`. `gw unlink-trash` is an internal offline command and does not perform this check.
 
-Automatically created on first `gw init`. Example:
+## Configuration surfaces
+
+Grove's default root is `~/.grove`:
+
+| Surface | Owner and purpose | Recovery guidance |
+|---|---|---|
+| `~/.grove/config.toml` | User configuration: repository roots, workspace root, presets, global hooks | Edit or regenerate with `gw init`; malformed TOML prevents normal loading. |
+| `~/.grove/state.json` | Grove's registry of workspaces, worktrees, branches, timestamps, and optional source metadata | Do not hand-edit during operations; use `gw doctor`, workspace commands, or a backup. |
+| `~/.grove/cache/remotes.json` | Best-effort remote URL cache for discovery | Safe to delete; missing or invalid JSON is treated as an empty cache. |
+| `~/.grove/plugins/` | Executable `gw-<name>` plugins and installer metadata `.gw-<name>.json` | A manually copied plugin has no upgrade metadata. |
+| `<workspace-dir>/<name>/` | Actual workspace and Git worktrees; default is `~/.grove/workspaces/<name>/` | Treat as user worktree data, not disposable registry data. |
+| `<workspace-dir>/.trash/` | Temporary quarantine during deletion | Inspect ownership before removing; `gw doctor --fix` is the safe cleanup path. |
+| `~/.grove/grove.log` | Info, warning, and error flight recorder; rotates at 1 MiB with three backups | Inspect with `tail`; avoid putting secrets in commands because hook commands are logged. |
+
+### Global configuration
+
+Initialize or add repository roots with:
+
+```bash
+gw init ~/dev ~/work/microservices
+```
+
+`gw init` resolves and validates each directory, merges it without duplicates, creates the Grove and workspace directories, and atomically saves configuration. The loader accepts the legacy `repos_dir = "~/dev"` field only for migration: it converts it to `repo_dirs = ["~/dev"]` and re-saves the file. If no config exists, commands that require one fail with `Grove not initialized. Run: gw init <repo-dir>`.
+
+The important fields are:
 
 ```toml
-repo_dirs = [
-  "~/dev",
-  "~/work/microservices"
-]
+repo_dirs = ["/home/me/dev", "/home/me/work"]
 workspace_dir = "~/.grove/workspaces"
 
 [presets]
-backend = { repos = ["svc-auth", "svc-api", "svc-worker"] }
-frontend = { repos = ["web-app", "design-system"] }
+backend = { repos = ["svc-auth", "svc-api"] }
 
 [hooks]
 post_create = "./scripts/workspace-created {path}"
 pre_delete = "./scripts/workspace-closing {path}"
 on_close = "./scripts/close-workspace-pane {path}"
-
-[hooks.post_create]
-command     = "npm install && npm run build"
-description = "Install deps and build assets"
-stream      = true
-timeout     = "5m"
-on_failure  = "abort"
 ```
 
-#### Fields
+Preset names must match `[a-zA-Z0-9_-]+`. Repository discovery scans configured roots to depth three, skips descending into a repository, resolves remotes in parallel (maximum 16 concurrent fetches), and deduplicates the same remote, preferring a direct child of a configured root over a nested clone. Discovery itself still runs per command; only remote resolution is cached for 24 hours and invalidated when `.git/config` mtime changes.
 
-| Field | Type | Purpose |
-|-------|------|---------|
-| `repo_dirs` | `[string]` | Directories to scan for git repos (scans one level deep) |
-| `workspace_dir` | `string` | Where Grove creates workspace directories (default: `~/.grove/workspaces`) |
-| `[presets]` | `[table]` | Named repo groups for quick creation (e.g., `backend = { repos = [...] }`) |
-| `[hooks]` | `[table]` | Lifecycle hooks (post_create, pre_delete, on_close) |
+### Per-repository `.grove.toml`
 
-#### Config Locations
-- **Config file**: `~/.grove/config.toml`
-- **State file**: `~/.grove/state.json`
-- **Plugin directory**: `~/.grove/plugins/`
-- **Workspace directories**: `~/.grove/workspaces/<name>/` (default)
-
-#### Legacy Migration
-Grove automatically migrates old config format:
-- **Old**: `repos_dir = "~/dev"` (single directory)
-- **New**: `repo_dirs = ["~/dev"]` (list of directories)
-
-When loaded, old format is converted and config is re-saved.
-
----
-
-### Per-Repo Config: `.grove.toml`
-
-Optional file at repository root. Controls repo-specific behavior:
+A repository-root `.grove.toml` controls worktree behavior:
 
 ```toml
-# Override the default branch (main/master) for new worktrees
 base_branch = "stage"
+setup = ["pnpm install", "pnpm run build"]
+teardown = "rm -rf node_modules"
+pre_sync = "pnpm run build:check"
+post_sync = "pnpm install"
 
-# Commands to run after worktree creation
-setup = [
-  "npm install",
-  "npm run build"
-]
-
-# Consumed by the gw-run plugin (not Grove core)
-run = "npm run dev"
-pre_run = "echo starting"
-post_run = "echo stopped"
+# Consumed by gw-run, not Grove core:
+pre_run = "docker compose pull"
+run = "pnpm dev"
+post_run = "docker compose down"
 ```
 
-#### Fields
+`setup` accepts a string or list and runs sequentially in the new worktree. `teardown` runs before removing a repo worktree. `pre_sync` and `post_sync` surround sync operations. These per-repo hook failures are warnings and do not block their parent operation. `run`, `pre_run`, and `post_run` are parsed by Grove but executed by the external `gw-run` plugin.
 
-| Field | Type | Purpose |
-|-------|------|---------|
-| `base_branch` | `string` | Default branch for new worktrees (e.g., `stage` instead of `main`) |
-| `setup` | `string` or `[string]` | Command(s) to run after worktree creation |
-| `run` / `pre_run` / `post_run` | `string` or `[string]` | Process commands for the [gw-run](https://github.com/nicksenap/gw-run) plugin |}
+## Lifecycle hooks
 
-#### Setup Commands
-- Run sequentially after worktree is created
-- Work in the repo's worktree directory
-- Can be string (single command) or list (multiple commands)
-- Failures abort unless `on_failure = "warn"` (see hooks below)
+Global hooks live under `[hooks]` in `config.toml`. Grove runs them with `sh -c` and expands `{name}`, `{path}`, `{branch}`, `{source_url}`, `{source_ref}`, and `{source_title}`. Non-empty values are single-quoted, including embedded quotes, to prevent placeholder values from becoming shell syntax; unused source placeholders expand to empty text.
 
----
-
-## Lifecycle Hooks
-
-Hooks automate actions at key workspace lifecycle moments. There are two levels:
-
-### Global Hooks (Workspace-Level)
-
-Defined in `~/.grove/config.toml [hooks]`. Fire on all workspaces.
-
-#### Hook Types
-
-| Hook | Fired By | When | Typical Use |
-|------|----------|------|------------|
-| `post_create` | `gw create` | After workspace creation, before returning to user | Prepare agent context, check in with dashboard |
-| `pre_delete` | `gw delete` | Before worktree removal (still has access to files) | Export work, harvest state, notify external systems |
-| `on_close` | `gw go -c` | When closing a workspace's terminal pane | Close tmux/Zellij pane |
-
-#### Placeholders
-
-Hooks can include placeholders that Grove expands before execution:
-
-| Placeholder | Value |
-|---|---|
-| `{name}` | Workspace name (e.g., `my-feature`) |
-| `{path}` | Absolute path to workspace directory (e.g., `~/.grove/workspaces/my-feature`) |
-| `{branch}` | Branch name (e.g., `feat/login`) |
-| `{source_url}` | Original source URL (e.g., GitHub PR) — empty if not provided |
-| `{source_ref}` | Provider-specific ref (e.g., PR number) — empty if not provided |
-| `{source_title}` | Human-readable title from source — empty if not provided |
-
-**Injection Prevention**: Placeholders are single-quoted by Grove to prevent shell injection. A branch named `feat/x; rm -rf ~` becomes `'feat/x; rm -rf ~'`.
-
-#### Hook Syntax: String vs. Table
-
-**Simple string** (quiet execution):
-```toml
-[hooks]
-post_create = "./scripts/workspace-created {path}"
+```mermaid
+flowchart TD
+    create["gw create"] --> post["global post_create"]
+    delete["gw delete or gw prune --yes"] --> pre["global pre_delete"]
+    pre --> teardown["per-repo teardown"]
+    teardown --> remove["quarantine and remove worktrees"]
+    close["gw go -c"] --> onclose["global on_close"]
 ```
 
-**Table with metadata** (advanced control):
+This diagram shows which user-visible workspace actions trigger the three global lifecycle hooks.
+
+A hook can be a command string or a metadata table:
+
 ```toml
 [hooks.post_create]
-command     = "npm install && npm run build"
-description = "Install deps and build assets"
-stream      = true
-timeout     = "5m"
-on_failure  = "abort"
+command = "npm install && npm run build"
+description = "Prepare the worktree"
+stream = true
+timeout = "5m"
+on_failure = "abort"
 ```
 
-#### Hook Metadata
+- `stream = false` (default) captures combined output and stays silent on success; failed output is echoed to stderr with a `[hook_name]` prefix.
+- `stream = true` sends line-prefixed progress to stderr, preserving stdout for shell integration.
+- `timeout` accepts Go durations such as `30s` or `5m`; on supported macOS/Linux builds Grove kills the hook's process group and reports a timeout.
+- `on_failure = "warn"` (default) logs and continues; `abort` makes the hook failure fatal when the calling operation honors it.
 
-| Field | Default | Meaning |
-|-------|---------|---------|
-| `command` | — | The shell command to run (required in table form) |
-| `description` | — | What the hook does (documents the hook inline) |
-| `stream` | `false` | Show output live in terminal (each line prefixed with hook name) |
-| `timeout` | none | Maximum duration (Go duration format: `30s`, `5m`, `1h`). Hook is killed if exceeded. |
-| `on_failure` | `warn` | How to handle failure: `warn` (log and continue) or `abort` (fatal) |
+Skip global hooks for one invocation with the persistent flag:
 
-#### Output Handling
-
-**When `stream = false` (default)**:
-- Hook output is captured silently
-- On success: nothing is printed
-- On failure: captured output is echoed (prefixed) so you see what went wrong
-- Example: `[post_create] npm ERR! Could not find module xyz`
-
-**When `stream = true`**:
-- Hook output streams live to the terminal as it runs
-- Each line is prefixed (e.g., `[post_create] added 412 packages`)
-- Use this for long-running hooks (builds, downloads) so the terminal doesn't look hung
-- Example: `[post_create] npm warn ...`, then `[post_create] added 412 packages`
-
-#### Global Hook Disabling
-
-Skip all hooks for a single command:
 ```bash
-gw create my-feature --no-hooks
-gw delete my-feature -n  # short form
+gw --no-hooks create my-feature --repos svc-api
+gw -n delete my-feature
 ```
 
-Or disable all hooks permanently (not recommended):
-```bash
-# There's no global config option; use --no-hooks per command
-```
-
-### Per-Repo Hooks
-
-Defined in each repo's `.grove.toml [setup]` section.
-
-- Run **sequentially** after `git worktree add` completes
-- Run in the repo's worktree directory
-- Can be string or list of strings
-- Example: Install deps, compile, generate code
-
-```toml
-# Single command
-setup = "npm install"
-
-# Multiple commands
-setup = [
-  "npm install",
-  "npm run build",
-  "npm run generate-types"
-]
-```
-
----
+`--no-hooks` does not disable per-repo `setup`, `teardown`, `pre_sync`, or `post_sync` commands. Keep hook commands free of tokens and passwords: they are plain text in `config.toml`, and expanded commands are logged.
 
 ## Plugins
 
-Plugins extend Grove with custom commands. They're standalone binaries prefixed with `gw-`.
+A plugin is an executable named `gw-<name>`. Grove resolves built-ins first, then `~/.grove/plugins/gw-<name>`, then `$PATH`; on Unix it replaces the process with the plugin, giving it the terminal directly. Install a released plugin from GitHub:
 
-### Install Plugins
-
-#### From GitHub
 ```bash
 gw plugin install nicksenap/gw-run
 gw plugin install nicksenap/gw-dispatch
+gw plugin install nicksenap/gw-recipe
 gw plugin install igor-kupczynski/gw-code
 ```
 
-Downloads the latest release binary for your OS/arch from GitHub Releases. Expects naming convention: `gw-<name>_<version>_<os>_<arch>.tar.gz` (goreleaser standard).
+The installer selects the current OS/architecture release asset, requires HTTPS, verifies the release checksum when available, and writes the executable plus `.gw-<name>.json` metadata. Manual installation is also supported:
 
-#### Manual Installation
-Drop any executable named `gw-<name>` into `~/.grove/plugins/`:
 ```bash
 cp my-plugin ~/.grove/plugins/gw-myplugin
 chmod +x ~/.grove/plugins/gw-myplugin
 ```
 
-Or place it anywhere on `$PATH`.
-
-### Manage Plugins
+Manage plugins with:
 
 ```bash
-gw plugin list                    # List installed plugins
-gw plugin upgrade dispatch        # Re-fetch latest release for dispatch
-gw plugin upgrade                 # Upgrade all plugins
-gw plugin remove dispatch         # Uninstall a plugin
+gw plugin list
+gw plugin list --json
+gw plugin upgrade dispatch
+gw plugin upgrade                 # installer-managed plugins only
+gw plugin remove dispatch
 ```
 
-### How Plugins Work
+`upgrade` skips manually installed plugins because they have no source metadata. Plugins receive `GROVE_DIR`, `GROVE_CONFIG`, `GROVE_STATE`, and `GROVE_WORKSPACE` (when the current directory is inside a registered workspace). Plugins should read those files but use Grove commands rather than mutating Grove state directly.
 
-When you run `gw foo`:
-1. Grove checks its built-in commands
-2. If not found, looks for `gw-foo` in:
-   - `~/.grove/plugins/`
-   - `$PATH`
-3. If found, executes the plugin with these environment variables:
+## State, locking, and deletion
 
-| Variable | Value |
-|----------|-------|
-| `GROVE_DIR` | Path to `~/.grove` |
-| `GROVE_CONFIG` | Path to `config.toml` |
-| `GROVE_STATE` | Path to `state.json` |
-| `GROVE_WORKSPACE` | Current workspace name (if cwd is inside one); empty otherwise |
+`state.json` stores each workspace's name, root path, common branch, creation timestamp, repo source/worktree paths, and optional opaque source information. Grove writes both configuration and state through a temporary file followed by rename; state-changing operations also take an exclusive Unix `flock` on `~/.grove/state.lock`. The lock is separate because `state.json` is atomically replaced. A missing state file means an empty workspace list; invalid JSON produces `corrupt state file (...). Run: gw doctor --fix`.
 
-The plugin gets full control of the terminal (no output capture). This enables TUI plugins (dashboards, pickers) to work seamlessly.
+Deletion is deliberately two-phase:
 
-### Plugin Lifecycle Hooks
-
-Plugins can be invoked by lifecycle hooks. Install the plugin using its real GitHub `OWNER/REPOSITORY` identifier, then add its recommended hook commands to `config.toml`. Grove fires them normally.
-
-### Example Plugins
-
-#### [`gw-dispatch`](https://github.com/nicksenap/gw-dispatch)
-Creates a Grove workspace and starts a selected coding agent there with an initial prompt.
-```bash
-gw plugin install nicksenap/gw-dispatch
-gw dispatch -n -r api,web -P "Implement login"
+```mermaid
+sequenceDiagram
+    participant User
+    participant Grove
+    participant Git
+    participant Trash
+    User->>Grove: gw delete NAME
+    Grove->>Grove: run per-repo teardown
+    Grove->>Trash: rename workspace to .trash/NAME-timestamp
+    Grove->>Git: prune worktree registrations
+    Grove->>Grove: remove state entry and delete owned branches
+    Grove-->>User: report workspace deleted
+    Grove->>Trash: start detached unlink-trash
 ```
 
-#### [`gw-code`](https://github.com/igor-kupczynski/gw-code)
-Generates and opens a multi-folder editor workspace for a Grove workspace.
-```bash
-gw plugin install igor-kupczynski/gw-code
-gw code my-workspace
-```
+This sequence shows why the command can return quickly while large workspace bytes are still being removed.
 
----
+Before mutation Grove preflights worktrees, runs teardown outside the state lock, then reloads and rechecks under the lock. If pruning or state removal fails, it attempts to restore the quarantined root and repair worktrees. A failed child-process start falls back to synchronous unlinking; an unlink failure is logged as a warning. The hidden `gw unlink-trash PATH` command accepts only a direct child of `.trash`, protecting against arbitrary recursive deletion.
 
-## State Management
+`gw prune` previews workspaces whose `created_at` is older than seven days by default; `--min-age N` changes the threshold and `--yes` performs deletion. It uses creation time rather than last navigation, skips malformed timestamps, and never deletes in preview mode. `--json` emits `name`, `branch`, `created_at`, and `age_days` for previews.
 
-### State File: `~/.grove/state.json`
+## Diagnostics and recovery
 
-Persists the list of workspaces and their configuration:
-
-```json
-{
-  "workspaces": [
-    {
-      "name": "feat-login",
-      "path": "~/.grove/workspaces/feat-login",
-      "branch": "feat/login",
-      "created_at": "2024-01-15T10:30:45.123456",
-      "repos": [
-        {
-          "repo_name": "svc-api",
-          "source_repo": "~/dev/svc-api",
-          "worktree_path": "~/.grove/workspaces/feat-login/svc-api",
-          "branch": "feat/login"
-        },
-        {
-          "repo_name": "svc-auth",
-          "source_repo": "~/dev/svc-auth",
-          "worktree_path": "~/.grove/workspaces/feat-login/svc-auth",
-          "branch": "feat/login"
-        }
-      ],
-      "source": {
-        "provider": "github",
-        "url": "https://github.com/org/repo/pull/42",
-        "ref": "42",
-        "title": "Add login flow"
-      }
-    }
-  ]
-}
-```
-
-#### Fields
-
-- **name** — Workspace identifier
-- **path** — Directory containing all worktrees
-- **branch** — Common branch for all repos in workspace
-- **created_at** — Timestamp (ISO 8601)
-- **repos** — List of repos in workspace with worktree details
-- **source** — Optional: where workspace was seeded from (e.g., GitHub PR, Notion page)
-
-#### Atomic Writes
-
-State is written atomically to prevent corruption:
-1. Write to temporary file
-2. Fsync to disk
-3. Atomic rename to `state.json`
-
-If Grove crashes mid-operation, state is left unchanged.
-
----
-
-## Troubleshooting
-
-### `gw doctor`
-
-Diagnose workspace health issues:
+Run the health check before manually editing files:
 
 ```bash
 gw doctor
+gw doctor --json
+gw doctor --fix
 ```
 
-Checks for:
-- Orphaned worktrees (in state but missing on disk)
-- Missing git repos (in state but source repo deleted)
-- Worktree conflicts (path collisions)
-- Config issues (missing repo_dirs, invalid presets)
-- Leftover `.trash` entries from asynchronous deletion
+The check reports missing workspace roots, missing source repositories, worktree/path conflicts, and leftover quarantine entries. Without `--fix` it is read-only. With `--fix`, it runs state repairs under `state.lock` and removes only trash not identified as belonging to a still-registered workspace. If a registered workspace is missing but matching bytes remain in `.trash`, it reports `restore quarantined workspace or retry delete` rather than deleting those bytes. `--json` is useful for automation; a healthy human-readable run prints `All workspaces healthy`.
 
-With `--fix`, it removes leftover trash that is not identified as belonging to a workspace. Trash that still matches a workspace path is reported for restoration or delete retry rather than removed automatically.
+Common recoveries:
 
-### Workspace Cleanup and Pruning
+- **Not initialized or no repositories:** run `gw init <existing-directory>`, then verify discovery with `gw repos`.
+- **Malformed configuration:** correct TOML and retry. For a legacy `repos_dir`, simply loading the config performs the supported migration; do not maintain both fields.
+- **Corrupt state:** stop concurrent Grove commands, preserve a copy of `~/.grove/state.json`, and run `gw doctor --fix`; restore from backup if the registry needs recovery. Do not delete workspace directories merely to repair registry JSON.
+- **Leftover `.trash`:** first confirm no delete or doctor cleanup is still running, then use `gw doctor` and `gw doctor --fix`. Do not invoke hidden `unlink-trash` with an arbitrary path.
+- **Git authentication:** Grove disables interactive Git prompts (`GIT_TERMINAL_PROMPT=0`). Load the intended key (`ssh-add ~/.ssh/id_ed25519`), test `ssh -T git@github.com`, and fix the Git remote or credential helper rather than embedding credentials in config.
+- **Hook failure or timeout:** inspect the prefixed stderr and `~/.grove/grove.log`; enable `stream = true` for progress, increase `timeout`, or choose `on_failure = "warn"` only when continuing is safe. Per-repo setup has no Grove timeout, so supervise unusually long commands in the command itself.
+- **Workspace path already exists:** use `gw doctor` to distinguish stale state, a live workspace, and quarantine data. Do not overwrite a path manually; delete the registered workspace or choose another name after checking for uncommitted work.
 
-`gw delete` and `gw prune --yes` first rename the workspace root into `<workspace-dir>/.trash/`. Grove then prunes Git's registrations for the relocated worktrees, removes the workspace from `~/.grove/state.json`, deletes the recorded branches, and starts a detached `gw unlink-trash PATH` process to remove the quarantined files. This keeps the workspace path and logical state responsive even when the tree contains large build artifacts.
-
-The `unlink-trash` command is hidden and intended only for Grove's background cleanup. It refuses paths whose parent is not `.trash`; if the child process cannot start, Grove falls back to synchronous unlinking and logs failures as warnings. A leftover `.trash` item is not an active workspace, but should be removed after confirming no cleanup process is still running.
-
-Use age-based pruning to review stale workspaces before deleting them:
+For verbose diagnostics, put `--verbose` before the subcommand:
 
 ```bash
-gw prune --json                 # machine-readable preview; default threshold is 7 days
-gw prune --min-age 14            # table preview for workspaces created at least 14 days ago
-gw prune --min-age 14 --yes      # delete matching workspaces
+gw --verbose status my-feature
+gw -v create my-feature
 ```
 
-Pruning uses `created_at`, not last navigation time. It skips malformed timestamps and never deletes during preview mode. The JSON output includes `name`, `branch`, `created_at`, and `age_days`.
+Debug logs go to `~/.grove/grove.log`; normal info, warnings, and errors are logged too. The log rotates at 1 MiB and keeps three backups.
 
-### Common Issues
+## Source-development checks and releases
 
-#### "No repo directories configured"
-```bash
-gw init ~/dev ~/work
-```
-
-#### "Preset not found"
-```bash
-gw preset list  # Check available presets
-gw create -p <name>  # Use correct name
-```
-
-#### "Workspace already exists"
-Either rename the workspace:
-```bash
-gw rename old-name --to new-name
-```
-
-Or delete and recreate:
-```bash
-gw delete old-name
-gw create old-name ...
-```
-
-#### "Git SSH key issue"
-Grove sets `GIT_TERMINAL_PROMPT=0` to disable interactive prompts. If auth fails:
-1. Ensure SSH key is loaded: `ssh-add ~/.ssh/id_ed25519`
-2. Test connectivity: `ssh -T git@github.com`
-3. Configure Git to use specific key (if needed): `git config core.sshCommand "ssh -i ~/.ssh/custom-key"`
-
-#### "Worktree path exists"
-Grove cleans up worktrees on delete, but manual deletion of files can leave state inconsistent. Run:
-```bash
-gw doctor         # Identifies orphaned entries and leftover .trash items
-gw doctor --fix   # Removes unowned leftover trash
-gw delete <name>  # Destructively removes the registered workspace
-```
-
-Deletion first moves the workspace into a sibling `.trash/` directory, removes Git registrations and state, and starts a detached `gw unlink-trash` process to remove the bytes. This keeps the original path available quickly, but a failed background unlink may leave data under `.trash/`; `gw doctor` is the recovery path. Do not manually pass arbitrary paths to `unlink-trash`: it is hidden and rejects paths that are not direct children of `.trash`.
-
-#### "Hook timeout"
-Long-running setup commands can exceed default timeout. Configure:
-
-```toml
-[hooks.post_create]
-command = "npm install && npm run build"
-timeout = "10m"  # Increase timeout
-```
-
-Or move long commands to per-repo setup:
-
-```toml
-# In .grove.toml
-setup = ["npm install", "npm run build"]
-```
-
-(Per-repo setup runs sequentially and has no timeout.)
-
----
-
-## Development & Testing
-
-### Build
+These are contributor checks, not required end-user troubleshooting:
 
 ```bash
-just build
-# or: go build -o gw ./cmd/gw
-```
-
-### Test
-
-```bash
-just check
-# or: go test ./...
-```
-
-Test the workspace package:
-```bash
-go test ./internal/workspace -v
-```
-
-The workspace tests are split by responsibility (`create_test.go`, `doctor_test.go`, `remove_test.go`, `rename_test.go`, `repos_test.go`, `status_test.go`, `sync_test.go`, and `reset_test.go`), so run the focused file's package tests when changing one operation. `reset_test.go` covers branch restoration and the `--discard` safety path.
-
-Test a single test function:
-```bash
-go test ./internal/workspace -run TestCreateWorkspace -v
-```
-
-### End-to-End Tests
-
-```bash
-just e2e
+just build                 # versioned development binary
+go build -o gw ./cmd/gw
+just check                 # tests, vet, formatting, gocyclo, staticcheck
+just e2e                   # builds gw, then isolated e2e tests
 GW_BIN="$PWD/gw" go test ./e2e -run TestCreateWorkspace -count=1 -v
+go test ./internal/workspace -v
+go test ./internal/discover -v
+go test ./internal/config -v
 ```
 
-Each scenario uses an isolated temporary `HOME` and real git fixtures, then invokes the compiled `gw` binary. The public GitHub HTTPS clone is opt-in via `GROVE_EXTERNAL_E2E=1`.
+Focused tests matter when changing persistence or cleanup: configuration tests cover defaults and legacy migration; state tests cover atomic persistence and cross-process locking; discovery tests cover depth-three scanning, cache invalidation, parallel resolution, and deduplication; workspace doctor and removal tests cover `.trash` ownership, restoration, branch deletion, and the guarded unlink path. E2E scenarios use an isolated temporary `HOME` and real Git fixtures; the public GitHub HTTPS clone is opt-in with `GROVE_EXTERNAL_E2E=1`.
 
-### Code Coverage
+A release is tagged and pushed with:
 
 ```bash
-go test -cover ./...
-go test -coverprofile=coverage.out ./...
-go tool cover -html=coverage.out
+just release X.Y.Z
 ```
 
----
+The recipe creates and pushes annotated tag `vX.Y.Z`. GitHub Actions and GoReleaser build static `darwin` and `linux` `amd64` and `arm64` archives, checksums, and the Homebrew formula. Update `CHANGELOG.md` before tagging; release automation, not an end-user workstation, owns the generated artifacts.
 
-## Release Process
+## Related guidance
 
-1. **Update changelog**: Add a new `## vX.Y.Z` section at the top of `CHANGELOG.md` with release notes
-2. **Commit**: `git commit -am "Prepare vX.Y.Z"`
-3. **Tag and release**: `just release X.Y.Z`
-   - Creates annotated tag `vX.Y.Z`
-   - Pushes tag to origin
-   - GitHub Actions workflow builds binaries and updates Homebrew tap
-
----
-
-## Performance
-
-### Multi-Repo Operations
-
-Grove parallelizes independent operations using goroutines:
-
-```bash
-gw status feat-login  # Runs git status in all repos concurrently
-gw sync feat-login    # Runs git rebase in all repos concurrently
-```
-
-Expected times for typical workspaces (5–10 repos):
-- `gw create` — 2–5 seconds (git clone, worktree setup)
-- `gw status` — 1–2 seconds (git status calls)
-- `gw delete` — <1 second for logical cleanup (path, git registrations, state); large trees unlink in the background
-
-### Repo Discovery
-
-Configured repository directories are recursively scanned up to three levels deep. Hidden directories, `node_modules`, and `__pycache__` are skipped.
-
-### Caching
-
-Grove caches resolved remote URLs under `~/.grove/cache/`, while filesystem discovery runs for each command. Repositories that share a remote are deduplicated, with a direct child of a configured directory preferred over a nested clone.
-
----
-
-## Monitoring & Logging
-
-### Verbose Logging
-
-Enable debug logging for a command:
-
-```bash
-gw --verbose create my-feature
-gw -v status my-feature
-```
-
-Outputs detailed logs to stderr.
-
-### Stats & Usage
-
-View workspace creation history and heatmap:
-
-```bash
-gw stats
-```
-
-Shows:
-- Recent workspace creation dates
-- Heatmap of workspace activity
-- Repository usage frequency
-
----
-
-## Security
-
-### No Credentials Storage
-
-Grove does **not** store credentials or SSH keys. It relies on:
-- `$HOME/.ssh/` for SSH keys
-- `git config` for credential helpers
-- SSH agent for key management
-
-### No External Calls
-
-Grove makes no network requests except to GitHub (for plugin downloads) and your own git remotes. No telemetry, no analytics.
-
-### Sensitive Data
-
-Do **not** include credentials or tokens in:
-- Hook commands (they're in plaintext in `config.toml`)
-- `.grove.toml` files
-- Workspace names or branch names
-
-Use environment variables or credential managers instead.
-
----
-
-## Next Steps
-
-- Review [workflows.md](workflows.md) for common usage patterns
-- Read [integrations.md](integrations.md) for plugin/AI tool setup
+- [Quickstart](quickstart.md) for first-use commands.
+- [Workflows](workflows.md) for create, sync, reset, and delete behavior.
+- [Integrations](integrations.md) for terminal and plugin integration.
+- [Testing](testing.md) for the broader contributor test strategy.
