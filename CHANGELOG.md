@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- `gw status -o json|jsonl|tsv` adds a numeric `changed` field (count of `git status --porcelain` entries). `status` keeps the raw text; the TSV `STATUS` column now shows the summarized form (`clean`, `N changed`).
+- Core no longer models `.grove.toml` `run`, `pre_run`, and `post_run`. Unknown keys are ignored, so repos using them with `gw-run` are unaffected.
+- Removed the prepared-workspace claim spike doc.
+
 ## v1.1.16
 
 ### Features

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"sync"
 
 	"github.com/nicksenap/grove/internal/gitops"
@@ -12,12 +13,15 @@ import (
 )
 
 type repoStatusResult struct {
-	Repo   string         `json:"repo"`
-	Branch string         `json:"branch"`
-	Status string         `json:"status"`
-	Ahead  string         `json:"ahead"`
-	Behind string         `json:"behind"`
-	PR     *gitops.PRInfo `json:"pr,omitempty"`
+	Repo   string `json:"repo"`
+	Branch string `json:"branch"`
+	Status string `json:"status"`
+	// Changed is the number of entries in git status --porcelain (0 when clean
+	// or on error). Status keeps the raw porcelain text for display.
+	Changed int            `json:"changed"`
+	Ahead   string         `json:"ahead"`
+	Behind  string         `json:"behind"`
+	PR      *gitops.PRInfo `json:"pr,omitempty"`
 }
 
 func collectRepoStatus(r models.RepoWorktree) repoStatusResult {
@@ -43,6 +47,7 @@ func collectRepoStatus(r models.RepoWorktree) repoStatusResult {
 		rs.Status = "clean"
 	} else {
 		rs.Status = status
+		rs.Changed = strings.Count(status, "\n") + 1
 	}
 
 	upstream, _ := gitops.ResolveBaseBranch(r.SourceRepo)

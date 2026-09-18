@@ -115,7 +115,7 @@ done
 
 # Process one complete object per line
 gw status my-feature -o jsonl |
-  jq -r 'select(.status != "clean") | .repo'
+  jq -r 'select(.changed > 0) | .repo'
 
 # Delete a reviewed set of workspaces from newline-delimited stdin
 gw list -o name | grep '^old-' | gw delete --stdin --yes

@@ -578,9 +578,6 @@ teardown = "make clean"
 	if len(cfg.Setup) != 1 || cfg.Setup[0] != "npm install" {
 		t.Errorf("setup: got %v", cfg.Setup)
 	}
-	if len(cfg.Run) != 2 || cfg.Run[0] != "make build" {
-		t.Errorf("run: got %v", cfg.Run)
-	}
 	if cfg.Teardown != "make clean" {
 		t.Errorf("teardown: got %q", cfg.Teardown)
 	}

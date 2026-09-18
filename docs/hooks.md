@@ -108,10 +108,9 @@ setup = "pnpm install"             # run after worktree creation
 teardown = "rm -rf node_modules"   # run before worktree removal
 pre_sync = "pnpm run build:check"  # run before rebase during sync
 post_sync = "pnpm install"         # run after successful rebase
-pre_run = "docker compose pull"    # consumed by the gw-run plugin
-run = "pnpm dev"                   # consumed by the gw-run plugin
-post_run = "docker compose down"   # consumed by the gw-run plugin
 ```
+
+Core ignores keys it does not know, so plugins can define their own in the same file. `gw-run` reads `run`, `pre_run`, and `post_run`; see its README.
 
 All hook keys accept a string or a list of commands:
 

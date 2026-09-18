@@ -3,6 +3,7 @@ package workspace
 import (
 	"fmt"
 	"io"
+	"strconv"
 	"strings"
 
 	"github.com/nicksenap/grove/internal/console"
@@ -70,6 +71,7 @@ type statusLine struct {
 	Path      string         `json:"path"`
 	Branch    string         `json:"branch"`
 	Status    string         `json:"status"`
+	Changed   int            `json:"changed"`
 	Ahead     string         `json:"ahead"`
 	Behind    string         `json:"behind"`
 	PR        *gitops.PRInfo `json:"pr,omitempty"`
@@ -88,6 +90,7 @@ func statusLines(ws *models.Workspace, results []repoStatusResult) []statusLine 
 			Path:      path,
 			Branch:    result.Branch,
 			Status:    result.Status,
+			Changed:   result.Changed,
 			Ahead:     result.Ahead,
 			Behind:    result.Behind,
 			PR:        result.PR,
@@ -113,12 +116,12 @@ func writeStatus(w io.Writer, ws *models.Workspace, results []repoStatusResult, 
 		}
 		return nil
 	case output.TSV:
-		rows := [][]string{{"WORKSPACE", "REPO", "PATH", "BRANCH", "AHEAD", "BEHIND", "STATUS"}}
+		rows := [][]string{{"WORKSPACE", "REPO", "PATH", "BRANCH", "AHEAD", "BEHIND", "CHANGED", "STATUS"}}
 		if opts.PR {
 			rows[0] = append(rows[0], "PR")
 		}
 		for _, line := range statusLines(ws, results) {
-			row := []string{line.Workspace, line.Repo, line.Path, line.Branch, line.Ahead, line.Behind, line.Status}
+			row := []string{line.Workspace, line.Repo, line.Path, line.Branch, line.Ahead, line.Behind, strconv.Itoa(line.Changed), formatStatus(line.Status)}
 			if opts.PR {
 				row = append(row, formatPR(line.PR))
 			}
