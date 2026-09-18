@@ -98,6 +98,8 @@ gw reset my-feature    # switch every repo back to the workspace branch, then sy
 gw delete my-feature   # removes worktrees, branches, and workspace files
 gw prune               # list workspaces older than 7 days
 gw prune --yes         # delete them (same two-phase cleanup as gw delete)
+gw prune branches      # list local branches in main clones that are merged and unused
+gw prune branches --gone --fetch --yes   # also branches whose upstream was deleted; delete
 ```
 
 ### Pipelines and machine-readable output
