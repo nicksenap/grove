@@ -12,12 +12,12 @@ import (
 	"github.com/nicksenap/grove/internal/output"
 )
 
+// repoStatusResult is one repo's status. Status keeps the raw porcelain text
+// for display; Changed is its entry count (0 when clean or on error).
 type repoStatusResult struct {
-	Repo   string `json:"repo"`
-	Branch string `json:"branch"`
-	Status string `json:"status"`
-	// Changed is the number of entries in git status --porcelain (0 when clean
-	// or on error). Status keeps the raw porcelain text for display.
+	Repo    string         `json:"repo"`
+	Branch  string         `json:"branch"`
+	Status  string         `json:"status"`
 	Changed int            `json:"changed"`
 	Ahead   string         `json:"ahead"`
 	Behind  string         `json:"behind"`
