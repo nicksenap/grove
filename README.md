@@ -152,7 +152,6 @@ If you used the install script, re-run it to get the latest release.
 - [Operations](openwiki/operations.md) — configuration, hooks, state, and troubleshooting
 - [Hooks](docs/hooks.md) — global hooks and per-repo `.grove.toml` hooks
 - [Plugins](docs/plugins.md) — extend `gw` with external commands
-- [Recipes](docs/recipe-v1.md) — declarative workspace creation from YAML
 - [AI coding tools](docs/ai-tools.md) — vendor-neutral agent workflows
 
 Contributors can start with the [Architecture](openwiki/architecture.md) and [Integrations](openwiki/integrations.md) notes.

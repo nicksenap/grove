@@ -1,190 +1,165 @@
 ---
-type: "Reference"
-title: "Grove Documentation"
-description: "Entry point for Grove, a CLI that creates and manages multi-repository Git worktree workspaces, with setup commands, configuration, architecture pointers, workflows, operations, integrations, and testing guidance."
+type: Reference
+title: Grove Documentation
+description: Engineer entry point for installing and using Grove (gw) to discover repositories and manage multi-repository Git worktree workspaces. Summarizes the core lifecycle, configuration, extension boundary, and routes to deeper design and operating guidance.
 tags: [grove, cli, git, worktrees, quickstart]
+verified:
+  - by: openwiki/0.5.0
+    at: 2026-09-18T19:54:31.983Z
+sources:
+  - id: openwiki-source-8037e2358a2c4f9b2c722a11
+    resource: repo://AGENTS.md
+  - id: openwiki-source-ca6cb4b1a14fd7969dfae3ec
+    resource: repo://CHANGELOG.md
+  - id: openwiki-source-5fb548baa501bcdc358d79a6
+    resource: repo://cmd/create.go
+  - id: openwiki-source-2cdd82df233710bc057f775e
+    resource: repo://cmd/init_cmd.go
+  - id: openwiki-source-d88dd56dbc4620bda4c35f1c
+    resource: repo://cmd/root.go
+  - id: openwiki-source-90ab86597712b7881e7c8057
+    resource: repo://docs/plugins.md
+  - id: openwiki-source-a8910515ddd14810ad43f5c1
+    resource: repo://internal/config/config.go
+  - id: openwiki-source-4258a83a93bef1b2aadaf678
+    resource: repo://internal/discover/deepdiscover.go
+  - id: openwiki-source-04df3322ec2dc26efbad1e6f
+    resource: repo://internal/state/state.go
+  - id: openwiki-source-315bbc2fab6a49cc711be6d2
+    resource: repo://internal/workspace/create.go
+  - id: openwiki-source-14e6a4e1ddc06973b783ff20
+    resource: repo://Justfile
+generated: { by: "openwiki/0.5.0", at: "2026-09-18T19:54:31.983Z" }
 ---
 
 # Grove Documentation
 
-**Grove** (`gw`) is a Git Worktree Workspace Orchestrator — a CLI tool that manages multi-repo worktree-based workspaces. It solves the problem of spinning up isolated feature branches across multiple repositories at once, with one command.
+**Grove** (`gw`) is a single static Go CLI that coordinates Git worktrees across multiple repositories. A workspace is a named directory containing one worktree per selected repository; the repositories share the workspace branch name while each repository may resolve its own base branch.
 
-## The Problem Grove Solves
+## Start here
 
-Without monorepos, developers must:
-- Use `git worktree add` separately for each repo
-- Track multiple branch names across different directories
-- Jump between repos to run tests or builds
-- Clean up worktrees one by one when done
-
-Grove automates this workflow: **one command to create a workspace, all repos on the same branch, in a single directory.**
-
-## Quick Start
-
-### Install
+Grove must be initialized before commands that need configuration. Initialization records and merges absolute repository-directory paths in `~/.grove/config.toml`, creates the Grove and workspace directories, then scans the configured directories for repositories. The scan is recursive to a bounded depth, avoids descending into a repository, deduplicates repositories by remote URL when available, and caches remote lookups in `~/.grove/cache/remotes.json`.
 
 ```bash
+# Install with Homebrew, the verified release script, or Go:
 brew install nicksenap/grove/grove
-# or: go install github.com/nicksenap/grove/cmd/gw@latest
+curl -fsSL https://raw.githubusercontent.com/nicksenap/grove/master/scripts/install.sh | sh
+go install github.com/nicksenap/grove/cmd/gw@latest
 
-# Then add shell integration:
+# Bash or Zsh: enables gw go and post-create directory changes
 eval "$(gw shell-init)"
-```
 
-### First Commands
+# Nushell:
+gw shell-init --shell nu | save -f ~/.config/nushell/grove.nu
+# then source grove.nu from config.nu
 
-```bash
-# Register your repo directories
+# Required first-use step
 gw init ~/dev ~/work/microservices
 
-# Configured directories are scanned recursively for nested repos
-
-# Create a workspace for a feature branch (interactive)
-gw create feat/login
-
-# Or specify repos explicitly:
-gw create my-feature -b feat/login -r svc-a,svc-b
-
-# Navigate into the workspace
-gw go my-feature
-
-# Check status across all repos
-gw status my-feature
-
-# Run per-repo processes via the gw-run plugin
-gw plugin install nicksenap/gw-run
-gw run my-feature
-
-# Clean up when done
-gw delete my-feature
+# Create and inspect a first workspace
+gw create -b feat/login -r svc-a,svc-b
+gw status feat-login
+gw go feat-login
 ```
 
-## Key Concepts
+`gw create` can take a workspace `NAME`; when omitted, the name is derived from the branch by replacing `/` and spaces with `-`. In a terminal, omitted branch and repository selections are prompted interactively. Non-interactive use should supply `-b` and one of `-r`, `-p`, or `--all`. Repository URLs in `-r` may be cloned into the first configured repository directory when they are not already discovered.
 
-### Workspace
-A named collection of git worktrees, each from a different repo, all checked out to the same branch. A workspace directory contains one subdirectory per repo.
+```mermaid
+flowchart TD
+    init["gw init DIR..."] --> config["Save config.toml and create workspace directory"]
+    config --> discover["Discover repositories and cache remotes"]
+    discover --> select["Select repos with -r, -p, --all, or picker"]
+    select --> create["gw create NAME -b BRANCH"]
+    create --> fetch["Fetch selected repositories in parallel"]
+    fetch --> worktrees["Create worktrees sequentially"]
+    worktrees --> commit["Persist workspace in state.json"]
+    commit --> operate["status, go, sync, reset, add, remove"]
+    operate --> cleanup["delete or prune"]
+```
 
-### Branch
-All repos in a workspace check out the same branch name by default. You can override a repo's default base branch via its `.grove.toml` config.
+*This flow shows the required initialization, discovery, creation, persisted-state, operation, and cleanup path.*
 
-### Preset
-A named group of repos for quick workspace creation. Presets are defined in `~/.grove/config.toml`:
+## What creation guarantees
+
+The core create path validates all selected repository names before provisioning. It fetches repositories concurrently, then creates worktrees sequentially so a failure can remove worktrees, branches, and the workspace directory created by that invocation. Only after all worktrees exist is the workspace added to `~/.grove/state.json`; setup commands from per-repository configuration run after that commit and after the mutation lock is released. A failed fetch is warned about and local Git state is used instead. `--track` can check out an existing remote branch, falling back to creating a branch from the resolved base when the remote branch is absent.
+
+The normal lifecycle is:
 
 ```bash
-gw preset add backend -r svc-auth,svc-api,svc-worker
-gw create my-feature -p backend  # uses the "backend" preset
+gw list                 # list known workspaces
+gw ws show feat-login   # inspect one workspace
+gw status feat-login    # status every worktree
+gw sync feat-login      # rebase worktrees onto their configured base branches
+gw reset feat-login     # return worktrees to the workspace branch, then sync
+gw add-repo feat-login -r svc-c
+gw remove-repo feat-login -r svc-c
+gw rename feat-login --to login-work
+gw delete login-work    # removes worktrees, branches, and workspace files
+gw prune                # list workspaces older than seven days
+gw prune --yes         # delete the listed workspaces
+gw doctor               # diagnose workspace problems
 ```
 
-### Hook
-Automation hooks fire on workspace lifecycle events (create, delete, close). Global hooks live in `~/.grove/config.toml [hooks]`; per-repo hooks in `.grove.toml`.
+Deletion and pruning are destructive cleanup operations. Use `--no-hooks` (or `-n`) when intentionally skipping lifecycle hooks; otherwise configured hooks can run around lifecycle operations. If state is corrupt, `gw doctor --fix` is the repair path named by the state loader.
 
-### Plugin
-Extend `gw` with custom commands (for example, agent automation, dashboards, or terminal multiplexer integration).
+## Configuration that matters
 
-## Configuration
-
-### Global Config: `~/.grove/config.toml`
+Global configuration is `~/.grove/config.toml`:
 
 ```toml
-repo_dirs = [
-  "~/dev",
-  "~/work/microservices"
-]
+repo_dirs = ["~/dev", "~/work/microservices"]
 workspace_dir = "~/.grove/workspaces"
 
 [presets]
 backend = { repos = ["svc-auth", "svc-api"] }
-frontend = { repos = ["web-app", "design-system"] }
 
 [hooks]
 post_create = "./scripts/workspace-created {path}"
 pre_delete = "./scripts/workspace-closing {path}"
 ```
 
-### Per-Repo Config: `.grove.toml` (at repo root)
+`gw preset add backend -r svc-auth,svc-api` and `gw create -p backend` provide a reusable repository selection. A managed repository can also contain `.grove.toml` at its root:
 
 ```toml
-base_branch = "stage"  # override default branch (main/master)
-setup = ["npm install", "npm run build"]  # run after worktree creation
+base_branch = "stage"
+setup = "pnpm install"
 ```
 
-## Common Commands
+`base_branch` changes where a new worktree starts; `setup` accepts a command or list of commands and runs after creation. Treat `config.toml` and `state.json` as Grove-owned files: plugins may read them, but should mutate workspaces through Grove commands.
 
-| Command | Purpose |
-|---------|---------|
-| `gw init <dirs>` | Register repo directories |
-| `gw create [NAME]` | Create a workspace (interactive or with `-b -r`/`-p`) |
-| `gw list [-s]` | List workspaces (with `-s` shows git status) |
-| `gw ws show <name>` | Show workspace details |
-| `gw go <name>` | Change directory into workspace |
-| `gw status <name>` | Git status across all repos |
-| `gw sync <name>` | Rebase all repos onto base branch |
-| `gw reset <name>` | Switch every repo back to the workspace branch, then sync |
-| `gw add-repo <name> -r <repo>` | Add a repo to existing workspace |
-| `gw remove-repo <name> -r <repo>` | Remove a repo from workspace |
-| `gw run <name>` | Plugin: run `.grove.toml` processes (`gw plugin install nicksenap/gw-run`) |
-| `gw rename <name> --to <new>` | Rename a workspace |
-| `gw delete <name>` | Clean up workspace (worktrees + branches) |
-| `gw prune [--min-age N] [--yes] [--json]` | List or delete workspaces older than N days (default 7) |
-| `gw plugin install <repo>` | Install a plugin from GitHub |
-| `gw doctor` | Diagnose workspace issues |
+## Core commands versus plugins
 
-## Architecture Overview
+Grove core owns repository discovery, Git worktree lifecycle, workspace state, status, synchronization, cleanup, hooks, and shell integration. It does **not** own agent automation, editor orchestration, per-repository process runners, or declarative workspace recipes.
 
-Grove is organized into clear layers:
-
-- **Entry point**: `cmd/gw/main.go` → `cmd.Execute()` (Cobra)
-- **Commands**: `cmd/*.go` handle user interaction and validation
-- **Core logic**: `internal/workspace/` orchestrates git worktrees and manages workspace state
-- **Configuration**: `internal/config/` loads global config; `internal/gitops/` reads per-repo `.grove.toml`
-- **Data**: `internal/state/` persists workspace list to `~/.grove/state.json`
-- **Integrations**: `internal/lifecycle/` runs hooks; `internal/plugin/` manages plugins
-
-All repos are discovered once at command start via `internal/discover/`, then matched to the requested repos by name. Multi-repo operations use goroutines for concurrent execution.
-
-## Next Steps
-
-- **Understand the design**: Read [architecture.md](architecture.md)
-- **Learn workflows**: Read [workflows.md](workflows.md)
-- **Configure and integrate**: Read [operations.md](operations.md) and [integrations.md](integrations.md)
-
-## Requirements
-
-- **Go**: 1.25+ (to build from source)
-- **Git**: Required on PATH
-- **No external dependencies**: Single static binary with one `git` subprocess wrapper
-
-## Key Source Files
-
-- `cmd/gw/main.go` — Entry point
-- `cmd/root.go` — Cobra setup and command registration
-- `cmd/create.go` — Workspace creation
-- `cmd/delete.go` — Cleanup
-- `internal/workspace/service.go` — Core service boundary
-- `internal/workspace/create.go`, `sync.go`, `reset.go` — Focused workspace operations
-- `internal/state/state.go` — State persistence
-- `internal/models/models.go` — Data structures (Workspace, Preset, Hook, Config)
-- `internal/config/config.go` — Config file loading
-- `internal/discover/deepdiscover.go` — Recursive repository discovery and remote deduplication
-- `internal/gitops/gitops.go` — Git subprocess wrappers
-- `internal/lifecycle/lifecycle.go` — Lifecycle hooks
-- `internal/plugin/` — Plugin management
-
-## Testing
+An unknown top-level command is resolved after built-in commands: Grove searches `~/.grove/plugins/` and then `$PATH` for an executable named `gw-<name>`, and passes it the remaining arguments. Install released plugins from GitHub or place an executable in the plugin directory:
 
 ```bash
-just check         # Run tests + vet
-just build         # Build the gw binary
-just e2e           # Run Go end-to-end tests against the gw binary
-go test ./internal/workspace -v  # Test specific package
+gw plugin install nicksenap/gw-run
+gw run feat-login
 ```
 
-## Release Process
+`gw-run` runs per-repository `.grove.toml` `run` hooks. Declarative YAML workspace creation belongs to the external [`gw-recipe`](../docs/plugins.md) plugin, not to core Grove. See [Integrations](integrations.md) and [docs/plugins.md](../docs/plugins.md) for the plugin contract, environment variables, installation, and examples.
 
-1. Add a new `## vX.Y.Z` section to `CHANGELOG.md`
-2. Commit everything
-3. Run `just release X.Y.Z` to create an annotated tag, push, and trigger the release workflow
+## Task-routing map
 
-## License
+- **Change command wiring or component boundaries:** [Architecture](architecture.md)
+- **Understand workspace, branch, discovery, provenance, and state invariants:** [Core Concepts](concepts.md)
+- **Trace create, sync, reset, navigation, and cleanup behavior:** [Workflows](workflows.md)
+- **Install, configure, diagnose, operate, or release Grove:** [Operations](operations.md)
+- **Add or consume plugins, hooks, shell, editor, or automation integrations:** [Integrations](integrations.md)
+- **Validate a change with focused tests, `just check`, or end-to-end tests:** [Testing](testing.md)
 
-Grove is licensed under the MIT License (see [LICENSE](../LICENSE)).
+## Source and development entrypoints
+
+The executable entrypoint is `cmd/gw/main.go`, which calls Cobra command setup and `cmd.Execute()`. Commands in `cmd/` validate input and invoke internal services; `internal/discover/` resolves repositories, `internal/workspace/` performs Git orchestration, `internal/gitops/` is the subprocess boundary, `internal/config/` owns TOML configuration, `internal/state/` atomically persists workspace records, and `internal/plugin/` manages external binaries.
+
+For focused validation:
+
+```bash
+just check                         # tests, vet, formatting, complexity, staticcheck
+just build                         # build gw
+just e2e                           # build and run e2e tests against gw
+go test ./internal/workspace -run TestName -v
+```
+
+Grove requires Go 1.25+ to build and Git on `PATH`. Begin source changes with [Architecture](architecture.md), then use [Testing](testing.md) to select the narrowest validation that covers the affected invariant.

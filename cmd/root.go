@@ -22,6 +22,10 @@ import (
 // recorded in the binary's build info.
 var Version = "dev"
 
+// offlineCommandAnnotation marks commands that must not touch the network or
+// Grove state (no update check, no logging setup).
+const offlineCommandAnnotation = "grove.offline"
+
 func init() {
 	if Version != "dev" {
 		return
@@ -88,7 +92,6 @@ func init() {
 		statsCmd,
 		shellInitCmd,
 		presetCmd,
-		recipeCmd,
 		addDirCmd,
 		removeDirCmd,
 		pluginCmd,

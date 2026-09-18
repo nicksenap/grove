@@ -1,495 +1,227 @@
 ---
 type: "Reference"
 title: "Workflows"
-description: "Main Grove user workflows, from repository discovery and workspace creation through navigation, synchronization, execution, cleanup, and recovery."
-tags: [grove, workflows, workspaces, git, cli]
+description: "End-to-end Grove workflows for discovery, workspace lifecycle, multi-repository synchronization, navigation, hooks, and recovery. Describes state transitions, safety checks, rollback, and per-repository failure behavior."
+tags: [grove, workflows, workspaces, git, cli, operations]
+verified:
+  - by: openwiki/0.5.0
+    at: 2026-09-18T19:54:31.983Z
+sources:
+  - id: openwiki-source-183c4c7db709eae12cf639de
+    resource: repo://cmd/addrepo.go
+  - id: openwiki-source-5fb548baa501bcdc358d79a6
+    resource: repo://cmd/create.go
+  - id: openwiki-source-4a20513926f0658ee53b3ddf
+    resource: repo://cmd/doctor.go
+  - id: openwiki-source-f03c6eedf6d8f9495e3d7211
+    resource: repo://cmd/go_cmd.go
+  - id: openwiki-source-2cdd82df233710bc057f775e
+    resource: repo://cmd/init_cmd.go
+  - id: openwiki-source-c713337c253fefedba109b9e
+    resource: repo://cmd/prune.go
+  - id: openwiki-source-be9f106c656ba0e202a9b414
+    resource: repo://cmd/reset.go
+  - id: openwiki-source-d88dd56dbc4620bda4c35f1c
+    resource: repo://cmd/root.go
+  - id: openwiki-source-90ab86597712b7881e7c8057
+    resource: repo://docs/plugins.md
+  - id: openwiki-source-6b1859c6bc35c4f29682760b
+    resource: repo://e2e/lifecycle_test.go
+  - id: openwiki-source-cefc1b19c7f172de09e25b8a
+    resource: repo://e2e/prune_test.go
+  - id: openwiki-source-6e2ef7bffba8b16154bfe6e4
+    resource: repo://internal/lifecycle/lifecycle.go
+  - id: openwiki-source-9fa0f37ad88ce2a52ed9f800
+    resource: repo://internal/operations/service.go
+  - id: openwiki-source-315bbc2fab6a49cc711be6d2
+    resource: repo://internal/workspace/create.go
+  - id: openwiki-source-0af407bb538616acaaa4baca
+    resource: repo://internal/workspace/doctor.go
+  - id: openwiki-source-3c568d28ba0929ed69dbb842
+    resource: repo://internal/workspace/prune.go
+  - id: openwiki-source-c98f76c921b18fb02cf31e14
+    resource: repo://internal/workspace/remove.go
+  - id: openwiki-source-14f23668f57fdf9ce732531e
+    resource: repo://internal/workspace/rename.go
+  - id: openwiki-source-ed256bc11bc3e46909d033e5
+    resource: repo://internal/workspace/repos.go
+  - id: openwiki-source-f17c2e39946320331020bb09
+    resource: repo://internal/workspace/reset.go
+  - id: openwiki-source-142be80b74015990b087e259
+    resource: repo://internal/workspace/status.go
+  - id: openwiki-source-518fc59687d34ca8836f1792
+    resource: repo://internal/workspace/sync.go
+generated: { by: "openwiki/0.5.0", at: "2026-09-18T19:54:31.983Z" }
 ---
 
 # Workflows
 
-This page explains the main user workflows and how they map to code.
+Grove manages a workspace as persisted metadata plus one Git worktree per repository. Commands resolve repositories from configured directories, mutate worktrees, and update `~/.grove/state.json`; commands that operate on several repositories generally continue independently and report repository-specific warnings.
 
-## Workflow: Initial Setup
-
-**Goal**: Register repo directories so Grove knows where to find projects.
-
-### Steps
-
-1. **Register repo directories**
-   ```bash
-   gw init ~/dev ~/work/microservices
-   ```
-   - Creates `~/.grove/config.toml` if it doesn't exist
-   - Sets `repo_dirs = ["~/dev", "~/work/microservices"]`
-   - Creates `~/.grove/state.json` (empty workspace list)
-
-2. **Nested repositories are discovered automatically**
-   - Configured directories are recursively scanned up to three levels deep
-   - Hidden directories, `node_modules`, and `__pycache__` are skipped
-
-3. **Add more directories later**
-   ```bash
-   gw add-dir ~/other/repos
-   ```
-   - Appends to `repo_dirs` in config
-
-### Code Flow
-
-- **`cmd/init_cmd.go`** — Calls `config.Save()` to persist directories
-- **`internal/discover/deepdiscover.go`** — Recursively discovers repositories, deduplicates clones by remote URL, and caches remotes
-- **`internal/config/config.go`** — `Save()` writes to TOML file; `Load()` reads and validates
-
-**Key source**: `internal/discover/deepdiscover.go` scans configured directories for repositories.
-
----
-
-## Workflow: Create a Workspace
-
-**Goal**: Spin up a feature branch across multiple repos at once.
-
-### Method 1: Interactive Selection (Recommended)
+## Initialize and discover repositories
 
 ```bash
-gw create feat-login
+gw init ~/dev ~/work/microservices
 ```
 
-Prompts:
-1. Select repos from presets (if any) or manually
-2. Enter branch name (default: derived from workspace name)
-3. Confirm and create
+`gw init` initializes Grove configuration with the supplied repository directories, saves it, and immediately scans those directories with the discovery cache. Later repository commands rediscover from the configured directories. A workspace creation can also accept a remote Git URL in `--repos` (and `gw add-repo --repos`); Grove clones it into the first configured `repo_dir` before continuing, and rejects a name collision with a different local path. `cmd/init_cmd.go` delegates configuration initialization to `internal/config`, while discovery is performed by `discover.DiscoverReposWithCache` (`cmd/init_cmd.go#L10-L26`, `cmd/create.go#L37-L80`, `cmd/addrepo.go#L32-L57`).
 
-### Method 2: Flag-Based
+## Create: provision, persist, then run hooks
+
+Typical non-interactive creation is:
 
 ```bash
-gw create my-feature -b feat/login -r svc-a,svc-b
+gw create my-feature --branch feat/login --repos svc-auth,svc-api
+gw create pr-42 --branch feat/login --repos svc-auth --track \
+  --source-url "https://github.com/org/repo/pull/42" --source-provider github \
+  --source-ref 42 --source-title "Add login flow"
 ```
 
-- `-b` — Branch name (required if not interactive)
-- `-r` — Comma-separated repo names
-- `-p` — Use a preset instead of `-r`
+Without repository flags, the CLI offers presets first and otherwise an interactive multi-selection. The branch is prompted when possible; if the name is omitted it is derived by replacing `/` and spaces with `-`. Selected repository names are validated before the service is called. `--source-*` values are opaque provenance persisted on the workspace and made available to hooks; they are not interpreted as recipes or automation (`cmd/create.go#L81-L170`, `cmd/create.go#L198-L225`).
 
-### Method 3: From a Preset
-
-```bash
-gw create -p backend
-# or with explicit branch
-gw create my-feature -p backend -b feat/login
-```
-
-### Special Cases: Branch Tracking and Source Provenance
-
-The `create` command also supports:
-
-- **`--track`** — Check out an existing remote branch instead of creating a new one (useful for pull request branches)
-- **`--source-url`** — Record the URL a workspace was seeded from (e.g., GitHub PR, Notion page)
-  ```bash
-  gw create -b feat/login -r svc-a,svc-b \
-    --source-url "https://github.com/org/repo/pull/42" \
-    --source-provider github \
-    --source-ref "42" \
-    --source-title "Add login flow"
-  ```
-  - This metadata is stored in `state.json` for display and plugin use
-
-### Code Flow
-
-1. **`cmd/create.go`** — User input parsing
-   - Loads config and discovers repos
-   - Validates selections and branch name
-   - Calls `workspace.Service.Create()` or `workspace.Service.CreateWithOpts()`
-
-2. **`internal/workspace/create.go`** (through `workspace.Service`) — Core creation logic
-   - **`CreateWithOpts()`** — Main orchestrator
-     - Checks for duplicate workspace (error if exists)
-     - Resolves branch name (default: workspace name with `/` → `-`)
-     - For each repo:
-       - Calls `gitops.CreateWorktree()` to create the git worktree
-       - Calls `gitops.Checkout()` to check out the branch (create or track)
-       - Reads `.grove.toml` from repo and runs `setup` commands if present
-     - Creates `Workspace` struct with all `RepoWorktree` entries
-     - Calls `state.SaveWorkspace()` to persist
-
-3. **`internal/gitops/gitops.go`** — Git operations
-   - **`CreateWorktree()`** — Runs `git worktree add <path> <branch>`
-     - Sets environment: `GIT_TERMINAL_PROMPT=0` (no interactive prompts)
-     - Handles `GitError` and retries on transient failures
-   - **`Checkout()`** — Runs `git checkout <branch>` or `git checkout -b <branch> origin/<branch>`
-     - Tracks remote branch if it exists (with `--track`)
-     - Creates new branch from base if not (`-b` flag)
-
-4. **`internal/lifecycle/lifecycle.go`** — Post-create hook
-   - If `post_create` hook configured, runs it with placeholders expanded:
-     - `{name}` → workspace name
-     - `{path}` → workspace directory path
-     - `{branch}` → branch name
-     - `{source_url}`, `{source_ref}`, `{source_title}` → from provenance
-   - Respects hook metadata: `stream`, `timeout`, `on_failure`
-
-5. **`internal/state/state.go`** — State persistence
-   - Atomically writes workspace to `~/.grove/state.json`
-
-### Key Decisions When Modifying
-
-- **Branch naming**: Workspace name is derived from branch by replacing `/` with `-` (e.g., `feat/login` → `feat-login` workspace)
-- **Base branch**: Default is `main` or `master` (auto-detected); override per-repo via `.grove.toml`
-- **Worktree location**: All repos are checked out into `<WorkspaceDir>/<WorkspaceName>/<RepoName>/`
-- **Setup commands**: Run sequentially in each repo after worktree creation; failure can be fatal (abort) or warning
-
----
-
-## Workflow: Multi-Repo Operations
-
-**Goal**: Query and modify the workspace across all repos.
-
-### Check Status
-
-```bash
-gw status feat-login
-```
-
-- Runs `git status` in each repo concurrently
-- Shows short status for each repo (new files, uncommitted changes, etc.)
-
-### Rebase onto Base Branch
-
-```bash
-gw sync feat-login
-```
-
-- For each repo: runs `git rebase origin/<base-branch>`
-- Useful after new commits are pushed to main/master
-
-### Return Repositories to the Workspace Branch
-
-```bash
-# Detect the workspace from the current directory
-gw reset
-
-# Or name it explicitly
-gw reset feat-login
-
-# Allow switching away from a different branch with tracked local changes
-gw reset feat-login --discard
-```
-
-`reset` first resolves the workspace, then processes its repositories concurrently. A repository already on its recorded workspace branch goes directly through the normal sync path. A repository on another branch is switched back only when its working tree is clean; dirty repositories are skipped unless `--discard` is supplied. Detached `HEAD` is treated as a branch different from the recorded branch. After a successful switch, reset runs the same fetch/status/base-branch/rebase behavior as `gw sync`, including per-repository `pre_sync` and `post_sync` commands. Failures are reported per repository while the other repositories continue.
-
-**Code flow**:
-
-- **`cmd/reset.go`** — Resolves an explicit name or auto-detects from the current directory and passes the `--discard` flag to the service.
-- **`internal/workspace/reset.go`** — Compares the live branch with the recorded branch, protects dirty worktrees, switches with `gitops.Switch`, and calls `syncOneRepo`.
-- **`internal/workspace/sync.go`** — Shared sync implementation: fetches, skips dirty trees, determines the base branch, and rebases when behind.
-- **`internal/gitops/gitops.go`** — Provides the branch/status/switch subprocess wrappers used by reset.
-
-### Add a Repo to Existing Workspace
-
-```bash
-gw add-repo feat-login -r svc-c
-```
-
-- Creates a new worktree for `svc-c` in the same workspace directory
-- Runs setup commands from `.grove.toml` if present
-- Persists updated `Workspace` to state
-
-### Remove a Repo from Workspace
-
-```bash
-gw remove-repo feat-login -r svc-a
-```
-
-- Removes the worktree for `svc-a` (calls `git worktree remove`)
-- Removes the branch (calls `git branch -D`)
-- Persists updated `Workspace` to state
-
-### Code Flow
-
-- **`cmd/status.go`** — Calls `workspace.Service.Status()` and displays results
-- **`cmd/sync_cmd.go`** — Calls `workspace.Service.Sync()` for rebase
-- **`cmd/reset.go`** — Resolves the workspace and calls `workspace.Service.Reset()`; `--discard` controls switching dirty repos
-- **`cmd/addrepo.go`** / **`cmd/removerepo.go`** — Add/remove logic
-- **`internal/workspace/status.go`** — Spawns goroutines for concurrent `git status` calls
-- **`internal/workspace/sync.go`** — Spawns goroutines for concurrent `git rebase` calls
-- **`internal/workspace/reset.go`** — Compares each live branch with the recorded branch, skips dirty wanderers unless requested, switches clean repos, and invokes sync
-- **`internal/workspace/repos.go`** — Add/remove workspace repositories
-- **`internal/gitops/gitops.go`** — Provides the Git subprocess wrappers, including `Switch()`
-
-### Key Decisions When Modifying
-
-- **Concurrency**: `Status()` and `Sync()` use `sync.WaitGroup` to parallelize git operations; each repo is independent
-- **Error handling**: Multi-repo operations continue even if one repo fails; errors are accumulated and reported
-- **Destructive operations**: `RemoveRepo()` deletes the worktree and branch; consider making this optional
-
----
-
-## Workflow: Run Dev Processes
-
-**Goal**: Run per-repo commands (e.g., tests, builds) in a coordinated way.
-
-Process supervision is not part of Grove core. Install [gw-run](https://github.com/nicksenap/gw-run):
-
-```bash
-gw plugin install nicksenap/gw-run
-gw run feat-login
-```
-
-Without the plugin, `gw run` is an unknown command.
-
----
-
-## Workflow: Cleanup
-
-**Goal**: Delete a workspace (remove all worktrees and branches).
-
-### Delete Command
-
-```bash
-gw delete feat-login
-```
-
-- Destructively removes the workspace without a confirmation prompt
-- Pre-delete hook fires (for example, `./scripts/workspace-closing {path}` to save external state); configure `on_failure = "abort"` to enforce deletion policy
-- Renames the workspace root into `<workspace-dir>/.trash/` so the original path is free immediately
-- For each repo in workspace:
-  - Calls `git worktree prune --expire=now` to drop the relocated worktree registration
-  - Calls `git branch -D <branch>` to delete the branch
-- Removes the workspace from state, then unlinks the quarantined bytes in the background
-- Optionally: runs the configured `on_close` hook (for example, a terminal-specific pane-closing script)
-
-### Prune Command
-
-```bash
-gw prune
-gw prune --min-age 14
-gw prune --yes
-```
-
-- Lists workspaces whose `created_at` is at least `--min-age` days old (default 7)
-- Does not delete unless `--yes` is passed
-- `--yes` deletes matching workspaces through the same two-phase path as `gw delete` (quarantine, prune git registrations, drop state, background unlink)
-- `--json` emits a JSON array of candidates with `name`, `branch`, `created_at`, and computed `age_days`; with `--yes`, it reports the candidates after deletion
-- A negative `--min-age` is rejected; workspaces with missing or unparseable `created_at` values are skipped
-- Age is based on workspace creation time, not last use (`gw go` is not recorded)
+Creation is deliberately split into a fast, parallel fetch phase and a sequential provisioning phase. Fetch failures are warnings and local Git state is used. Each worktree is then created in order, with the workspace branch based on the resolved base branch. If base resolution fails, `HEAD` is used; branch creation retries with a branch name without `origin/`, then `HEAD`. `--track` uses an existing remote branch when present; if it is absent, Grove explicitly falls back to creating a new branch from base. A branch that already has a worktree is rejected (`internal/workspace/create.go#L126-L165`, `internal/workspace/create.go#L178-L256`).
 
 ```mermaid
 sequenceDiagram
-    participant CLI as gw prune
+    participant CLI as gw create
+    participant Discover as repository discovery
+    participant Git as Git repositories
     participant State as state.json
-    participant Service as operations service
-    participant Workspace as workspace removal
-    participant Trash as background unlink
-    CLI->>State: Load workspaces
-    CLI->>CLI: Filter created_at by min-age
-    alt Preview
-        CLI-->>CLI: Render table or JSON
-    else Delete with --yes
-        loop Each candidate
-            CLI->>Service: Delete with Force
-            Service->>Workspace: Quarantine root and prune registrations
-            Workspace->>State: Remove workspace
-            Workspace-->>Trash: Schedule unlink of .trash item
-        end
-        CLI-->>CLI: Render deleted candidates
+    participant Hooks as lifecycle hooks
+    CLI->>Discover: resolve selected repos
+    CLI->>Git: clone URL repos when needed
+    par Fetch each source repo
+        CLI->>Git: fetch
+    end
+    loop Repositories in selection order
+        CLI->>Git: resolve branch or remote tracking branch
+        CLI->>Git: add worktree
+    end
+    alt Any provisioning or state write fails
+        CLI->>Git: remove created worktrees in reverse order
+        CLI->>Git: delete branches created by Grove
+        CLI-->>CLI: remove empty workspace root
+    else Provisioning succeeds
+        CLI->>State: add workspace atomically under lock
+        CLI->>Hooks: run per-repo setup after lock release
+        CLI->>Hooks: run post_create policy
     end
 ```
 
-This flow shows that pruning is a filter over persisted creation timestamps and that filesystem unlinking is decoupled from logical state removal.
+This sequence shows why creation does not leave a partially provisioned workspace when a later repository fails, while setup commands are intentionally outside the state mutation lock.
 
-### Code Flow
+The workspace is added to state only after all worktrees exist. Rollback removes created worktrees in reverse order and deletes only branches Grove created. Setup commands from each source repository’s `.grove.toml` run concurrently after the commit; a setup failure is warned and does not undo the workspace (`internal/workspace/create.go#L55-L84`, `internal/workspace/create.go#L259-L310`). The operation layer then runs `post_create`: default hook failures warn, while `on_failure = "abort"` makes the command fail **after** creation; an aborting post-create hook does not roll back the persisted workspace (`internal/operations/service.go#L51-L90`).
 
-1. **`cmd/delete.go`** — Runs `pre_delete` and orchestrates destructive deletion
-2. **`cmd/prune.go`** — Filters workspaces by `created_at` age; `--yes` calls the same delete operation as `gw delete`
-3. **`internal/lifecycle/lifecycle.go`** — Fires `pre_delete` hook with `{path}` placeholder
-4. **`internal/workspace/remove.go`** — `Delete()` method
-   - Quarantines the workspace root, prunes Git worktree registrations, and deletes branches
-   - Removes the workspace from state, then schedules a background unlink
-5. **`internal/operations/service.go`** — Applies the required `on_close` policy, then delegates hook execution to `internal/lifecycle/lifecycle.go`
+## Hooks and failure policy
 
-### Key Decisions When Modifying
+Hooks are configured in Grove configuration and run through `sh -c`. Placeholders include `{name}`, `{path}`, `{branch}`, and source placeholders `{source_url}`, `{source_ref}`, `{source_title}`. Hooks may stream output, capture output until failure, and enforce a duration timeout. A failed hook is warning-only unless its metadata says `on_failure = "abort"`; `--no-hooks` (or `-n`) disables all lifecycle hooks, including safety or cleanup hooks (`internal/lifecycle/lifecycle.go#L21-L87`, `internal/lifecycle/lifecycle.go#L92-L163`, `cmd/root.go#L63-L66`).
 
-- **Hook timing**: `pre_delete` fires before worktree removal (still has access to working directories)
-- **Deletion policy**: Deletion is destructive by default. A `pre_delete` hook with `on_failure = "abort"` is the extension point for safeguards.
-- **Hook bypass**: `--no-hooks` skips lifecycle hooks, including any configured deletion policy
-- **Trash safety**: `unlink-trash` is hidden and only accepts a direct child of `.trash`; leftover items are inspected by `gw doctor` before optional removal
+The operation layer applies this policy to `pre_delete` before destructive cleanup. An aborting `pre_delete` prevents deletion; a warning-policy failure is reported and deletion continues. `pre_sync` and `post_sync` are repository-local commands from `.grove.toml`, not global lifecycle hooks (`internal/operations/service.go#L106-L126`, `internal/operations/service.go#L148-L174`, `internal/workspace/sync.go#L48-L62`).
 
----
-
-## Workflow: Preset Management
-
-**Goal**: Save and reuse groups of repos for quick workspace creation.
-
-### Create a Preset
+## Status, sync, and reset
 
 ```bash
-gw preset add backend -r svc-auth,svc-api,svc-worker
+gw status [NAME]
+gw status NAME --json --pr
+gw sync [NAME]
+gw reset [NAME]
+gw reset [NAME] --discard
 ```
 
-- Adds or updates preset in `~/.grove/config.toml`
-- Saved as `[presets.backend]` table
+`status` resolves a named workspace or the workspace containing the current directory, then collects current branch, working-tree status, and ahead/behind counts concurrently. `--pr` adds provider status through the available GitHub/GitLab CLI integration; `--json` changes presentation without changing collection. `sync` fetches each source repository, skips a repository whose worktree is dirty, resolves its configured base branch, and rebases only when the workspace branch is behind. A failed rebase is aborted for that repository; other repositories continue. `pre_sync` and `post_sync` run around a successful rebase (`internal/workspace/status.go#L20-L103`, `internal/workspace/sync.go#L13-L63`).
 
-### List Presets
+`reset` is different from `sync`: it first compares each live worktree branch with the branch recorded in state. A clean worktree on another branch is switched back and then sent through the same sync path. A detached `HEAD` counts as a different branch. A dirty worktree on another branch is skipped by default; `--discard` permits Git to discard tracked local changes while switching. Each repository runs independently, so a branch lookup, switch, status, fetch, or rebase failure does not prevent the remaining repositories from being processed (`cmd/reset.go#L10-L34`, `internal/workspace/reset.go#L13-L74`).
+
+## Add, remove, and rename repositories or workspaces
 
 ```bash
-gw preset list
+gw add-repo [NAME] --repos svc-worker
+gw remove-repo [NAME] --repos svc-worker
+gw remove-repo [NAME] --repos svc-worker --force
+gw rename [NAME] --to login-v2
 ```
 
-### Use a Preset
+`add-repo` resolves the workspace from its argument or current directory, discovers or clones repositories, creates worktrees on the workspace’s recorded branch, and updates state. Multiple additions are sequential; a failure rolls back worktrees and branches created during that add operation. Setup runs after state is updated (`cmd/addrepo.go#L17-L80`, `internal/workspace/repos.go#L12-L89`).
+
+`remove-repo` prompts unless `--force` is supplied. Safety preflight verifies the expected worktree registration, expected branch, current branch, and a clean worktree. Only after that does it remove the worktree, delete its non-preserved branch, and update the workspace state. If removing several repositories encounters an error, successful removals are retained and cleanup errors are accumulated; this is a partial operation rather than an all-or-nothing transaction. `--force` bypasses the preflight and confirmation (`cmd/removerepo.go#L18-L63`, `internal/workspace/repos.go#L92-L166`, `internal/workspace/remove.go#L249-L299`).
+
+Rename uses a state-first, locked update: it rejects name/path collisions, updates the workspace and every worktree path in state, then renames the directory. If the filesystem rename fails, it restores the prior state. After success it repairs Git worktree registrations (`internal/workspace/rename.go#L14-L78`).
+
+## Destructive cleanup: delete and prune
 
 ```bash
-gw create my-feature -p backend
+gw delete NAME
+gw prune                         # preview, default minimum age 7 days
+gw prune --min-age 14 --yes
+gw prune --json
 ```
 
-- Expands to the repos defined in the preset
+The top-level delete command supplies force cleanup after interactive selection, so `gw delete` does not perform the normal dirty-worktree preflight. The operation layer still runs `pre_delete` unless `--no-hooks` is set, and captures the expected creation timestamp and path so a concurrent state change is rejected. Direct workspace service callers can use safe defaults; `remove-repo` uses the same preflight machinery with its own `--force` flag (`cmd/delete.go#L31-L61`, `internal/operations/service.go#L106-L125`).
 
-### Code Flow
+Deletion is a two-phase quarantine operation. It first renames the workspace root into a sibling `.trash/<name>-<timestamp>` directory, so the live path is freed. It then prunes Git worktree registrations for every source repository. If pruning fails, or state removal fails, Grove restores the quarantined directory and repairs registrations where possible. Once registrations are pruned, state is removed; branch deletion is attempted afterward and branch failures are warnings, not a reason to restore the workspace. Quarantined bytes are unlinked asynchronously when configured, with a synchronous best-effort fallback; the unlink helper accepts only a direct child of `.trash` (`internal/workspace/remove.go#L82-L128`, `internal/workspace/remove.go#L131-L224`).
 
-- **`cmd/preset.go`** — CRUD operations for presets
-- **`internal/config/config.go`** — Loads/saves presets in TOML config
-- **`cmd/create.go`** — Resolves presets when `-p` is used
-
----
-
-## Workflow: Rename a Workspace
-
-**Goal**: Rename an existing workspace without recreating it.
-
-### Rename Command
-
-```bash
-gw rename feat-login --to login-v2
+```mermaid
+sequenceDiagram
+    participant CLI as gw delete or prune
+    participant Hook as pre_delete
+    participant State as state.json
+    participant FS as workspace filesystem
+    participant Git as source repositories
+    participant Trash as unlink worker
+    CLI->>Hook: run policy unless --no-hooks
+    alt Hook aborts
+        Hook-->>CLI: stop before mutation
+    else Allowed
+        CLI->>State: lock and recheck expected path and timestamp
+        CLI->>FS: rename workspace root into .trash
+        loop Each source repository
+            CLI->>Git: git worktree prune
+        end
+        alt Prune or state removal fails
+            CLI->>FS: restore quarantined root
+            CLI->>Git: repair worktree registration
+        else All registrations pruned
+            CLI->>State: remove workspace
+            loop Each workspace branch
+                CLI->>Git: delete branch unless preserved
+            end
+            CLI-->>Trash: unlink quarantined bytes
+        end
+    end
 ```
 
-- Renames the workspace directory
-- Updates all worktree paths in state
-- Useful if you realize a better name later
+`prune` is safe by default: it only previews workspaces whose parseable `created_at` is at least `--min-age` days old (default 7), rejects negative ages, and skips missing or malformed timestamps. `--yes` feeds each candidate through the same forced delete path; age is creation time, not last navigation or use. A failure deleting one candidate stops the prune loop and returns the error (`cmd/prune.go#L23-L39`, `cmd/prune.go#L48-L70`, `cmd/prune.go#L106-L131`, `internal/workspace/prune.go#L9-L35`).
 
-### Code Flow
-
-- **`cmd/rename.go`** — Parses the new name and calls `workspace.Service.Rename()`
-- **`internal/workspace/rename.go`** — `Rename()` method
-  - Renames the workspace directory on disk
-  - Updates the `Workspace.Name` and all `RepoWorktree.WorktreePath` entries
-  - Persists updated state
-
----
-
-## Workflow: Navigation and Shell Integration
-
-**Goal**: Change directory into a workspace seamlessly.
-
-### Change Directory
+## Navigation and shell integration
 
 ```bash
-gw go feat-login
-```
-
-- Without shell integration: prints the path
-- With shell integration (eval of `gw shell-init`): actually changes your shell's directory
-
-### Code Flow
-
-- **`cmd/go_cmd.go`** — Looks up workspace path and either:
-  - Prints the path (if no shell integration)
-  - Runs `cd` via a shell-specific function (bash/zsh: `__gw_go_impl`, nushell: `gw-go`)
-
-### Shell Integration
-
-```bash
+gw go NAME
+gw go --back
 eval "$(gw shell-init)"
 ```
 
-- **`cmd/shellinit.go`** — Generates shell functions/aliases
-  - Bash/Zsh: defines `gw()` wrapper function that calls `gw shell-init` on each command
-  - Nushell: exports environment and defines aliases
-  - Enables `gw go` to actually change directory in the current shell (not a subshell)
+`gw go` prints the workspace path, allowing shell integration to change the caller’s directory rather than a subprocess’s directory. With no name it offers a workspace picker; `--back` resolves the current workspace and returns either its unique source-repository parent or prompts when parents differ. The `--delete` and `--close-tab` variants can delete the current workspace or invoke the required `on_close` hook, respectively; navigation refuses to delete the workspace it is about to enter (`cmd/go_cmd.go#L27-L103`, `cmd/go_cmd.go#L106-L144`).
 
-### Auto-CD After Create
-
-With shell integration enabled, `gw create` automatically `cd`s into the new workspace (via `__gw_go_impl`).
-
----
-
-## Workflow: Interactive Menus
-
-**Goal**: Let users select from available options without flags.
-
-### Implementation
-
-Grove uses `internal/picker/` for terminal UI:
-
-```bash
-gw create  # No arguments — interactive
-```
-
-- Prompts for repo selection (with type-to-search)
-- Prompts for branch name
-- Confirms before creating
-
-### Keyboard Shortcuts
-
-- Type to search/filter
-- Arrow keys to navigate
-- Tab + arrow to multi-select (with `[all]` shortcut)
-- Enter to confirm
-
-### Code Flow
-
-- **`internal/picker/picker.go`** — Terminal UI implementation
-- **`cmd/*.go`** — Calls `picker.PickOne()` or `picker.PickMany()` when flags are missing
-
----
-
-## Workflow: Diagnostics
-
-**Goal**: Identify and resolve workspace health issues.
-
-### Doctor Command
+## Diagnostics and recovery
 
 ```bash
 gw doctor
+gw doctor --fix
+gw doctor --json
 ```
 
-- Checks for common issues:
-  - Orphaned worktrees (in state but missing on disk)
-  - Missing git repos
-  - Worktree conflicts
-  - Config issues
+Doctor compares persisted workspaces with filesystem state. It reports missing workspace directories, missing source repositories, and missing worktree directories. `--fix` removes stale workspace entries or stale repository entries when the evidence supports that action, under the state lock. It also inspects leftover `.trash` items outside the mutation lock. A trash item that still matches a workspace in state is treated as owned and is not removed; unrelated leftover quarantine bytes can be removed by `--fix`. This makes doctor a conservative recovery tool rather than a blind delete command (`internal/workspace/doctor.go#L82-L177`, `internal/workspace/doctor.go#L218-L308`, `cmd/doctor.go#L18-L56`).
 
-- Suggests fixes
+## Extension boundary and tests
 
-### Code Flow
+Process-running and recipe workflows are not Grove core behavior. Install the external `gw-run` or `gw-recipe` plugins as appropriate; recipe documentation belongs in [`docs/plugins.md`](../docs/plugins.md), not in this core workflow description. Unknown commands are handed to installed plugins by the root command (`cmd/root.go#L101-L118`).
 
-- **`cmd/doctor.go`** — Runs diagnostics and reports issues
-- Compares `~/.grove/state.json` against actual filesystem state
+Focused end-to-end coverage verifies lifecycle hook execution, `--no-hooks`, abort versus warning policy, source placeholders, prune preview, age filtering, and destructive prune behavior including state, directory, and branch removal (`e2e/lifecycle_test.go#L10-L96`, `e2e/prune_test.go#L19-L72`).
 
----
+### Safe modification invariants
 
-## Key Patterns When Modifying Workflows
-
-### 1. **Always Validate Before Mutating State**
-   - Check workspace exists before modifying
-   - Verify repos are registered before creating
-   - Confirm destructive operations
-
-### 2. **Atomic State Writes**
-   - Every workflow that modifies state should call `state.SaveWorkspace()` at the end
-   - Failures should leave state intact
-
-### 3. **Concurrent Git Operations**
-   - Use `sync.WaitGroup` to parallelize independent operations
-   - Collect errors in a slice; report all failures
-   - Continue even if one repo fails (graceful degradation)
-
-### 4. **Lifecycle Hooks Are Boundaries**
-   - Fire hooks before/after operations
-   - Hooks can abort operations (if `on_failure = "abort"`)
-   - Always handle `lifecycle.ShouldAbort(err)` in commands
-
-### 5. **Interactive vs. Flag-Based**
-   - If flags provided, use them (fast path)
-   - If no flags, prompt interactively (user-friendly)
-   - Pickers should offer presets first (common case)
-
-### 6. **Error Messages**
-   - Be specific: which repo failed, what git command, why
-   - Suggest next steps (e.g., "Check SSH keys" on auth failure)
-   - Use `console.Errorf()` for user-facing errors
+- Validate repository selections, workspace identity, and expected paths before mutation.
+- Keep state changes under the state lock; run user-owned setup and teardown commands outside it because they may invoke `gw`.
+- Preserve per-repository independence for status, sync, reset, and cleanup reporting.
+- Treat dirty-worktree protection as the default; make intentional data loss explicit with `--discard` for reset or `--force` for destructive cleanup.
+- Preserve rollback and quarantine boundaries: failed creation/addition removes only resources created by that attempt, while failed deletion restores the quarantined root when logical cleanup cannot complete.

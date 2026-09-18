@@ -9,6 +9,7 @@ Grove supports external plugins that add commands. A plugin is a standalone exec
 ```bash
 gw plugin install nicksenap/gw-run
 gw plugin install nicksenap/gw-dispatch
+gw plugin install nicksenap/gw-recipe
 gw plugin install igor-kupczynski/gw-code
 ```
 
@@ -70,6 +71,16 @@ Agent-agnostic plugin that creates a Grove workspace and starts a selected codin
 gw plugin install nicksenap/gw-dispatch
 gw dispatch -n -r api,web -P "Implement login"
 gw dispatch -b feat/login -p backend --agent pi -P "Implement login"
+```
+
+### [gw-recipe](https://github.com/nicksenap/gw-recipe)
+
+Creates multi-repository workspaces from declarative YAML Recipes: pins repositories to refs, provisions worktrees through `gw create`, and runs a DAG of setup jobs. Formerly `gw recipe validate` and `gw create --recipe` in core.
+
+```bash
+gw plugin install nicksenap/gw-recipe
+gw recipe validate stack.yaml
+gw recipe create my-feature --branch feat/login --file stack.yaml
 ```
 
 ### [gw-code](https://github.com/igor-kupczynski/gw-code)
