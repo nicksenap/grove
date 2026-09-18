@@ -32,8 +32,15 @@ esac
 
 version="${GW_VERSION:-}"
 if [ -z "$version" ]; then
-  version=$(curl -fsSL "https://api.github.com/repos/$REPO/releases/latest" \
-    | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' | head -n1)
+  # Follow the releases/latest redirect; avoids GitHub API rate limits.
+  final=$(curl -fsSIL -o /dev/null -w '%{url_effective}' "https://github.com/$REPO/releases/latest" || true)
+  version="${final##*/}"
+  if [ -z "$version" ] || [ "$version" = "latest" ]; then
+    auth=""
+    [ -n "${GITHUB_TOKEN:-}" ] && auth="Authorization: Bearer $GITHUB_TOKEN"
+    version=$(curl -fsSL ${auth:+-H "$auth"} "https://api.github.com/repos/$REPO/releases/latest" \
+      | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' | head -n1)
+  fi
   [ -n "$version" ] || fail "could not determine latest release"
 fi
 version="v${version#v}"
