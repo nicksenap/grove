@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Features
+
+- `gw plugin search [term]` lists known plugins from a registry embedded in `gw`, and `gw plugin install <name>` resolves bare names through it (`gw plugin install recipe`). `owner/repo` arguments work as before. Add plugins via PR to `internal/plugin/registry.json`.
+
 ### Changed
 
 - `gw status -o json|jsonl|tsv` adds a numeric `changed` field (count of `git status --porcelain` entries). `status` keeps the raw text; the TSV `STATUS` column now shows the summarized form (`clean`, `N changed`).

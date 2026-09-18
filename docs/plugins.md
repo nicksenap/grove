@@ -4,7 +4,21 @@ Grove supports external plugins that add commands. A plugin is a standalone exec
 
 ## Install methods
 
+### From the registry
+
+`gw` ships with a curated list of known plugins:
+
+```bash
+gw plugin search            # list all
+gw plugin search editor     # filter by name, repo, or description
+gw plugin install recipe    # bare name resolves through the registry
+```
+
+To add a plugin to the registry, open a PR against [`internal/plugin/registry.json`](../internal/plugin/registry.json). The list is only as current as the installed `gw`.
+
 ### From GitHub
+
+Any repository that publishes `gw-<name>` release archives works, registry or not:
 
 ```bash
 gw plugin install nicksenap/gw-run
