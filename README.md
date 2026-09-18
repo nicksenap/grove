@@ -115,7 +115,7 @@ done
 
 # Process one complete object per line
 gw status my-feature -o jsonl |
-  jq -r 'select(.status != "clean") | .repo'
+  jq -r 'select(.changed > 0) | .repo'
 
 # Delete a reviewed set of workspaces from newline-delimited stdin
 gw list -o name | grep '^old-' | gw delete --stdin --yes
@@ -134,6 +134,11 @@ setup = "pnpm install"  # run after the worktree is created
 ```
 
 Presets, plugins, hooks, and the full command reference are covered in [Workflows](openwiki/workflows.md) and [Operations](openwiki/operations.md).
+
+### Integrations
+
+- [grove-herdr](https://github.com/nicksenap/grove-herdr) — [Herdr](https://herdr.dev) plugin: `prefix+shift+g` prompts for a name, runs `gw create`, and opens the workspace in Herdr; hooks close it on `gw delete`.
+- Plugins such as [gw-dispatch](https://github.com/nicksenap/gw-dispatch), [gw-run](https://github.com/nicksenap/gw-run), and [gw-recipe](https://github.com/nicksenap/gw-recipe) — see [docs/plugins.md](docs/plugins.md).
 
 ## Upgrading
 

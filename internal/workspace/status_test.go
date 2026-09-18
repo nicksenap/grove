@@ -2,6 +2,8 @@ package workspace
 
 import (
 	"bytes"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -169,5 +171,28 @@ func TestWriteStatusJSONLinesIncludesWorkspaceAndRepoPaths(t *testing.T) {
 	got := stdout.String()
 	if !strings.Contains(got, `"workspace":"alpha"`) || !strings.Contains(got, `"path":"/workspaces/alpha/api"`) || strings.Count(got, "\n") != 1 {
 		t.Fatalf("unexpected JSONL: %q", got)
+	}
+}
+
+func TestCollectRepoStatusCountsChangedEntries(t *testing.T) {
+	env := setupTestEnv(t)
+	env.createRepo("api")
+	env.createWorkspace("dirty-ws", "feat/dirty", []string{"api"})
+	ws, _ := env.svc.State.GetWorkspace("dirty-ws")
+	wt := ws.Repos[0].WorktreePath
+	os.WriteFile(filepath.Join(wt, "a.txt"), []byte("a"), 0o644)
+	os.WriteFile(filepath.Join(wt, "b.txt"), []byte("b"), 0o644)
+
+	rs := collectRepoStatus(ws.Repos[0])
+	if rs.Changed != 2 {
+		t.Fatalf("changed = %d, want 2 (status=%q)", rs.Changed, rs.Status)
+	}
+
+	var stdout bytes.Buffer
+	if err := writeStatus(&stdout, ws, []repoStatusResult{rs}, output.JSONLines, StatusOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(stdout.String(), `"changed":2`) {
+		t.Fatalf("JSONL missing changed count: %s", stdout.String())
 	}
 }

@@ -181,13 +181,11 @@ func (h Hook) isBare() bool {
 	return h.Description == "" && !h.Stream && h.Timeout == "" && h.OnFailure == ""
 }
 
-// GroveConfig is per-repo .grove.toml configuration.
+// GroveConfig is per-repo .grove.toml configuration. Unknown keys are ignored,
+// so plugins (e.g. gw-run's run/pre_run/post_run) may add their own.
 type GroveConfig struct {
 	BaseBranch string       `toml:"base_branch"`
 	Setup      StringOrList `toml:"setup"`
-	Run        StringOrList `toml:"run"`
-	PreRun     string       `toml:"pre_run"`
-	PostRun    string       `toml:"post_run"`
 	PreSync    string       `toml:"pre_sync"`
 	PostSync   string       `toml:"post_sync"`
 	Teardown   string       `toml:"teardown"`
