@@ -45,3 +45,10 @@ func TestResolveDeleteNamesRejectsEmptyStdin(t *testing.T) {
 		t.Fatal("expected empty stdin to fail")
 	}
 }
+
+func TestResolveDeleteNamesRejectsYesWithoutStdin(t *testing.T) {
+	_, err := resolveDeleteNames([]string{"alpha"}, false, true, strings.NewReader(""))
+	if err == nil || !strings.Contains(err.Error(), "--stdin") {
+		t.Fatalf("expected --yes without --stdin error, got %v", err)
+	}
+}

@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+### Features
+
+- `gw list`, `gw repos`, `gw status`, and `gw ws show` accept `--output` / `-o` with `table` (default), `json`, `jsonl`, `tsv`, `name`, and `path`. `--json` / `-j` remain as compatibility aliases for `--output json`.
+- `gw delete` accepts multiple workspace names and `--stdin --yes` to delete newline-delimited names piped from another command.
+
+### Changed
+
+- `gw ws show` writes its data to stdout instead of stderr.
+- ANSI styling is emitted only when the target stream is a terminal, and never when `NO_COLOR` is set. The update notice is suppressed when stderr is redirected.
+
 ## v1.1.15
 
 ### Features

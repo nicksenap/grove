@@ -29,7 +29,7 @@ var rootCmd = &cobra.Command{
 		if cmd.Annotations[offlineCommandAnnotation] == "true" {
 			return
 		}
-		if shouldShowUpdateNotice(os.Stderr) {
+		if console.IsTerminal(os.Stderr) {
 			if notice := update.NewChecker(config.GroveDir).FormatNotice(Version); notice != "" {
 				console.Info(notice)
 			}
@@ -106,10 +106,6 @@ func Execute() {
 		console.Error(err.Error())
 		os.Exit(1)
 	}
-}
-
-func shouldShowUpdateNotice(stderr *os.File) bool {
-	return console.IsTerminal(stderr)
 }
 
 // isUnknownCommandErr checks if the error is cobra's "unknown command" error.

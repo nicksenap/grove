@@ -63,7 +63,6 @@ func collectRepoStatus(r models.RepoWorktree) repoStatusResult {
 
 // StatusOptions controls status output.
 type StatusOptions struct {
-	JSON    bool // Compatibility alias for Format: output.JSON.
 	Format  output.Format
 	Verbose bool
 	PR      bool
@@ -86,12 +85,6 @@ func (s *Service) Status(wsName string, opts StatusOptions) error {
 	format := opts.Format
 	if format == "" {
 		format = output.Table
-	}
-	if opts.JSON {
-		if opts.Format != "" && opts.Format != output.JSON {
-			return fmt.Errorf("json output conflicts with format %q", opts.Format)
-		}
-		format = output.JSON
 	}
 	stdout := opts.Stdout
 	if stdout == nil {

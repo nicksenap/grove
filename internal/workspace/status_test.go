@@ -93,7 +93,7 @@ func TestStatusJSON(t *testing.T) {
 	env.createRepo("api")
 	env.createWorkspace("json-ws", "feat/json", []string{"api"})
 
-	err := env.svc.Status("json-ws", StatusOptions{JSON: true})
+	err := env.svc.Status("json-ws", StatusOptions{Format: output.JSON})
 	if err != nil {
 		t.Fatalf("status json: %v", err)
 	}

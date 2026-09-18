@@ -77,6 +77,9 @@ func doDelete(cmd *cobra.Command, args []string) {
 
 func resolveDeleteNames(args []string, fromStdin, yes bool, stdin io.Reader) ([]string, error) {
 	if !fromStdin {
+		if yes {
+			return nil, fmt.Errorf("--yes only applies with --stdin")
+		}
 		return uniqueDeleteNames(args), nil
 	}
 	if len(args) > 0 {
