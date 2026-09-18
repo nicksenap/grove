@@ -45,7 +45,7 @@ func init() {
 	pruneBranchesCmd.Flags().BoolVar(&pruneBranchesYes, "yes", false, "Delete matching branches")
 	pruneBranchesCmd.Flags().BoolVarP(&pruneBranchesJSON, "json", "j", false, "Output as JSON")
 	pruneBranchesCmd.Flags().BoolVar(&pruneBranchesFetch, "fetch", false, "Run git fetch --prune on each repo first")
-	pruneBranchesCmd.Flags().BoolVar(&pruneBranchesGone, "gone", false, "Also include branches whose upstream was deleted (force-deleted)")
+	pruneBranchesCmd.Flags().BoolVar(&pruneBranchesGone, "gone", false, "Also include branches whose upstream was deleted; force-deleted. Accurate only with fresh remote refs (--fetch)")
 	pruneCmd.AddCommand(pruneBranchesCmd)
 }
 
