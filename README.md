@@ -12,6 +12,11 @@
   <a href="https://github.com/nicksenap/grove/blob/master/LICENSE"><img src="https://img.shields.io/github/license/nicksenap/grove" alt="License"></a>
 </p>
 
+<p align="center">
+  <a href="assets/grove-brag.mp4"><img src="assets/grove-brag.gif" alt="Grove turns one feature across three repositories into one worktree workspace" width="900"></a>
+</p>
+<p align="center"><sub>One feature. Three repos. One workspace. Click the preview for sound.</sub></p>
+
 ## Why?
 
 Monorepos solve cross-project work, but not everyone has one. You've got separate repos, separate CI, separate deploys — and that's fine until you need to work across them.
