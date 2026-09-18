@@ -1,0 +1,22 @@
+[
+  {
+    "name": "run",
+    "repo": "nicksenap/gw-run",
+    "description": "Run per-repo .grove.toml run hooks across a workspace with [repo]-prefixed output"
+  },
+  {
+    "name": "dispatch",
+    "repo": "nicksenap/gw-dispatch",
+    "description": "Create a workspace and start a coding agent there with an initial prompt"
+  },
+  {
+    "name": "recipe",
+    "repo": "nicksenap/gw-recipe",
+    "description": "Create multi-repo workspaces from declarative YAML Recipes with pinned refs and setup jobs"
+  },
+  {
+    "name": "code",
+    "repo": "igor-kupczynski/gw-code",
+    "description": "Generate a multi-folder editor workspace and open it in VS Code or a compatible editor"
+  }
+]
