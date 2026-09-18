@@ -11,23 +11,28 @@ import (
 	"github.com/nicksenap/grove/internal/models"
 )
 
-func TestDeletePreparedWorkspacePreservesPreexistingBranch(t *testing.T) {
+func TestDeletePreservesBranchFlaggedInState(t *testing.T) {
 	env := setupTestEnv(t)
 	repo := env.createRepo("api")
-	baseSHA := env.run(repo, "git", "rev-parse", "HEAD")
-	env.run(repo, "git", "branch", "feat/existing", baseSHA)
+	env.run(repo, "git", "branch", "feat/existing")
 
-	if err := env.svc.CreateWithPreparation("prepared", PreparationOpts{
-		CreateOpts:  CreateOpts{Branch: "feat/existing", Repos: []string{"api"}, RepoMap: env.repoMap, Cfg: env.cfg},
-		BaseCommits: map[string]string{"api": baseSHA},
-	}, func(models.Workspace) error { return nil }); err != nil {
+	if err := env.createWorkspace("flagged", "feat/existing", []string{"api"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := env.svc.DeleteWithOptions("prepared", RemoveOptions{Force: true}); err != nil {
+	ws, err := env.svc.State.GetWorkspace("flagged")
+	if err != nil || ws == nil {
+		t.Fatalf("workspace missing: %v", err)
+	}
+	ws.Repos[0].PreserveBranch = true
+	if err := env.svc.State.UpdateWorkspace(*ws); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := env.svc.DeleteWithOptions("flagged", RemoveOptions{Force: true}); err != nil {
 		t.Fatal(err)
 	}
 	if !gitops.BranchExists(repo, "feat/existing") {
-		t.Fatal("normal workspace deletion removed pre-existing Recipe branch")
+		t.Fatal("deletion removed a branch flagged preserve_branch in state")
 	}
 }
 

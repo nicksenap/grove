@@ -17,7 +17,6 @@ import (
 // operation orchestration.
 type WorkspaceService interface {
 	CreateWithOpts(name string, opts workspace.CreateOpts) error
-	CreateWithPreparation(name string, opts workspace.PreparationOpts, prepare func(models.Workspace) error) error
 	DeleteWithOptions(name string, opts workspace.RemoveOptions) error
 }
 
@@ -49,17 +48,10 @@ func NewService() *Service {
 	}
 }
 
-// Preparation configures the Recipe preparation path for Create.
-type Preparation struct {
-	Options workspace.PreparationOpts
-	Run     func(models.Workspace) error
-}
-
 // CreateRequest is the typed input for a workspace creation operation.
 type CreateRequest struct {
-	Name        string
-	Options     workspace.CreateOpts
-	Preparation *Preparation
+	Name    string
+	Options workspace.CreateOpts
 }
 
 // CreateResult reports whether the workspace was fully created. Created remains
@@ -80,13 +72,7 @@ func (e *HookError) Unwrap() error { return e.Err }
 
 // Create provisions a workspace, then applies the shared post_create policy.
 func (s *Service) Create(req CreateRequest) (CreateResult, error) {
-	var err error
-	if req.Preparation == nil {
-		err = s.Workspace.CreateWithOpts(req.Name, req.Options)
-	} else {
-		err = s.Workspace.CreateWithPreparation(req.Name, req.Preparation.Options, req.Preparation.Run)
-	}
-	if err != nil {
+	if err := s.Workspace.CreateWithOpts(req.Name, req.Options); err != nil {
 		return CreateResult{}, err
 	}
 
@@ -189,9 +175,6 @@ func (s *Service) warn(err error) {
 
 func expectedWorkspace(req CreateRequest) models.Workspace {
 	opts := req.Options
-	if req.Preparation != nil {
-		opts = req.Preparation.Options.CreateOpts
-	}
 	ws := models.Workspace{Name: req.Name, Branch: opts.Branch, Source: opts.Source}
 	if opts.Cfg != nil {
 		ws.Path = filepath.Join(opts.Cfg.WorkspaceDir, req.Name)

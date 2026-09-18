@@ -484,60 +484,6 @@ func TestCanonicalRemoteIdentity(t *testing.T) {
 	}
 }
 
-func TestResolveCommitPrefersRemoteBranch(t *testing.T) {
-	repo := initTestRepo(t)
-	branch := currentBranch(t, repo)
-	remoteSHA := run(t, repo, "git", "rev-parse", "origin/"+branch)
-
-	os.WriteFile(filepath.Join(repo, "local.txt"), []byte("local"), 0o644)
-	run(t, repo, "git", "add", "local.txt")
-	run(t, repo, "git", "commit", "-m", "local only")
-	localSHA := run(t, repo, "git", "rev-parse", "HEAD")
-	if localSHA == remoteSHA {
-		t.Fatal("test setup did not create a local-only commit")
-	}
-
-	got, err := ResolveCommit(repo, branch)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got != remoteSHA {
-		t.Fatalf("ResolveCommit(%q) = %s, want remote SHA %s", branch, got, remoteSHA)
-	}
-}
-
-func TestResolveCommitRejectsUnknownRef(t *testing.T) {
-	repo := initTestRepo(t)
-	if _, err := ResolveCommit(repo, "missing-ref"); err == nil {
-		t.Fatal("expected unknown ref error")
-	}
-}
-
-func TestResolveCommitRejectsRevisionExpressionsAndLocalFallback(t *testing.T) {
-	repo := initTestRepo(t)
-	run(t, repo, "git", "branch", "local-only")
-	run(t, repo, "git", "branch", "deadbee")
-	for _, ref := range []string{"HEAD~1", "HEAD^", "HEAD@{1}", "local-only", "refs/heads/local-only", "deadbee"} {
-		t.Run(ref, func(t *testing.T) {
-			if _, err := ResolveCommit(repo, ref); err == nil {
-				t.Fatalf("ResolveCommit(%q) should fail", ref)
-			}
-		})
-	}
-}
-
-func TestResolveCommitAcceptsExactTagAndObjectID(t *testing.T) {
-	repo := initTestRepo(t)
-	sha := run(t, repo, "git", "rev-parse", "HEAD")
-	run(t, repo, "git", "tag", "v1.0.0")
-	for _, ref := range []string{"v1.0.0", sha} {
-		got, err := ResolveCommit(repo, ref)
-		if err != nil || got != sha {
-			t.Fatalf("ResolveCommit(%q) = %q, %v; want %s", ref, got, err, sha)
-		}
-	}
-}
-
 func TestRemoteURL(t *testing.T) {
 	repo := initTestRepo(t)
 

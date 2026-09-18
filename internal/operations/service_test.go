@@ -35,31 +35,6 @@ func TestCreateRunsPostCreateAfterWorkspaceCreation(t *testing.T) {
 	assertOrder(t, order, "create", "hook:post_create")
 }
 
-func TestCreatePreparedUsesSamePostCreateFailurePolicy(t *testing.T) {
-	var order []string
-	ws := models.Workspace{Name: "recipe", Path: "/workspaces/recipe", Branch: "feat/recipe"}
-	deps := &fakeWorkspace{workspace: ws, order: &order}
-	hookErr := &lifecycle.HookError{Hook: "post_create", Err: errors.New("failed"), Abort: true}
-	svc := Service{Workspace: deps, Store: deps, RunHook: func(string, lifecycle.Vars) error { return hookErr }}
-
-	result, err := svc.Create(CreateRequest{
-		Name: ws.Name,
-		Preparation: &Preparation{
-			Options: workspace.PreparationOpts{CreateOpts: workspace.CreateOpts{Branch: ws.Branch}},
-			Run:     func(models.Workspace) error { order = append(order, "prepare"); return nil },
-		},
-	})
-
-	var operationHookErr *HookError
-	if !errors.As(err, &operationHookErr) || operationHookErr.Hook != "post_create" || !errors.Is(err, hookErr) {
-		t.Fatalf("error = %v, want post_create hook error", err)
-	}
-	if !result.Created || result.Workspace.Name != ws.Name {
-		t.Fatalf("completed workspace missing from result: %+v", result)
-	}
-	assertOrder(t, order, "create-prepared", "prepare")
-}
-
 func TestDeleteAbortingPreDeletePreventsDeletion(t *testing.T) {
 	var order []string
 	ws := models.Workspace{Name: "feature", Path: "/workspaces/feature", Branch: "feat/feature"}
@@ -191,11 +166,6 @@ type fakeWorkspace struct {
 func (f *fakeWorkspace) CreateWithOpts(string, workspace.CreateOpts) error {
 	*f.order = append(*f.order, "create")
 	return nil
-}
-
-func (f *fakeWorkspace) CreateWithPreparation(_ string, _ workspace.PreparationOpts, prepare func(models.Workspace) error) error {
-	*f.order = append(*f.order, "create-prepared")
-	return prepare(f.workspace)
 }
 
 func (f *fakeWorkspace) DeleteWithOptions(_ string, opts workspace.RemoveOptions) error {

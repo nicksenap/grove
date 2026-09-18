@@ -11,6 +11,7 @@
 
 - `gw ws show` writes its data to stdout instead of stderr.
 - ANSI styling is emitted only when the target stream is a terminal, and never when `NO_COLOR` is set. The update notice is suppressed when stderr is redirected.
+- Recipes are no longer part of core. `gw recipe validate` and `gw create --recipe` (with `--json`) moved to the [gw-recipe](https://github.com/nicksenap/gw-recipe) plugin: `gw plugin install nicksenap/gw-recipe`, then `gw recipe validate FILE` and `gw recipe create NAME --branch BRANCH --file FILE`. The plugin drives `gw create`/`gw delete` instead of internal APIs; see its README for behavioral differences. Workspaces created by the old core path keep their `preserve_branch` state and are deleted as before.
 
 ## v1.1.15
 

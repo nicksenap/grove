@@ -15,7 +15,7 @@ func TestIsUnknownCommandErr(t *testing.T) {
 		{"unknown command", errors.New(`unknown command "foo" for "gw"`), true},
 		{"unrelated error", errors.New("some other failure"), false},
 		{"contains word in context", errors.New("the unknown command handler fired"), false},
-		{"validation message", errors.New("recipe is invalid: unknown command \"../../bin/sh\""), false},
+		{"validation message", errors.New("config is invalid: unknown command \"../../bin/sh\""), false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

@@ -85,24 +85,6 @@ type pluginJSON struct {
 	Path string `json:"path"`
 }
 
-type recipeCreateJSON struct {
-	Created bool             `json:"created"`
-	Name    string           `json:"name"`
-	Jobs    []recipeJobJSON  `json:"jobs"`
-	Error   *recipeErrorJSON `json:"error"`
-}
-
-type recipeJobJSON struct {
-	ID     string `json:"id"`
-	Status string `json:"status"`
-}
-
-type recipeErrorJSON struct {
-	Code string `json:"code"`
-	Job  string `json:"job"`
-	Step int    `json:"step"`
-}
-
 func newEnv(t *testing.T) *env {
 	t.Helper()
 	home := t.TempDir()
