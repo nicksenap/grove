@@ -15,7 +15,6 @@
 <p align="center">
   <a href="assets/grove-brag.mp4"><img src="assets/grove-brag.gif" alt="Grove turns one feature across three repositories into one worktree workspace" width="900"></a>
 </p>
-<p align="center"><sub>One feature. Three repos. One workspace. Click the preview for sound.</sub></p>
 
 ## Why?
 
@@ -23,15 +22,11 @@ Monorepos solve cross-project work, but not everyone has one. You've got separat
 
 One feature across three services means `git worktree add` three times, tracking three branches, jumping between three directories, cleaning up three worktrees when you're done. It's annoying.
 
-Grove gives you the multi-repo worktree workflow that monorepos get for free. One command, one workspace, all repos on the same branch.
-
-## Origin
-
-Grove was inspired by [PostHog's `posthog-worktree` script](https://github.com/PostHog/posthog/blob/master/bin/posthog-worktree), which automates worktree creation and development environment setup for PostHog. The idea was simple: a new worktree should be ready to work in.
-
-Grove brings that convenience to projects spread across multiple repositories. It groups their worktrees into one workspace, with per-repo setup commands and hooks for your development tools. The goal is to stay simple, fast, and lightweight: a small Go binary focused on Git worktrees, with tool-specific integrations in plugins.
+Grove gives you the multi-repo worktree workflow that monorepos get for free. One command creates a workspace with every repo on the same branch, and `gw status` shows all of them in one table.
 
 ## Getting Started
+
+Grove is a single static binary with no dependencies. It requires `git` on `PATH`.
 
 ### 1. Install Grove
 
@@ -75,12 +70,12 @@ gw shell-init --shell nu | save -f ~/.config/nushell/grove.nu
 source grove.nu
 ```
 
-## Upgrading
-
-If you installed with Homebrew:
+### 3. Create your first workspace
 
 ```bash
-brew update && brew upgrade grove
+gw init ~/dev                          # register the directory that holds your repos
+gw create -b feat/login -r svc-a,svc-b # create the feat-login workspace across both repos
+gw status feat-login                   # see every repo's branch and git status in one table
 ```
 
 ## Usage
@@ -107,25 +102,32 @@ gw prune --yes         # delete them (same two-phase cleanup as gw delete)
 
 Interactive menus support **type-to-search** filtering, arrow-key navigation (single-select), or arrow + tab (multi-select) with an `(all)` shortcut.
 
+Repos can carry a `.grove.toml` so every new worktree is ready to work in:
+
+```toml
+# svc-a/.grove.toml
+base_branch = "stage"   # branch from origin/stage instead of origin/main
+setup = "pnpm install"  # run after the worktree is created
+```
+
 Presets, plugins, hooks, and the full command reference are covered in [Workflows](openwiki/workflows.md) and [Operations](openwiki/operations.md).
+
+## Upgrading
+
+If you installed with Homebrew:
+
+```bash
+brew update && brew upgrade grove
+```
 
 ## Documentation
 
-Full documentation lives in the [OpenWiki](openwiki/quickstart.md) — start with the quickstart, then dive into the area you need:
-
-- [Quickstart](openwiki/quickstart.md) — install, first commands, key concepts, and a source map
-- [Architecture](openwiki/architecture.md) — layered design, data model, concurrency, and key decisions
-- [Workflows](openwiki/workflows.md) — how each command maps to code (create, sync, delete, presets…)
-- [Operations](openwiki/operations.md) — configuration, hooks, state, troubleshooting, and release process
-- [Integrations](openwiki/integrations.md) — plugins and workspace source provenance
-
-### Focused topic guides
-
-- [Hooks](docs/hooks.md) — global hooks (terminal integration) & per-repo hooks (`.grove.toml`)
-- [Plugins](docs/plugins.md) — extend gw with external commands
-- [Recipes](docs/recipe-v1.md) — strict schema, [workspace creation](docs/recipe-execution.md), and the [prepared-claim spike](docs/prepared-workspace-claim-spike.md)
+- [Quickstart](openwiki/quickstart.md) — install, first commands, and key concepts
+- [Workflows](openwiki/workflows.md) — creating, syncing, resetting, and deleting workspaces
+- [Operations](openwiki/operations.md) — configuration, hooks, state, and troubleshooting
+- [Hooks](docs/hooks.md) — global hooks and per-repo `.grove.toml` hooks
+- [Plugins](docs/plugins.md) — extend `gw` with external commands
+- [Recipes](docs/recipe-v1.md) — declarative workspace creation from YAML
 - [AI coding tools](docs/ai-tools.md) — vendor-neutral agent workflows
 
-## Requirements
-
-No dependencies — single static binary. Requires `git` on PATH.
+Contributors can start with the [Architecture](openwiki/architecture.md) and [Integrations](openwiki/integrations.md) notes.
