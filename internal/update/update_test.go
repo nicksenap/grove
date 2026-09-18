@@ -192,6 +192,7 @@ func TestFetchAndCacheWritesToDisk(t *testing.T) {
 
 func TestFormatNoticeUsesHomebrewFormulaName(t *testing.T) {
 	c := testChecker(t)
+	c.ExePathFn = func() (string, error) { return "/opt/homebrew/Cellar/grove/1.1.0/bin/gw", nil }
 	cache := CacheData{LastCheck: time.Now().Unix(), Latest: "1.2.0"}
 	data, err := json.Marshal(cache)
 	if err != nil {
@@ -205,5 +206,27 @@ func TestFormatNoticeUsesHomebrewFormulaName(t *testing.T) {
 	want := "A newer version of gw is available: 1.1.0 → 1.2.0. Update with: brew update && brew upgrade grove"
 	if got != want {
 		t.Errorf("FormatNotice() = %q, want %q", got, want)
+	}
+}
+
+func TestUpgradeHintByInstallMethod(t *testing.T) {
+	t.Setenv("GOPATH", "/gopath")
+	t.Setenv("GOBIN", "")
+	tests := []struct {
+		exe  string
+		want string
+	}{
+		{"/opt/homebrew/Cellar/grove/1.1.0/bin/gw", "brew update && brew upgrade grove"},
+		{"/home/linuxbrew/.linuxbrew/Cellar/grove/1.1.0/bin/gw", "brew update && brew upgrade grove"},
+		{"/gopath/bin/gw", "go install github.com/nicksenap/grove/cmd/gw@latest"},
+		{"/usr/local/bin/gw", "curl -fsSL https://raw.githubusercontent.com/nicksenap/grove/master/scripts/install.sh | sh"},
+		{"", "curl -fsSL https://raw.githubusercontent.com/nicksenap/grove/master/scripts/install.sh | sh"},
+	}
+	for _, tt := range tests {
+		c := testChecker(t)
+		c.ExePathFn = func() (string, error) { return tt.exe, nil }
+		if got := c.UpgradeHint(); got != tt.want {
+			t.Errorf("UpgradeHint(%q) = %q, want %q", tt.exe, got, tt.want)
+		}
 	}
 }

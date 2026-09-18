@@ -42,3 +42,17 @@ jobs:
         env:
           GW_BIN: ${{ github.workspace }}/gw
           GIT_CEILING_DIRECTORIES: /
+
+  install-script:
+    needs: check
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Run install.sh against latest release
+        run: |
+          GW_INSTALL_DIR="$RUNNER_TEMP/bin" sh scripts/install.sh
+          "$RUNNER_TEMP/bin/gw" --version

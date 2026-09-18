@@ -10,3 +10,6 @@ dist/
 
 # Local-only private validation fixtures
 .private/
+
+# Local brag/launch video output
+brag-output/

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"runtime/debug"
 	"strings"
 
 	"github.com/nicksenap/grove/internal/config"
@@ -16,8 +17,23 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// Version is set by goreleaser via -ldflags at build time.
+// Version is set by goreleaser via -ldflags at build time. When built without
+// ldflags (e.g. `go install ...@latest`), it falls back to the module version
+// recorded in the binary's build info.
 var Version = "dev"
+
+func init() {
+	if Version != "dev" {
+		return
+	}
+	info, ok := debug.ReadBuildInfo()
+	if !ok {
+		return
+	}
+	if v := info.Main.Version; v != "" && v != "(devel)" {
+		Version = strings.TrimPrefix(v, "v")
+	}
+}
 
 var verbose bool
 

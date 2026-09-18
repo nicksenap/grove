@@ -32,24 +32,24 @@ Grove is a single static binary with no dependencies. It requires `git` on `PATH
 
 Pick **any one** of the following methods:
 
-**Homebrew**
+**Homebrew** (macOS / Linux)
 
 ```bash
 brew install nicksenap/grove/grove
 ```
 
-**Go install**
+**Install script** (macOS / Linux, no Homebrew needed)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/nicksenap/grove/master/scripts/install.sh | sh
+```
+
+Verifies the release checksum and installs to `/usr/local/bin` (or `~/.local/bin` if that is not writable). Override with `GW_INSTALL_DIR` and `GW_VERSION`.
+
+**Go install** (if you already have a Go toolchain)
 
 ```bash
 go install github.com/nicksenap/grove/cmd/gw@latest
-```
-
-**From source**
-
-```bash
-git clone https://github.com/nicksenap/grove.git
-cd grove && go build -o gw ./cmd/gw
-mv gw /usr/local/bin/
 ```
 
 ### 2. Add shell integration
@@ -119,6 +119,8 @@ If you installed with Homebrew:
 ```bash
 brew update && brew upgrade grove
 ```
+
+If you used the install script, re-run it to get the latest release.
 
 ## Documentation
 

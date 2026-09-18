@@ -24,6 +24,7 @@ type Checker struct {
 	CachePath     string
 	NowFn         func() time.Time
 	FetchLatestFn func() (string, error) // returns latest version string
+	ExePathFn     func() (string, error) // resolved path of the running binary
 }
 
 // NewChecker creates a Checker with real dependencies.
@@ -32,7 +33,16 @@ func NewChecker(groveDir string) *Checker {
 		CachePath:     filepath.Join(groveDir, "update-check.json"),
 		NowFn:         time.Now,
 		FetchLatestFn: fetchLatestFromGitHub,
+		ExePathFn:     resolvedExecutable,
 	}
+}
+
+func resolvedExecutable() (string, error) {
+	exe, err := os.Executable()
+	if err != nil {
+		return "", err
+	}
+	return filepath.EvalSymlinks(exe)
 }
 
 // GetNewerVersion returns the latest version if it's newer than current,
@@ -158,5 +168,38 @@ func (c *Checker) FormatNotice(current string) string {
 	if newer == "" {
 		return ""
 	}
-	return fmt.Sprintf("A newer version of gw is available: %s → %s. Update with: brew update && brew upgrade grove", current, newer)
+	return fmt.Sprintf("A newer version of gw is available: %s → %s. Update with: %s", current, newer, c.UpgradeHint())
+}
+
+// UpgradeHint returns the upgrade command matching how gw appears to have
+// been installed, inferred from the binary's resolved path.
+func (c *Checker) UpgradeHint() string {
+	exe := ""
+	if c.ExePathFn != nil {
+		exe, _ = c.ExePathFn()
+	}
+	exe = filepath.ToSlash(exe)
+	switch {
+	case strings.Contains(exe, "/Cellar/") || strings.Contains(exe, "/homebrew/") || strings.Contains(exe, "/linuxbrew/"):
+		return "brew update && brew upgrade grove"
+	case isGoBin(exe):
+		return "go install github.com/nicksenap/grove/cmd/gw@latest"
+	default:
+		return "curl -fsSL https://raw.githubusercontent.com/nicksenap/grove/master/scripts/install.sh | sh"
+	}
+}
+
+func isGoBin(exe string) bool {
+	if exe == "" {
+		return false
+	}
+	dir := filepath.Dir(exe)
+	if gobin := os.Getenv("GOBIN"); gobin != "" && dir == filepath.ToSlash(gobin) {
+		return true
+	}
+	if gopath := os.Getenv("GOPATH"); gopath != "" && dir == filepath.ToSlash(filepath.Join(gopath, "bin")) {
+		return true
+	}
+	home, err := os.UserHomeDir()
+	return err == nil && dir == filepath.ToSlash(filepath.Join(home, "go", "bin"))
 }
