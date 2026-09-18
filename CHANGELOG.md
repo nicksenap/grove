@@ -4,6 +4,7 @@
 
 ### Features
 
+- `gw prune branches [--gone] [--fetch] [--yes] [--json]` lists (and with `--yes` deletes) local branches in your main clones that no worktree uses and that are merged into the repo's base branch. `--gone` adds branches whose upstream was deleted (force-deleted). Branches checked out anywhere, referenced by a workspace, or equal to the base branch are never touched. `gw prune` itself is unchanged.
 - `gw plugin search [term]` lists known plugins from a registry embedded in `gw`, and `gw plugin install <name>` resolves bare names through it (`gw plugin install recipe`). `owner/repo` arguments work as before. Add plugins via PR to `internal/plugin/registry.json`.
 
 ### Changed

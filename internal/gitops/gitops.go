@@ -689,3 +689,58 @@ func readGroveConfigFromDisk(repoPath string) (*models.GroveConfig, error) {
 	}
 	return &cfg, nil
 }
+
+// LocalBranch describes one refs/heads entry.
+type LocalBranch struct {
+	Name     string
+	Upstream string // "origin/x" or "" when unset
+	Gone     bool   // upstream configured but its remote-tracking ref no longer exists
+	Head     bool   // checked out in the main working tree
+}
+
+// LocalBranches lists local branches with upstream tracking state.
+func LocalBranches(repo string) ([]LocalBranch, error) {
+	out, err := runGit(repo, "for-each-ref", "refs/heads",
+		"--format=%(refname:short)%09%(upstream:short)%09%(upstream:track)%09%(HEAD)")
+	if err != nil {
+		return nil, err
+	}
+	var branches []LocalBranch
+	for _, line := range strings.Split(out, "\n") {
+		if line == "" {
+			continue
+		}
+		fields := strings.Split(line, "\t")
+		if len(fields) != 4 {
+			continue
+		}
+		branches = append(branches, LocalBranch{
+			Name:     fields[0],
+			Upstream: fields[1],
+			Gone:     fields[2] == "[gone]",
+			Head:     fields[3] == "*",
+		})
+	}
+	return branches, nil
+}
+
+// MergedBranches returns local branch names whose tips are reachable from ref.
+func MergedBranches(repo, ref string) (map[string]bool, error) {
+	out, err := runGit(repo, "branch", "--format=%(refname:short)", "--merged", ref)
+	if err != nil {
+		return nil, err
+	}
+	merged := make(map[string]bool)
+	for _, line := range strings.Split(out, "\n") {
+		if line = strings.TrimSpace(line); line != "" {
+			merged[line] = true
+		}
+	}
+	return merged, nil
+}
+
+// FetchPrune fetches origin and drops remote-tracking refs deleted upstream.
+func FetchPrune(repo string) error {
+	_, err := runGit(repo, "fetch", "--prune", "--quiet", "origin")
+	return err
+}
