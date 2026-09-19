@@ -3,6 +3,7 @@ package cmd
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -64,6 +65,42 @@ func TestPruneCandidatesIncludesMissingDirectoryRegardlessOfAge(t *testing.T) {
 	}
 	if got[1].Name != "old-here" || got[1].Missing {
 		t.Fatalf("candidate[1] = %+v", got[1])
+	}
+}
+
+func TestPruneCandidatesBoundaryAndUnparseable(t *testing.T) {
+	now := time.Date(2026, 4, 10, 12, 0, 0, 0, time.UTC)
+	ws := []models.Workspace{
+		{Name: "exact", Path: "/ws/exact", CreatedAt: now.Add(-7 * 24 * time.Hour).Format("2006-01-02T15:04:05.000000")},
+		{Name: "bad-ts", Path: "/ws/bad-ts", CreatedAt: "not-a-timestamp"},
+		{Name: "bad-ts-gone", Path: "/ws/bad-ts-gone", CreatedAt: "not-a-timestamp"},
+	}
+	exists := func(path string) bool { return path != "/ws/bad-ts-gone" }
+
+	got := pruneCandidates(ws, 7*24*time.Hour, now, exists)
+	if len(got) != 2 || got[0].Name != "exact" || got[1].Name != "bad-ts-gone" {
+		t.Fatalf("got %+v, want exact (boundary) and bad-ts-gone (missing)", got)
+	}
+}
+
+func TestDeleteCandidatesContinuesAfterFailure(t *testing.T) {
+	candidates := []pruneCandidate{{Name: "a"}, {Name: "b"}, {Name: "c"}}
+	var attempted []string
+	err := deleteCandidates(candidates, func(name string) error {
+		attempted = append(attempted, name)
+		if name == "b" {
+			return errors.New("boom")
+		}
+		return nil
+	})
+	if err == nil || !strings.Contains(err.Error(), "b: boom") {
+		t.Fatalf("err = %v, want joined error naming b", err)
+	}
+	if strings.Join(attempted, ",") != "a,b,c" {
+		t.Fatalf("attempted = %v, want all candidates", attempted)
+	}
+	if candidates[0].Error != "" || candidates[1].Error != "boom" || candidates[2].Error != "" {
+		t.Fatalf("candidates = %+v", candidates)
 	}
 }
 

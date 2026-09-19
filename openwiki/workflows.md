@@ -5,16 +5,24 @@ description: End-to-end Grove guidance for discovering repositories, creating an
 tags: [grove, workflows, workspaces, git, cli, operations]
 verified:
   - by: openwiki/0.5.2
-    at: 2026-09-19T08:38:34.519Z
+    at: 2026-09-19T14:39:28.658Z
 sources:
+  - id: openwiki-source-8e87dcc3b28172929ac32c27
+    resource: repo://cmd/delete.go
+  - id: openwiki-source-f03c6eedf6d8f9495e3d7211
+    resource: repo://cmd/go_cmd.go
   - id: openwiki-source-4d743cc9a373dec1a2ed59bd
     resource: repo://cmd/prune_test.go
   - id: openwiki-source-c713337c253fefedba109b9e
     resource: repo://cmd/prune.go
   - id: openwiki-source-d88dd56dbc4620bda4c35f1c
     resource: repo://cmd/root.go
+  - id: openwiki-source-fdc127993fc61e535879a71e
+    resource: repo://cmd/shellinit.go
   - id: openwiki-source-90ab86597712b7881e7c8057
     resource: repo://docs/plugins.md
+  - id: openwiki-source-0b02352526895154e5b5a4e1
+    resource: repo://internal/console/console.go
   - id: openwiki-source-9fa0f37ad88ce2a52ed9f800
     resource: repo://internal/operations/service.go
   - id: openwiki-source-04df3322ec2dc26efbad1e6f
@@ -25,7 +33,9 @@ sources:
     resource: repo://internal/workspace/remove_test.go
   - id: openwiki-source-c98f76c921b18fb02cf31e14
     resource: repo://internal/workspace/remove.go
-generated: { by: "openwiki/0.5.2", at: "2026-09-19T08:38:34.519Z" }
+  - id: openwiki-source-23775c3de52f3ab95a13cb8b
+    resource: repo://README.md
+generated: { by: "openwiki/0.5.2", at: "2026-09-19T14:39:28.658Z" }
 ---
 
 # Workflows
@@ -82,6 +92,8 @@ sequenceDiagram
     end
 ```
 
+*The create sequence separates parallel fetches, ordered worktree provisioning, rollback, state commit, and post-commit hooks.*
+
 This sequence shows why creation does not leave a partially provisioned workspace when a later repository fails, while setup commands are intentionally outside the state mutation lock.
 
 The workspace is added to state only after all worktrees exist. Rollback removes created worktrees in reverse order and deletes only branches Grove created. Setup commands from each source repository’s `.grove.toml` run concurrently after the commit; a setup failure is warned and does not undo the workspace (`internal/workspace/create.go#L55-L84`, `internal/workspace/create.go#L259-L310`). The operation layer then runs `post_create`: default hook failures warn, while `on_failure = "abort"` makes the command fail **after** creation; an aborting post-create hook does not roll back the persisted workspace (`internal/operations/service.go#L51-L90`).
@@ -105,6 +117,18 @@ gw reset [NAME] --discard
 `status` resolves a named workspace or the workspace containing the current directory, then collects current branch, working-tree status, and ahead/behind counts concurrently. `--pr` adds provider status through the available GitHub/GitLab CLI integration; `--json` changes presentation without changing collection. `sync` fetches each source repository, skips a repository whose worktree is dirty, resolves its configured base branch, and rebases only when the workspace branch is behind. A failed rebase is aborted for that repository; other repositories continue. `pre_sync` and `post_sync` run around a successful rebase (`internal/workspace/status.go#L20-L103`, `internal/workspace/sync.go#L13-L63`).
 
 `reset` is different from `sync`: it first compares each live worktree branch with the branch recorded in state. A clean worktree on another branch is switched back and then sent through the same sync path. A detached `HEAD` counts as a different branch. A dirty worktree on another branch is skipped by default; `--discard` permits Git to discard tracked local changes while switching. Each repository runs independently, so a branch lookup, switch, status, fetch, or rebase failure does not prevent the remaining repositories from being processed (`cmd/reset.go#L10-L34`, `internal/workspace/reset.go#L13-L74`).
+
+## Machine-readable pipelines and shell I/O
+
+List-style queries support `--output` (`-o`) with `table`, `json`, `jsonl`, `tsv`, `name`, and `path`; `--json` remains a compatibility alias for JSON. This applies to `gw list`, `gw repos`, `gw status`, and `gw ws show`. Query data is written to stdout, while progress, warnings, prompts, and errors go to stderr, so pipelines can consume stdout without parsing diagnostics. For example:
+
+```bash
+gw list -o name | fzf
+gw status my-feature -o jsonl | jq -r 'select(.changed > 0) | .repo'
+gw list -o name | grep '^old-' | gw delete --stdin --yes
+```
+
+`gw go` intentionally prints only the destination path to stdout, without a newline; its delete/close side effects send child-command output to stderr. The generated `shell-init` wrapper captures that path, changes the caller's directory, and preserves the command status. For `create`, the wrapper uses `GROVE_CD_FILE` so normal command output remains visible while the shell reads the newly created workspace path separately. In non-shell use, redirect stdout when consuming paths and leave stderr visible for diagnostics (`README.md#L105-L128`, `cmd/go_cmd.go#L27-L103`, `cmd/go_cmd.go#L202-L211`, `cmd/shellinit.go#L36-L64`).
 
 ## Add, remove, and rename repositories or workspaces
 
@@ -178,11 +202,13 @@ sequenceDiagram
     end
 ```
 
+*The delete sequence shows hook gating, quarantine, registration pruning, rollback, state removal, branch cleanup, and asynchronous unlinking.*
+
 This sequence distinguishes recovery for an existing path from stale-record cleanup: a missing path is never moved into `.trash`, but its Git registrations and state are still removed.
 
-`prune` is safe by default: without `--yes` it only previews candidates. `--min-age` accepts an hour (`12h`), day (`7d`), or week (`2w`) suffix; a bare number is interpreted as days, the default is `7d`, and negative values or unknown units are rejected. Candidates are workspaces whose parseable `created_at` is at least the requested age old, plus every workspace whose directory is missing, regardless of age. Invalid or missing timestamps do not make an otherwise-present workspace age-eligible. Age is creation time, not last navigation or use. `--yes` sends candidates through the same forced delete path, and a deletion failure stops the prune loop and returns the error (`cmd/prune.go#L26-L40`, `cmd/prune.go#L54-L110`, `cmd/prune.go#L150-L176`, `internal/workspace/prune.go#L9-L35`).
+`prune` is safe by default: without `--yes` it only previews candidates. `--min-age` accepts an hour (`12h`), day (`7d`), or week (`2w`) suffix; a bare number is interpreted as days, the default is `7d`, and negative values or unknown units are rejected. Candidates are workspaces whose parseable `created_at` is at least the requested age old, plus every workspace whose directory is missing, regardless of age. Invalid or missing timestamps do not make an otherwise-present workspace age-eligible. Age is creation time, not last navigation or use. With `--yes`, every candidate is sent through the same forced `operations.Service.Delete` path used by `gw delete`; prune records each deletion error, continues attempting later candidates, prints the per-workspace results, and returns a non-zero error if any deletion failed (`cmd/prune.go#L26-L40`, `cmd/prune.go#L54-L110`, `cmd/prune.go#L162-L203`, `internal/workspace/remove.go#L29-L56`).
 
-Preview output is either a human-readable table or JSON. The table has `Name`, `Branch`, `Created`, `Age`, and `Note` columns; a missing-directory candidate is marked `directory missing` in `Note`. JSON emits an array of candidate records with `name`, `branch`, `created_at`, `age_days`, and `missing`; missing-directory records therefore carry `"missing": true`, including when they are younger than `--min-age`. Preview does not delete anything, and `--yes` prints the same candidate information after deletion (`cmd/prune.go#L44-L51`, `cmd/prune.go#L113-L147`, `cmd/prune_test.go#L49-L98`).
+Preview output is either a human-readable table or JSON. The table has `Name`, `Branch`, `Created`, `Age`, and `Note` columns; a missing-directory candidate is marked `directory missing` in `Note`, while a failed deletion is marked `FAILED: ...`. JSON emits an array of candidate records with `name`, `branch`, `created_at`, `age_days`, and `missing`; after `--yes`, failed records also include `error`. Missing-directory records carry `"missing": true`, including when they are younger than `--min-age`. Preview does not delete anything, and `--yes` prints the candidate information after attempting deletion (`cmd/prune.go#L45-L55`, `cmd/prune.go#L116-L159`, `cmd/prune_test.go#L49-L105`).
 
 ## Navigation and shell integration
 

@@ -3,9 +3,6 @@ type: Reference
 title: Operations
 description: Runbook for installing and operating Grove (`gw`), configuring repositories and hooks, understanding its state and cache surfaces, and recovering from failed cleanup or diagnostics. It also separates end-user troubleshooting from source-development checks and releases.
 tags: [grove, operations, configuration, troubleshooting, maintenance]
-verified:
-  - by: openwiki/0.5.2
-    at: 2026-09-19T08:38:34.519Z
 sources:
   - id: openwiki-source-4d743cc9a373dec1a2ed59bd
     resource: repo://cmd/prune_test.go

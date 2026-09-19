@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -26,7 +27,7 @@ var (
 var pruneCmd = &cobra.Command{
 	Use:   "prune",
 	Short: "List or delete workspaces older than --min-age (e.g. 7d, 2w)",
-	Long:  "Checks workspaces whose created_at is at least --min-age old (default 7d; units: h, d, w), plus workspaces whose directory no longer exists on disk (stale state records, listed regardless of age). Pass --yes to delete them with the same two-phase cleanup as gw delete.",
+	Long:  "Checks workspaces whose created_at is at least --min-age old (default 7d; units: h, d, w), plus workspaces whose directory no longer exists on disk (stale state records, listed regardless of age). Pass --yes to delete them with the same two-phase cleanup as gw delete; every candidate is attempted and failures are reported per workspace with a non-zero exit.",
 	Args:  cobra.NoArgs,
 	Run: func(cmd *cobra.Command, args []string) {
 		if err := runPrune(time.Now(), cmd.OutOrStdout()); err != nil {
@@ -49,6 +50,8 @@ type pruneCandidate struct {
 	// Missing is set when the workspace directory no longer exists on disk.
 	// Such records are candidates regardless of age.
 	Missing bool `json:"missing"`
+	// Error is set after --yes when deleting this workspace failed.
+	Error string `json:"error,omitempty"`
 }
 
 // parseMinAge parses a --min-age value such as "12h", "7d", or "2w". A bare
@@ -129,22 +132,44 @@ func writePrunePreview(candidates []pruneCandidate, minAge string, jsonOutput, d
 	}
 
 	table := console.NewTable(stdout, []string{"Name", "Branch", "Created", "Age", "Note"})
+	failed := 0
 	for _, c := range candidates {
 		created := c.CreatedAt
 		if len(created) > 10 {
 			created = created[:10]
 		}
-		note := ""
+		var notes []string
 		if c.Missing {
-			note = "directory missing"
+			notes = append(notes, "directory missing")
 		}
-		table.AddRow([]string{c.Name, c.Branch, created, fmt.Sprintf("%dd", c.AgeDays), note})
+		if c.Error != "" {
+			failed++
+			notes = append(notes, "FAILED: "+c.Error)
+		} else if deleted {
+			notes = append(notes, "deleted")
+		}
+		table.AddRow([]string{c.Name, c.Branch, created, fmt.Sprintf("%dd", c.AgeDays), strings.Join(notes, "; ")})
 	}
 	table.Render()
 	if !deleted {
 		console.Infof("Pass --yes to delete %d workspace(s).", len(candidates))
+	} else if failed > 0 {
+		console.Warningf("Deleted %d workspace(s), %d failed.", len(candidates)-failed, failed)
 	}
 	return nil
+}
+
+// deleteCandidates attempts every candidate, recording per-workspace failures
+// in Error instead of stopping at the first one. It returns the joined errors.
+func deleteCandidates(candidates []pruneCandidate, del func(name string) error) error {
+	var errs []error
+	for i := range candidates {
+		if err := del(candidates[i].Name); err != nil {
+			candidates[i].Error = err.Error()
+			errs = append(errs, fmt.Errorf("%s: %w", candidates[i].Name, err))
+		}
+	}
+	return errors.Join(errs...)
 }
 
 func runPrune(now time.Time, stdout io.Writer) error {
@@ -164,13 +189,15 @@ func runPrune(now time.Time, stdout io.Writer) error {
 	}
 
 	svc := operations.NewService()
-	for _, c := range candidates {
-		if _, err := svc.Delete(operations.DeleteRequest{
-			Name:    c.Name,
+	deleteErr := deleteCandidates(candidates, func(name string) error {
+		_, err := svc.Delete(operations.DeleteRequest{
+			Name:    name,
 			Options: workspace.RemoveOptions{Force: true},
-		}); err != nil {
-			return err
-		}
+		})
+		return err
+	})
+	if err := writePrunePreview(candidates, pruneMinAge, pruneJSON, true, stdout); err != nil {
+		return err
 	}
-	return writePrunePreview(candidates, pruneMinAge, pruneJSON, true, stdout)
+	return deleteErr
 }

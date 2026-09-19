@@ -3,9 +3,6 @@ type: domain model
 title: Domain Concepts
 description: Grove models workspaces as persisted collections of repository worktrees and treats Git registrations, state records, timestamps, plugin identities, and lifecycle cleanup as separate but related concerns. This page defines the invariants and failure semantics that operations and extensions must preserve.
 tags: [workspace, worktree, state, lifecycle, plugins, timestamps]
-verified:
-  - by: openwiki/0.5.2
-    at: 2026-09-19T08:38:34.519Z
 sources:
   - id: openwiki-source-b1648c12bdc7429a56ec8677
     resource: repo://cmd/plugin.go
@@ -33,7 +30,10 @@ sources:
     resource: repo://internal/workspace/remove_test.go
   - id: openwiki-source-c98f76c921b18fb02cf31e14
     resource: repo://internal/workspace/remove.go
-generated: { by: "openwiki/0.5.2", at: "2026-09-19T08:38:34.519Z" }
+generated: { by: "openwiki/0.5.2", at: "2026-09-19T14:39:28.658Z" }
+verified:
+  - by: openwiki/0.5.2
+    at: 2026-09-19T14:39:28.658Z
 ---
 
 # Domain Concepts
@@ -135,9 +135,9 @@ flowchart TD
 
 `NewWorkspace` writes `created_at` as a local wall-clock timestamp in `2006-01-02T15:04:05.000000` form. Readers parse that six-fractional-digit format in the current location and accept the older second-precision `2006-01-02T15:04:05` form as a compatibility fallback. Invalid or missing timestamps are not old candidates.
 
-`gw prune` parses `--min-age` as a duration: `h` means hours, `d` means days, and `w` means seven days. A bare non-negative number retains the original day semantics, so `14` means fourteen days. Empty, negative, malformed, or unsupported-unit values are rejected. A workspace is age-eligible when its parsed creation time is at least the minimum age before `now`; `age_days` is the whole elapsed-day count used in previews.
+`gw prune` parses `--min-age` as a duration: `h` means hours, `d` means days, and `w` means seven days. A bare non-negative number retains the original day semantics, so `14` means fourteen days. Empty, negative, malformed, or unsupported-unit values are rejected. A workspace is age-eligible when its parsed creation time is at least the minimum age before `now`; `age_days` is the whole elapsed-day count used in previews. `pruneCandidates` computes this eligibility from the record's `Path` and `CreatedAt`; workspace records do not expose an `OlderThan` method or field.
 
-A missing workspace directory makes its record eligible independently of age, even when its timestamp is fresh or unparsable. Candidate output preserves state order and includes `missing: true` in JSON for that record. Preview mode only reports candidates; `--yes` deletes each candidate through the same forced cleanup path used for workspace deletion.
+A missing workspace directory makes its record eligible independently of age. A fresh or unparsable timestamp therefore still produces a candidate when the directory is missing; an unparsable timestamp does not produce an age-based candidate when the directory exists. Candidate output preserves state order and includes `missing: true` in JSON for a missing record while retaining the computed `age_days` when parsing succeeded. Preview mode only reports candidates. With `--yes`, pruning attempts every candidate through the forced workspace deletion path; a candidate's `Error` is populated only when that deletion attempt fails, and the command reports the per-workspace failures after continuing with the remaining candidates.
 
 ## Persisted state and lifecycle metadata
 

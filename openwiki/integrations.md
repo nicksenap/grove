@@ -3,9 +3,6 @@ type: concept
 title: Integrations
 description: Integration contracts for Grove's Git worktrees, shell and output surfaces, lifecycle hooks, external plugins, source provenance, and the curated plugin registry.
 tags: [grove, integrations, plugins, hooks, git, shell]
-verified:
-  - by: openwiki/0.5.2
-    at: 2026-09-19T08:38:34.519Z
 sources:
   - id: openwiki-source-5fb548baa501bcdc358d79a6
     resource: repo://cmd/create.go
@@ -21,6 +18,8 @@ sources:
     resource: repo://cmd/shellinit.go
   - id: openwiki-source-d191e32409095eff0351d594
     resource: repo://docs/hooks.md
+  - id: openwiki-source-c7892bbdfc3002a62a48afad
+    resource: repo://internal/gitops/gitops.go
   - id: openwiki-source-6e2ef7bffba8b16154bfe6e4
     resource: repo://internal/lifecycle/lifecycle.go
   - id: openwiki-source-9fa0f37ad88ce2a52ed9f800
@@ -37,7 +36,12 @@ sources:
     resource: repo://internal/workspace/create.go
   - id: openwiki-source-c98f76c921b18fb02cf31e14
     resource: repo://internal/workspace/remove.go
-generated: { by: "openwiki/0.5.2", at: "2026-09-19T08:38:34.519Z" }
+  - id: openwiki-source-518fc59687d34ca8836f1792
+    resource: repo://internal/workspace/sync.go
+generated: { by: "openwiki/0.5.2", at: "2026-09-19T14:39:28.658Z" }
+verified:
+  - by: openwiki/0.5.2
+    at: 2026-09-19T14:39:28.658Z
 ---
 
 # Integrations
@@ -142,7 +146,13 @@ Coding-agent instructions remain repository-owned: put repository-specific guida
 
 Workspace creation fetches configured repositories in parallel, then creates worktrees sequentially so partially provisioned workspaces can be rolled back. It creates or reuses a local branch, can track an existing remote branch with `--track`, and records the resulting worktree paths in state. A failed provisioning step rolls back already-created worktrees and branches.
 
-Deletion runs global `pre_delete` policy before destructive worktree cleanup. The workspace directory is quarantined into `.trash` when present; each source repository's worktree registration is pruned, state is removed, and created branches are deleted. If cleanup fails, Grove attempts to restore the quarantined directory and repair registrations. A missing workspace directory is treated as a stale state record: there is no directory to quarantine, but worktree registrations, state, and branches are still cleaned up.
+Deletion runs global `pre_delete` policy before destructive worktree cleanup. The workspace directory is quarantined into `.trash` when present; each source repository's worktree registration is pruned, state is removed, and created branches are deleted. If cleanup fails, Grove attempts to restore the quarantined directory and repair registrations. A missing workspace directory is treated as a stale state record: there is no directory to quarantine, but worktree registrations, state, and branches are still cleaned up. The operation service supplies the recorded creation time and path as an optimistic consistency check, so a workspace changed between hook execution and deletion is not removed.
+
+## Git subprocess boundary
+
+Grove does not embed Git operations in its state layer: `internal/gitops` invokes the `git` executable with an explicit working directory, a process-wide environment, and stdin connected to the OS null device. It disables interactive authentication with `GIT_TERMINAL_PROMPT=0` and, unless the caller already set `GIT_SSH_COMMAND`, adds `ssh -o BatchMode=yes`. Combined output is trimmed and wrapped as `GitError`; authentication-shaped failures add a credentials hint. The boundary covers fetch, branch and worktree operations, status, rebases, and worktree registration pruning/repair, so callers receive structured Go errors rather than interactive Git prompts.
+
+Workspace provisioning fetches source repositories in parallel, then adds worktrees sequentially and rolls back already-created worktrees and branches if provisioning fails. Synchronization also fetches first, skips dirty worktrees, and aborts a failed rebase before continuing. Deletion uses `git worktree prune` for each source repository, removes state under Grove's mutation lock, and attempts branch deletion afterward; branch deletion failures are warnings rather than a failed workspace removal. The destructive service quarantines an existing workspace root in `.trash` and restores it, with worktree repair, when cleanup fails. A missing root skips quarantine but still cleans registrations, state, and branches.
 
 ## Global lifecycle hooks
 
@@ -201,7 +211,7 @@ sequenceDiagram
 
 *This lifecycle sequence shows hook ordering and failure policy around the Git-worktree operation.*
 
-For per-repository behavior, see [Hooks](../docs/hooks.md). `.grove.toml` supports keys such as `setup`, `teardown`, `pre_sync`, `post_sync`, `pre_run`, `run`, and `post_run`; core ignores keys it does not know. Per-repository hook failures are warnings and do not block their attached operation. `pre_run`, `run`, and `post_run` are consumed by the external `gw-run` plugin rather than supervised by Grove core.
+For per-repository behavior, see [Hooks](../docs/hooks.md). Grove reads `.grove.toml` from each source repository, caches the result for the life of the process, and ignores keys it does not know. `base_branch` overrides the default branch used for creation and sync; `setup` runs once per repository after creation (in parallel), `teardown` runs before deletion, and `pre_sync`/`post_sync` surround a successful rebase. Per-repository hook failures are warnings and do not block their attached operation. `pre_run`, `run`, and `post_run` are consumed by the external `gw-run` plugin rather than supervised by Grove core.
 
 ## Source provenance
 
@@ -232,7 +242,7 @@ The bash/zsh wrapper delegates to `command gw`, avoiding recursive invocation. `
 
 Automation consuming candidate output should use `gw prune --json`. It emits an array of objects with `name`, `branch`, `created_at`, `age_days`, and `missing` fields. Candidates are workspaces at least `--min-age` old, **or whose workspace path is missing regardless of age**. In particular, `missing: true` means the path no longer exists on disk and makes the record eligible even when `age_days` is below the requested threshold.
 
-Preview does not delete anything. Add `--yes` to delete the emitted candidates using the same lifecycle-aware cleanup as `gw delete`; JSON remains an array after deletion. `--min-age` accepts hours, days, or weeks (`12h`, `7d`, `2w`), and a bare number means days.
+Preview does not delete anything. Add `--yes` to attempt every emitted candidate through the lifecycle-aware cleanup used by `gw delete`; the command does not stop at the first failure. JSON remains an array after deletion: a failed deletion adds an `error` string to that candidate, while successful candidates have no deletion-status field. In table output, failure details appear in the `Note` column as `FAILED: ...`; human-readable deletion output also emits a summary warning with deleted and failed counts. The individual errors are joined and returned after output, producing a non-zero command result whenever any deletion fails. `--min-age` accepts hours, days, or weeks (`12h`, `7d`, `2w`), and a bare number means days.
 
 ## Troubleshooting and safe extension
 
@@ -242,4 +252,4 @@ Preview does not delete anything. Add `--yes` to delete the emitted candidates u
 - If a hook does not fire, check `~/.grove/config.toml`, whether `--no-hooks` was supplied, and run with `--verbose`. For a failing quiet hook, inspect the prefixed stderr output; use `stream` for live progress and `timeout` for bounded external work.
 - Keep plugin-specific state outside Grove's state ownership boundary, use the supplied environment paths, quote or accept placeholders as documented, and test against real Git worktrees.
 
-Focused coverage includes plugin discovery, argument forwarding, environment propagation, and removal in `e2e/plugin_test.go`; lifecycle placeholder quoting, stream/capture behavior, timeout process-group handling, and failure policy in `internal/lifecycle/lifecycle_test.go`; source-placeholder and `--no-hooks` behavior in `e2e/lifecycle_test.go`; and prune age, missing-path, and JSON behavior in `cmd/prune_test.go`.
+Focused coverage includes plugin discovery, argument forwarding, environment propagation, and removal in `e2e/plugin_test.go`; lifecycle placeholder quoting, stream/capture behavior, timeout process-group handling, and failure policy in `internal/lifecycle/lifecycle_test.go`; source-placeholder and `--no-hooks` behavior in `e2e/lifecycle_test.go`; Git command/config parsing in `internal/gitops/gitops_test.go`; and prune age boundaries, missing-path eligibility, all-candidate deletion attempts, and JSON behavior in `cmd/prune_test.go`. When changing prune output, preserve the array shape and per-candidate failure reporting, then verify the command's exit status as well as stdout/stderr placement.
