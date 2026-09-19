@@ -2,6 +2,8 @@ package update
 
 import (
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"sync/atomic"
@@ -227,6 +229,50 @@ func TestUpgradeHintByInstallMethod(t *testing.T) {
 		c.ExePathFn = func() (string, error) { return tt.exe, nil }
 		if got := c.UpgradeHint(); got != tt.want {
 			t.Errorf("UpgradeHint(%q) = %q, want %q", tt.exe, got, tt.want)
+		}
+	}
+}
+
+func TestFetchLatestFromRedirectReadsTagFromLocation(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodHead {
+			t.Errorf("method = %s, want HEAD", r.Method)
+		}
+		w.Header().Set("Location", "https://github.com/nicksenap/grove/releases/tag/v1.2.3")
+		w.WriteHeader(http.StatusFound)
+	}))
+	defer srv.Close()
+
+	got, err := fetchLatestFromRedirect(srv.URL)
+	if err != nil || got != "1.2.3" {
+		t.Fatalf("got %q, %v; want 1.2.3", got, err)
+	}
+}
+
+func TestFetchLatestFromRedirectRejectsNonRedirect(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	if _, err := fetchLatestFromRedirect(srv.URL); err == nil {
+		t.Fatal("expected error for 200 response")
+	}
+}
+
+func TestVersionFromTagURL(t *testing.T) {
+	good := map[string]string{
+		"https://github.com/nicksenap/grove/releases/tag/v1.2.3": "1.2.3",
+		"/nicksenap/grove/releases/tag/1.2.3":                    "1.2.3",
+	}
+	for in, want := range good {
+		if got, err := versionFromTagURL(in); err != nil || got != want {
+			t.Errorf("versionFromTagURL(%q) = %q, %v; want %q", in, got, err, want)
+		}
+	}
+	for _, bad := range []string{"", "https://github.com/nicksenap/grove/releases", "https://github.com/nicksenap/grove/releases/tag/", "https://github.com/x/releases/tag/v1/extra"} {
+		if _, err := versionFromTagURL(bad); err == nil {
+			t.Errorf("versionFromTagURL(%q) should fail", bad)
 		}
 	}
 }
