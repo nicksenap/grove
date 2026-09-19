@@ -1,5 +1,17 @@
 # Changelog
 
+## v1.1.18
+
+### Features
+
+- `gw prune` now also lists workspaces whose directory no longer exists on disk (for example removed with `rm -rf` outside gw), regardless of age. They show `directory missing` in the table and `"missing": true` in `--json`. Deleting such a stale record skips the `.trash` quarantine but still prunes the git worktree registrations, removes the state entry, and deletes the branch.
+- `gw prune --min-age` accepts a unit: `12h`, `7d`, `2w`. A bare number still means days (`--min-age 14` is `14d`). Default is `7d`.
+
+### Changed
+
+- `gw prune --yes` attempts every candidate instead of stopping at the first failure. Failures are reported per workspace (`FAILED: ...` in the table, `"error"` in `--json`) and the command exits non-zero if any deletion failed.
+- The embedded plugin registry now lists only `code` and `dispatch`. `gw-run` and `gw-recipe` still install via `gw plugin install nicksenap/gw-run` / `nicksenap/gw-recipe`.
+
 ## v1.1.17
 
 ### Features
