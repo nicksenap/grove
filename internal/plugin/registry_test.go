@@ -33,17 +33,17 @@ func TestParseRegistryRejectsDuplicatesAndBadRepos(t *testing.T) {
 }
 
 func TestSearchMatchesDescriptionCaseInsensitively(t *testing.T) {
-	matches, err := Search("YAML")
+	matches, err := Search("VS CODE")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(matches) != 1 || matches[0].Name != "recipe" {
+	if len(matches) != 1 || matches[0].Name != "code" {
 		t.Fatalf("matches = %+v", matches)
 	}
 }
 
 func TestResolveRepo(t *testing.T) {
-	if got, _ := ResolveRepo("recipe"); got != "nicksenap/gw-recipe" {
+	if got, _ := ResolveRepo("dispatch"); got != "nicksenap/gw-dispatch" {
 		t.Fatalf("bare name resolved to %q", got)
 	}
 	if got, _ := ResolveRepo("someone/gw-thing"); got != "someone/gw-thing" {

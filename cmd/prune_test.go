@@ -3,6 +3,7 @@ package cmd
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -18,8 +19,8 @@ func TestPruneCommandDefaults(t *testing.T) {
 	if flag == nil {
 		t.Fatal("missing --min-age flag")
 	}
-	if flag.DefValue != "7" {
-		t.Fatalf("--min-age default = %q, want 7", flag.DefValue)
+	if flag.DefValue != "7d" {
+		t.Fatalf("--min-age default = %q, want 7d", flag.DefValue)
 	}
 	yes := pruneCmd.Flags().Lookup("yes")
 	if yes == nil {
@@ -37,12 +38,69 @@ func TestPruneCandidatesReportsAgeDays(t *testing.T) {
 		{Name: "fresh", Branch: "feat/fresh", CreatedAt: now.Add(-2 * 24 * time.Hour).Format("2006-01-02T15:04:05.000000")},
 	}
 
-	got := pruneCandidates(ws, 7, now)
+	got := pruneCandidates(ws, 7*24*time.Hour, now, func(string) bool { return true })
 	if len(got) != 1 {
 		t.Fatalf("got %+v, want only old", got)
 	}
 	if got[0].Name != "old" || got[0].Branch != "feat/old" || got[0].AgeDays != 10 {
 		t.Fatalf("candidate = %+v", got[0])
+	}
+}
+
+func TestPruneCandidatesIncludesMissingDirectoryRegardlessOfAge(t *testing.T) {
+	now := time.Date(2026, 4, 10, 12, 0, 0, 0, time.UTC)
+	ws := []models.Workspace{
+		{Name: "fresh-gone", Path: "/ws/fresh-gone", CreatedAt: now.Add(-1 * 24 * time.Hour).Format("2006-01-02T15:04:05.000000")},
+		{Name: "fresh-here", Path: "/ws/fresh-here", CreatedAt: now.Add(-1 * 24 * time.Hour).Format("2006-01-02T15:04:05.000000")},
+		{Name: "old-here", Path: "/ws/old-here", CreatedAt: now.Add(-10 * 24 * time.Hour).Format("2006-01-02T15:04:05.000000")},
+	}
+	exists := func(path string) bool { return path != "/ws/fresh-gone" }
+
+	got := pruneCandidates(ws, 7*24*time.Hour, now, exists)
+	if len(got) != 2 {
+		t.Fatalf("got %+v, want fresh-gone and old-here", got)
+	}
+	if got[0].Name != "fresh-gone" || !got[0].Missing || got[0].AgeDays != 1 {
+		t.Fatalf("candidate[0] = %+v", got[0])
+	}
+	if got[1].Name != "old-here" || got[1].Missing {
+		t.Fatalf("candidate[1] = %+v", got[1])
+	}
+}
+
+func TestPruneCandidatesBoundaryAndUnparseable(t *testing.T) {
+	now := time.Date(2026, 4, 10, 12, 0, 0, 0, time.UTC)
+	ws := []models.Workspace{
+		{Name: "exact", Path: "/ws/exact", CreatedAt: now.Add(-7 * 24 * time.Hour).Format("2006-01-02T15:04:05.000000")},
+		{Name: "bad-ts", Path: "/ws/bad-ts", CreatedAt: "not-a-timestamp"},
+		{Name: "bad-ts-gone", Path: "/ws/bad-ts-gone", CreatedAt: "not-a-timestamp"},
+	}
+	exists := func(path string) bool { return path != "/ws/bad-ts-gone" }
+
+	got := pruneCandidates(ws, 7*24*time.Hour, now, exists)
+	if len(got) != 2 || got[0].Name != "exact" || got[1].Name != "bad-ts-gone" {
+		t.Fatalf("got %+v, want exact (boundary) and bad-ts-gone (missing)", got)
+	}
+}
+
+func TestDeleteCandidatesContinuesAfterFailure(t *testing.T) {
+	candidates := []pruneCandidate{{Name: "a"}, {Name: "b"}, {Name: "c"}}
+	var attempted []string
+	err := deleteCandidates(candidates, func(name string) error {
+		attempted = append(attempted, name)
+		if name == "b" {
+			return errors.New("boom")
+		}
+		return nil
+	})
+	if err == nil || !strings.Contains(err.Error(), "b: boom") {
+		t.Fatalf("err = %v, want joined error naming b", err)
+	}
+	if strings.Join(attempted, ",") != "a,b,c" {
+		t.Fatalf("attempted = %v, want all candidates", attempted)
+	}
+	if candidates[0].Error != "" || candidates[1].Error != "boom" || candidates[2].Error != "" {
+		t.Fatalf("candidates = %+v", candidates)
 	}
 }
 
@@ -54,7 +112,7 @@ func TestWritePrunePreviewJSON(t *testing.T) {
 		CreatedAt: "2026-04-01T12:00:00.000000",
 		AgeDays:   9,
 	}}
-	if err := writePrunePreview(candidates, 7, true, false, &stdout); err != nil {
+	if err := writePrunePreview(candidates, "7d", true, false, &stdout); err != nil {
 		t.Fatal(err)
 	}
 	var decoded []pruneCandidate
@@ -68,7 +126,7 @@ func TestWritePrunePreviewJSON(t *testing.T) {
 
 func TestWritePrunePreviewEmptyJSON(t *testing.T) {
 	var stdout bytes.Buffer
-	if err := writePrunePreview(nil, 7, true, false, &stdout); err != nil {
+	if err := writePrunePreview(nil, "7d", true, false, &stdout); err != nil {
 		t.Fatal(err)
 	}
 	if strings.TrimSpace(stdout.String()) != "[]" {
@@ -76,8 +134,24 @@ func TestWritePrunePreviewEmptyJSON(t *testing.T) {
 	}
 }
 
-func TestValidatePruneMinAgeRejectsNegative(t *testing.T) {
-	if err := validatePruneMinAge(-1); err == nil {
-		t.Fatal("expected error for negative --min-age")
+func TestParseMinAge(t *testing.T) {
+	cases := map[string]time.Duration{
+		"12h": 12 * time.Hour,
+		"7d":  7 * 24 * time.Hour,
+		"2w":  14 * 24 * time.Hour,
+		"0d":  0,
+		"14":  14 * 24 * time.Hour,
 	}
+	for in, want := range cases {
+		got, err := parseMinAge(in)
+		if err != nil || got != want {
+			t.Errorf("parseMinAge(%q) = %v, %v; want %v", in, got, err, want)
+		}
+	}
+	for _, bad := range []string{"", "-1d", "-1", "7x", "d", "abc"} {
+		if _, err := parseMinAge(bad); err == nil {
+			t.Errorf("parseMinAge(%q) should fail", bad)
+		}
+	}
+
 }

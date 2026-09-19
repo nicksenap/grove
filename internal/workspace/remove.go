@@ -97,9 +97,17 @@ func (s *Service) deleteLocked(name string, opts RemoveOptions) (*models.Workspa
 	logging.Info("deleting workspace %q", name)
 	original := *ws
 
-	trashPath, err := quarantineWorkspace(ws.Path)
-	if err != nil {
-		return nil, "", fmt.Errorf("quarantining workspace %s: %w", ws.Path, err)
+	// A workspace whose directory is already gone (removed outside gw) is a
+	// stale state record: nothing to quarantine, but worktree registrations,
+	// state, and branches still need cleaning up.
+	var trashPath string
+	if _, statErr := os.Stat(ws.Path); os.IsNotExist(statErr) {
+		logging.Info("workspace %q directory %s already missing; cleaning stale record", name, ws.Path)
+	} else {
+		trashPath, err = quarantineWorkspace(ws.Path)
+		if err != nil {
+			return nil, "", fmt.Errorf("quarantining workspace %s: %w", ws.Path, err)
+		}
 	}
 
 	var pruneErrs []error
@@ -109,15 +117,19 @@ func (s *Service) deleteLocked(name string, opts RemoveOptions) (*models.Workspa
 		}
 	}
 	if len(pruneErrs) > 0 {
-		if restoreErr := s.restoreQuarantinedWorkspace(ws, trashPath); restoreErr != nil {
-			return nil, "", errors.Join(append(pruneErrs, restoreErr)...)
+		if trashPath != "" {
+			if restoreErr := s.restoreQuarantinedWorkspace(ws, trashPath); restoreErr != nil {
+				return nil, "", errors.Join(append(pruneErrs, restoreErr)...)
+			}
 		}
 		return nil, "", errors.Join(pruneErrs...)
 	}
 
 	if err := s.removeState(name); err != nil {
-		if restoreErr := s.restoreQuarantinedWorkspace(ws, trashPath); restoreErr != nil {
-			return nil, "", errors.Join(err, restoreErr)
+		if trashPath != "" {
+			if restoreErr := s.restoreQuarantinedWorkspace(ws, trashPath); restoreErr != nil {
+				return nil, "", errors.Join(err, restoreErr)
+			}
 		}
 		return nil, "", err
 	}
