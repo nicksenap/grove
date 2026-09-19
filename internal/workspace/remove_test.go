@@ -304,6 +304,39 @@ func TestDeleteMultiRepoAllCleaned(t *testing.T) {
 	}
 }
 
+func TestDeleteWithMissingDirectoryCleansStaleRecord(t *testing.T) {
+	env := setupTestEnv(t)
+	repo := env.createRepo("api")
+	env.createWorkspace("stale", "feat/stale", []string{"api"})
+
+	ws, _ := env.svc.State.GetWorkspace("stale")
+	if err := os.RemoveAll(ws.Path); err != nil {
+		t.Fatalf("simulate out-of-band removal: %v", err)
+	}
+
+	if err := env.svc.DeleteWithOptions("stale", RemoveOptions{Force: true}); err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+
+	if saved, _ := env.svc.State.GetWorkspace("stale"); saved != nil {
+		t.Error("stale workspace should be removed from state")
+	}
+	entries, err := gitops.WorktreeList(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if canonicalPath(e.Path) == canonicalPath(ws.Repos[0].WorktreePath) {
+			t.Errorf("worktree registration should be pruned: %+v", e)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(env.wsDir, trashDirName)); err == nil {
+		if items, _ := os.ReadDir(filepath.Join(env.wsDir, trashDirName)); len(items) != 0 {
+			t.Errorf("nothing should be quarantined for a missing directory: %v", items)
+		}
+	}
+}
+
 func TestDeleteRunsTeardownHook(t *testing.T) {
 	env := setupTestEnv(t)
 	repo := env.createRepo("api")

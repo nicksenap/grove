@@ -13,3 +13,7 @@ dist/
 
 # Local brag/launch video output
 brag-output/
+
+# OpenWiki local artifacts
+CLAUDE.md
+openwiki/.claims/

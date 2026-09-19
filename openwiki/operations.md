@@ -4,48 +4,38 @@ title: Operations
 description: Runbook for installing and operating Grove (`gw`), configuring repositories and hooks, understanding its state and cache surfaces, and recovering from failed cleanup or diagnostics. It also separates end-user troubleshooting from source-development checks and releases.
 tags: [grove, operations, configuration, troubleshooting, maintenance]
 verified:
-  - by: openwiki/0.5.0
-    at: 2026-09-18T19:54:31.983Z
+  - by: openwiki/0.5.2
+    at: 2026-09-19T08:38:34.519Z
 sources:
-  - id: openwiki-source-b9c955598bb697de900ff315
-    resource: repo://.goreleaser.yml
-  - id: openwiki-source-4a20513926f0658ee53b3ddf
-    resource: repo://cmd/doctor.go
+  - id: openwiki-source-4d743cc9a373dec1a2ed59bd
+    resource: repo://cmd/prune_test.go
   - id: openwiki-source-c713337c253fefedba109b9e
     resource: repo://cmd/prune.go
   - id: openwiki-source-d88dd56dbc4620bda4c35f1c
     resource: repo://cmd/root.go
-  - id: openwiki-source-bdbdd96d4e411ce150e48b0f
-    resource: repo://cmd/unlink_trash.go
   - id: openwiki-source-a8910515ddd14810ad43f5c1
     resource: repo://internal/config/config.go
-  - id: openwiki-source-372e83c8b8d28982a038615c
-    resource: repo://internal/discover/cache.go
-  - id: openwiki-source-4258a83a93bef1b2aadaf678
-    resource: repo://internal/discover/deepdiscover.go
   - id: openwiki-source-6e2ef7bffba8b16154bfe6e4
     resource: repo://internal/lifecycle/lifecycle.go
-  - id: openwiki-source-a5147957bc4eb2270289c610
-    resource: repo://internal/logging/logging.go
-  - id: openwiki-source-1d1ad5865ebad91142ed8aee
-    resource: repo://internal/models/models.go
   - id: openwiki-source-16cd47b644535c3977cf86c1
     resource: repo://internal/plugin/install.go
   - id: openwiki-source-ab647e2cb1e7b3b70e7883be
     resource: repo://internal/plugin/plugin.go
+  - id: openwiki-source-987bd1c73c75d81e98434684
+    resource: repo://internal/plugin/registry.go
+  - id: openwiki-source-85c3963bfb86fa1072db7e79
+    resource: repo://internal/plugin/registry.json
   - id: openwiki-source-a31375378633c98afe544d37
     resource: repo://internal/state/lock.go
   - id: openwiki-source-04df3322ec2dc26efbad1e6f
     resource: repo://internal/state/state.go
-  - id: openwiki-source-828d325fa34da8ff9b108c1a
-    resource: repo://internal/update/update.go
   - id: openwiki-source-0af407bb538616acaaa4baca
     resource: repo://internal/workspace/doctor.go
+  - id: openwiki-source-0cf556597f692ad56afe2a7d
+    resource: repo://internal/workspace/remove_test.go
   - id: openwiki-source-c98f76c921b18fb02cf31e14
     resource: repo://internal/workspace/remove.go
-  - id: openwiki-source-14e6a4e1ddc06973b783ff20
-    resource: repo://Justfile
-generated: { by: "openwiki/0.5.0", at: "2026-09-18T19:54:31.983Z" }
+generated: { by: "openwiki/0.5.2", at: "2026-09-19T08:38:34.519Z" }
 ---
 
 # Operations
@@ -198,13 +188,21 @@ gw -n delete my-feature
 
 ## Plugins
 
-A plugin is an executable named `gw-<name>`. Grove resolves built-ins first, then `~/.grove/plugins/gw-<name>`, then `$PATH`; on Unix it replaces the process with the plugin, giving it the terminal directly. Install a released plugin from GitHub:
+A plugin is an executable named `gw-<name>`. If Cobra reports an unknown command, Grove resolves the plugin name, checks `~/.grove/plugins/gw-<name>` before `$PATH`, and on Unix replaces the process so the plugin receives the terminal directly. The embedded registry currently contains only these built-in entries:
 
 ```bash
+gw plugin search
+# code  -> igor-kupczynski/gw-code
+# dispatch -> nicksenap/gw-dispatch
+```
+
+Install a registry entry by name, or install any compatible released plugin with an explicit owner/repo:
+
+```bash
+gw plugin install code
+gw plugin install dispatch
 gw plugin install nicksenap/gw-run
-gw plugin install nicksenap/gw-dispatch
 gw plugin install nicksenap/gw-recipe
-gw plugin install igor-kupczynski/gw-code
 ```
 
 The installer selects the current OS/architecture release asset, requires HTTPS, verifies the release checksum when available, and writes the executable plus `.gw-<name>.json` metadata. Manual installation is also supported:
@@ -240,18 +238,36 @@ sequenceDiagram
     participant Trash
     User->>Grove: gw delete NAME
     Grove->>Grove: run per-repo teardown
-    Grove->>Trash: rename workspace to .trash/NAME-timestamp
+    Grove->>Grove: inspect workspace path
+    alt workspace path exists
+        Grove->>Trash: rename workspace to .trash/NAME-timestamp
+    else workspace path is missing
+        Grove->>Grove: skip quarantine
+    end
     Grove->>Git: prune worktree registrations
     Grove->>Grove: remove state entry and delete owned branches
     Grove-->>User: report workspace deleted
-    Grove->>Trash: start detached unlink-trash
+    opt quarantined bytes remain
+        Grove->>Trash: start detached unlink-trash
+    end
 ```
 
-This sequence shows why the command can return quickly while large workspace bytes are still being removed.
+This sequence shows why the command can return quickly while large workspace bytes are still being removed. If the workspace directory is already absent, deletion does not attempt quarantine, but still prunes Git worktree registrations and removes the state record and owned branches.
 
-Before mutation Grove preflights worktrees, runs teardown outside the state lock, then reloads and rechecks under the lock. If pruning or state removal fails, it attempts to restore the quarantined root and repair worktrees. A failed child-process start falls back to synchronous unlinking; an unlink failure is logged as a warning. The hidden `gw unlink-trash PATH` command accepts only a direct child of `.trash`, protecting against arbitrary recursive deletion.
+Before mutation Grove preflights worktrees, runs teardown outside the state lock, then reloads and rechecks under the lock. If pruning or state removal fails, it attempts to restore the quarantined root and repair worktrees; the missing-directory path has no root to restore. A failed child-process start falls back to synchronous unlinking; an unlink failure is logged as a warning. The hidden `gw unlink-trash PATH` command accepts only a direct child of `.trash`, protecting against arbitrary recursive deletion.
 
-`gw prune` previews workspaces whose `created_at` is older than seven days by default; `--min-age N` changes the threshold and `--yes` performs deletion. It uses creation time rather than last navigation, skips malformed timestamps, and never deletes in preview mode. `--json` emits `name`, `branch`, `created_at`, and `age_days` for previews.
+`gw prune` previews workspaces whose `created_at` is at least seven days old by default, plus every state record whose workspace directory is absent even when the record is young. Use duration units such as `12h`, `7d`, or `2w`; a bare number remains compatible and means days. Invalid or negative values are rejected, and malformed creation timestamps are not selected unless the directory is missing. In the human table, missing directories are marked `directory missing` in the Note column; `--json` adds `missing: true` for those candidates (alongside `name`, `branch`, `created_at`, and `age_days`). Preview never mutates state. Pass `--yes` to delegate each candidate to the same forced two-phase deletion path used by `gw delete`, including stale-record cleanup for missing directories.
+
+Examples:
+
+```bash
+gw prune                         # preview records at least 7d old or missing on disk
+gw prune --min-age 12h            # use an hours threshold
+gw prune --min-age 2w             # use a weeks threshold
+gw prune --min-age 14             # compatibility form for 14 days
+gw prune --yes --min-age 7d       # delete the candidates
+gw prune --json                   # machine-readable preview, including missing
+```
 
 ## Diagnostics and recovery
 
@@ -299,7 +315,7 @@ go test ./internal/discover -v
 go test ./internal/config -v
 ```
 
-Focused tests matter when changing persistence or cleanup: configuration tests cover defaults and legacy migration; state tests cover atomic persistence and cross-process locking; discovery tests cover depth-three scanning, cache invalidation, parallel resolution, and deduplication; workspace doctor and removal tests cover `.trash` ownership, restoration, branch deletion, and the guarded unlink path. E2E scenarios use an isolated temporary `HOME` and real Git fixtures; the public GitHub HTTPS clone is opt-in with `GROVE_EXTERNAL_E2E=1`.
+Focused tests matter when changing persistence or cleanup: configuration tests cover defaults and legacy migration; state tests cover atomic persistence and cross-process locking; discovery tests cover depth-three scanning, cache invalidation, parallel resolution, and deduplication; prune tests cover `12h`, `7d`, `2w`, bare-day parsing, missing-directory candidates, and JSON output; workspace doctor and removal tests cover `.trash` ownership, restoration, branch deletion, missing-directory deletion, and the guarded unlink path. E2E scenarios use an isolated temporary `HOME` and real Git fixtures; the public GitHub HTTPS clone is opt-in with `GROVE_EXTERNAL_E2E=1`.
 
 A release is tagged and pushed with:
 

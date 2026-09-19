@@ -1,57 +1,31 @@
 ---
-type: "Reference"
-title: "Workflows"
-description: "End-to-end Grove workflows for discovery, workspace lifecycle, multi-repository synchronization, navigation, hooks, and recovery. Describes state transitions, safety checks, rollback, and per-repository failure behavior."
+type: Reference
+title: Workflows
+description: End-to-end Grove guidance for discovering repositories, creating and operating workspaces, and safely deleting, pruning, recovering, or extending them. Covers lifecycle ordering, state and Git boundaries, failure recovery, hooks, age-based cleanup, and plugins.
 tags: [grove, workflows, workspaces, git, cli, operations]
 verified:
-  - by: openwiki/0.5.0
-    at: 2026-09-18T19:54:31.983Z
+  - by: openwiki/0.5.2
+    at: 2026-09-19T08:38:34.519Z
 sources:
-  - id: openwiki-source-183c4c7db709eae12cf639de
-    resource: repo://cmd/addrepo.go
-  - id: openwiki-source-5fb548baa501bcdc358d79a6
-    resource: repo://cmd/create.go
-  - id: openwiki-source-4a20513926f0658ee53b3ddf
-    resource: repo://cmd/doctor.go
-  - id: openwiki-source-f03c6eedf6d8f9495e3d7211
-    resource: repo://cmd/go_cmd.go
-  - id: openwiki-source-2cdd82df233710bc057f775e
-    resource: repo://cmd/init_cmd.go
+  - id: openwiki-source-4d743cc9a373dec1a2ed59bd
+    resource: repo://cmd/prune_test.go
   - id: openwiki-source-c713337c253fefedba109b9e
     resource: repo://cmd/prune.go
-  - id: openwiki-source-be9f106c656ba0e202a9b414
-    resource: repo://cmd/reset.go
   - id: openwiki-source-d88dd56dbc4620bda4c35f1c
     resource: repo://cmd/root.go
   - id: openwiki-source-90ab86597712b7881e7c8057
     resource: repo://docs/plugins.md
-  - id: openwiki-source-6b1859c6bc35c4f29682760b
-    resource: repo://e2e/lifecycle_test.go
-  - id: openwiki-source-cefc1b19c7f172de09e25b8a
-    resource: repo://e2e/prune_test.go
-  - id: openwiki-source-6e2ef7bffba8b16154bfe6e4
-    resource: repo://internal/lifecycle/lifecycle.go
   - id: openwiki-source-9fa0f37ad88ce2a52ed9f800
     resource: repo://internal/operations/service.go
+  - id: openwiki-source-04df3322ec2dc26efbad1e6f
+    resource: repo://internal/state/state.go
   - id: openwiki-source-315bbc2fab6a49cc711be6d2
     resource: repo://internal/workspace/create.go
-  - id: openwiki-source-0af407bb538616acaaa4baca
-    resource: repo://internal/workspace/doctor.go
-  - id: openwiki-source-3c568d28ba0929ed69dbb842
-    resource: repo://internal/workspace/prune.go
+  - id: openwiki-source-0cf556597f692ad56afe2a7d
+    resource: repo://internal/workspace/remove_test.go
   - id: openwiki-source-c98f76c921b18fb02cf31e14
     resource: repo://internal/workspace/remove.go
-  - id: openwiki-source-14f23668f57fdf9ce732531e
-    resource: repo://internal/workspace/rename.go
-  - id: openwiki-source-ed256bc11bc3e46909d033e5
-    resource: repo://internal/workspace/repos.go
-  - id: openwiki-source-f17c2e39946320331020bb09
-    resource: repo://internal/workspace/reset.go
-  - id: openwiki-source-142be80b74015990b087e259
-    resource: repo://internal/workspace/status.go
-  - id: openwiki-source-518fc59687d34ca8836f1792
-    resource: repo://internal/workspace/sync.go
-generated: { by: "openwiki/0.5.0", at: "2026-09-18T19:54:31.983Z" }
+generated: { by: "openwiki/0.5.2", at: "2026-09-19T08:38:34.519Z" }
 ---
 
 # Workflows
@@ -151,14 +125,18 @@ Rename uses a state-first, locked update: it rejects name/path collisions, updat
 
 ```bash
 gw delete NAME
-gw prune                         # preview, default minimum age 7 days
-gw prune --min-age 14 --yes
+gw prune                         # preview, default minimum age 7d
+gw prune --min-age 12h
+gw prune --min-age 2w --yes
+gw prune --min-age 14 --yes   # bare number means days
 gw prune --json
 ```
 
 The top-level delete command supplies force cleanup after interactive selection, so `gw delete` does not perform the normal dirty-worktree preflight. The operation layer still runs `pre_delete` unless `--no-hooks` is set, and captures the expected creation timestamp and path so a concurrent state change is rejected. Direct workspace service callers can use safe defaults; `remove-repo` uses the same preflight machinery with its own `--force` flag (`cmd/delete.go#L31-L61`, `internal/operations/service.go#L106-L125`).
 
-Deletion is a two-phase quarantine operation. It first renames the workspace root into a sibling `.trash/<name>-<timestamp>` directory, so the live path is freed. It then prunes Git worktree registrations for every source repository. If pruning fails, or state removal fails, Grove restores the quarantined directory and repairs registrations where possible. Once registrations are pruned, state is removed; branch deletion is attempted afterward and branch failures are warnings, not a reason to restore the workspace. Quarantined bytes are unlinked asynchronously when configured, with a synchronous best-effort fallback; the unlink helper accepts only a direct child of `.trash` (`internal/workspace/remove.go#L82-L128`, `internal/workspace/remove.go#L131-L224`).
+Deletion is a two-phase quarantine operation for an existing workspace path. It first renames the workspace root into a sibling `.trash/<name>-<timestamp>` directory, so the live path is freed. It then prunes Git worktree registrations for every source repository. If pruning fails, or state removal fails, Grove restores the quarantined directory and repairs registrations where possible. Once registrations are pruned, state is removed; branch deletion is attempted afterward and branch failures are warnings, not a reason to restore the workspace. Quarantined bytes are unlinked asynchronously when configured, with a synchronous best-effort fallback; the unlink helper accepts only a direct child of `.trash` (`internal/workspace/remove.go#L82-L128`, `internal/workspace/remove.go#L131-L224`).
+
+If the workspace path is already missing, Grove skips quarantine and restoration: it still prunes each Git registration, removes the workspace record from state, and attempts branch cleanup. This is the stale-record path used by prune for missing directories (`internal/workspace/remove.go#L97-L140`, `internal/workspace/remove_test.go#L307-L338`).
 
 ```mermaid
 sequenceDiagram
@@ -173,24 +151,38 @@ sequenceDiagram
         Hook-->>CLI: stop before mutation
     else Allowed
         CLI->>State: lock and recheck expected path and timestamp
-        CLI->>FS: rename workspace root into .trash
+        alt Workspace path is missing
+            CLI-->>FS: skip quarantine
+        else Workspace path exists
+            CLI->>FS: rename workspace root into .trash
+        end
         loop Each source repository
             CLI->>Git: git worktree prune
         end
-        alt Prune or state removal fails
-            CLI->>FS: restore quarantined root
-            CLI->>Git: repair worktree registration
+        alt Git prune or state removal fails
+            alt Workspace path was quarantined
+                CLI->>FS: restore quarantined root
+                CLI->>Git: repair worktree registration
+            else Workspace path was already missing
+                CLI-->>FS: leave path absent
+            end
         else All registrations pruned
             CLI->>State: remove workspace
             loop Each workspace branch
                 CLI->>Git: delete branch unless preserved
             end
-            CLI-->>Trash: unlink quarantined bytes
+            opt Workspace was quarantined
+                CLI-->>Trash: unlink quarantined bytes
+            end
         end
     end
 ```
 
-`prune` is safe by default: it only previews workspaces whose parseable `created_at` is at least `--min-age` days old (default 7), rejects negative ages, and skips missing or malformed timestamps. `--yes` feeds each candidate through the same forced delete path; age is creation time, not last navigation or use. A failure deleting one candidate stops the prune loop and returns the error (`cmd/prune.go#L23-L39`, `cmd/prune.go#L48-L70`, `cmd/prune.go#L106-L131`, `internal/workspace/prune.go#L9-L35`).
+This sequence distinguishes recovery for an existing path from stale-record cleanup: a missing path is never moved into `.trash`, but its Git registrations and state are still removed.
+
+`prune` is safe by default: without `--yes` it only previews candidates. `--min-age` accepts an hour (`12h`), day (`7d`), or week (`2w`) suffix; a bare number is interpreted as days, the default is `7d`, and negative values or unknown units are rejected. Candidates are workspaces whose parseable `created_at` is at least the requested age old, plus every workspace whose directory is missing, regardless of age. Invalid or missing timestamps do not make an otherwise-present workspace age-eligible. Age is creation time, not last navigation or use. `--yes` sends candidates through the same forced delete path, and a deletion failure stops the prune loop and returns the error (`cmd/prune.go#L26-L40`, `cmd/prune.go#L54-L110`, `cmd/prune.go#L150-L176`, `internal/workspace/prune.go#L9-L35`).
+
+Preview output is either a human-readable table or JSON. The table has `Name`, `Branch`, `Created`, `Age`, and `Note` columns; a missing-directory candidate is marked `directory missing` in `Note`. JSON emits an array of candidate records with `name`, `branch`, `created_at`, `age_days`, and `missing`; missing-directory records therefore carry `"missing": true`, including when they are younger than `--min-age`. Preview does not delete anything, and `--yes` prints the same candidate information after deletion (`cmd/prune.go#L44-L51`, `cmd/prune.go#L113-L147`, `cmd/prune_test.go#L49-L98`).
 
 ## Navigation and shell integration
 
@@ -214,9 +206,9 @@ Doctor compares persisted workspaces with filesystem state. It reports missing w
 
 ## Extension boundary and tests
 
-Process-running and recipe workflows are not Grove core behavior. Install the external `gw-run` or `gw-recipe` plugins as appropriate; recipe documentation belongs in [`docs/plugins.md`](../docs/plugins.md), not in this core workflow description. Unknown commands are handed to installed plugins by the root command (`cmd/root.go#L101-L118`).
+Process-running and recipe workflows are not Grove core behavior. Install the external `gw-run` or `gw-recipe` plugins as appropriate; recipe documentation belongs in [`docs/plugins.md`](../docs/plugins.md), not in this core workflow description. Unknown commands are handed to installed plugins by the root command (`cmd/root.go#L101-L118`). Plugins are standalone `gw-<name>` executables searched in `~/.grove/plugins/` and then `$PATH`; Grove passes `GROVE_DIR`, `GROVE_CONFIG`, `GROVE_STATE`, and the current `GROVE_WORKSPACE` when available. Plugins should use Grove commands for mutations rather than editing state directly (`docs/plugins.md#L1-L3`, `docs/plugins.md#L32-L39`, `docs/plugins.md#L52-L67`, `docs/plugins.md#L123-L125`).
 
-Focused end-to-end coverage verifies lifecycle hook execution, `--no-hooks`, abort versus warning policy, source placeholders, prune preview, age filtering, and destructive prune behavior including state, directory, and branch removal (`e2e/lifecycle_test.go#L10-L96`, `e2e/prune_test.go#L19-L72`).
+Focused unit and end-to-end coverage verifies lifecycle hook execution, `--no-hooks`, abort versus warning policy, source placeholders, prune preview, age filtering, supported age syntax and invalid units, missing-directory candidates, and destructive prune behavior including state, directory, registration, and branch removal (`cmd/prune_test.go#L13-L120`, `internal/workspace/remove_test.go#L162-L204`, `internal/workspace/remove_test.go#L233-L338`, `e2e/prune_test.go#L19-L72`).
 
 ### Safe modification invariants
 
@@ -224,4 +216,4 @@ Focused end-to-end coverage verifies lifecycle hook execution, `--no-hooks`, abo
 - Keep state changes under the state lock; run user-owned setup and teardown commands outside it because they may invoke `gw`.
 - Preserve per-repository independence for status, sync, reset, and cleanup reporting.
 - Treat dirty-worktree protection as the default; make intentional data loss explicit with `--discard` for reset or `--force` for destructive cleanup.
-- Preserve rollback and quarantine boundaries: failed creation/addition removes only resources created by that attempt, while failed deletion restores the quarantined root when logical cleanup cannot complete.
+- Preserve rollback and quarantine boundaries: failed creation/addition removes only resources created by that attempt, while failed deletion restores the quarantined root when logical cleanup cannot complete; a missing path has no root to restore but still requires Git and state cleanup.
