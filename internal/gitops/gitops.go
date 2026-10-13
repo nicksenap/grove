@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -78,8 +79,10 @@ func runGit(dir string, args ...string) (string, error) {
 	cmd.Env = gitEnv
 	cmd.Stdin = devNull
 
+	start := time.Now()
 	out, err := cmd.CombinedOutput()
 	output := strings.TrimSpace(string(out))
+	logGitCall(dir, args, time.Since(start), err)
 	if err != nil {
 		if isAuthError(output) {
 			return output, &GitError{
@@ -94,6 +97,25 @@ func runGit(dir string, args ...string) (string, error) {
 		}
 	}
 	return output, nil
+}
+
+// logGitCall writes a debug trace line for a git invocation (verbose only).
+func logGitCall(dir string, args []string, elapsed time.Duration, err error) {
+	status := "ok"
+	if err != nil {
+		status = "error: " + err.Error()
+	}
+	logging.Debug("git %s (dir=%s) %s %s",
+		redactCredentials(strings.Join(args, " ")), dir, elapsed.Round(time.Millisecond), status)
+}
+
+// urlCredentials matches the userinfo part of a URL (scheme://user:pass@).
+var urlCredentials = regexp.MustCompile(`(://)[^/@\s]+@`)
+
+// redactCredentials masks credentials embedded in URLs, since grove.log is
+// attached to bug reports.
+func redactCredentials(s string) string {
+	return urlCredentials.ReplaceAllString(s, "${1}***@")
 }
 
 // IsGitRepo checks if a directory is a git repository.
