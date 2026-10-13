@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/nicksenap/grove/internal/logging"
 )
@@ -77,7 +78,7 @@ func TestLogGitCallRedactsStderr(t *testing.T) {
 	// not reach grove.log. Feed the output directly so the test needs no
 	// network and no particular git wording.
 	stderr := "fatal: unable to access 'https://user:s3cret@example.com/o/r.git/': Could not resolve host"
-	logGitCall(t.TempDir(), []string{"clone", "https://user:s3cret@example.com/o/r.git", "dest"},
+	logGitCall(t.TempDir(), "clone https://user:s3cret@example.com/o/r.git dest",
 		time.Millisecond, stderr, errors.New("exit status 128"))
 
 	log := readLog()
@@ -93,7 +94,7 @@ func TestLogGitCallTruncatesLongOutput(t *testing.T) {
 	readLog := setupLog(t, true)
 
 	long := strings.Repeat("x", maxTraceOutput*4)
-	logGitCall(t.TempDir(), []string{"fetch"}, time.Millisecond, long, errors.New("exit status 1"))
+	logGitCall(t.TempDir(), "fetch", time.Millisecond, long, errors.New("exit status 1"))
 
 	log := readLog()
 	if !strings.Contains(log, "...[truncated]") {
@@ -101,6 +102,33 @@ func TestLogGitCallTruncatesLongOutput(t *testing.T) {
 	}
 	if len(log) > maxTraceOutput+512 {
 		t.Errorf("trace line not truncated: %d bytes", len(log))
+	}
+}
+
+func TestLogGitCallRedactsBeforeTruncating(t *testing.T) {
+	readLog := setupLog(t, true)
+
+	// Place the cut inside the userinfo, before the '@'. Truncating first
+	// would leave a partial token the redaction regex can't match.
+	prefix := strings.Repeat("x", maxTraceOutput-20) // cut lands right after "s3cret"
+	stderr := prefix + " https://user:s3cretTOKEN@example.com/o/r.git"
+	logGitCall(t.TempDir(), "fetch", time.Millisecond, stderr, errors.New("exit status 1"))
+
+	log := readLog()
+	if strings.Contains(log, "s3cret") || strings.Contains(log, "user:") {
+		t.Errorf("partial credential leaked into log:\n%s", log[len(log)-200:])
+	}
+}
+
+func TestLogGitCallTruncatesOnRuneBoundary(t *testing.T) {
+	readLog := setupLog(t, true)
+
+	// "é" is two bytes; an odd-length prefix puts a rune across the cut.
+	long := "x" + strings.Repeat("é", maxTraceOutput)
+	logGitCall(t.TempDir(), "fetch", time.Millisecond, long, errors.New("exit status 1"))
+
+	if log := readLog(); !utf8.ValidString(log) {
+		t.Error("truncated trace line is not valid UTF-8")
 	}
 }
 

@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/BurntSushi/toml"
 	"github.com/nicksenap/grove/internal/logging"
@@ -82,21 +83,17 @@ func runGit(dir string, args ...string) (string, error) {
 	start := time.Now()
 	out, err := cmd.CombinedOutput()
 	output := strings.TrimSpace(string(out))
+	cmdline := strings.Join(args, " ")
 	if logging.Verbose() {
-		logGitCall(dir, args, time.Since(start), output, err)
+		logGitCall(dir, cmdline, time.Since(start), output, err)
 	}
 	if err != nil {
+		stderr := output
 		if isAuthError(output) {
-			return output, &GitError{
-				Cmd: strings.Join(args, " "),
-				Stderr: output + "\n\nHint: Check your SSH keys or credentials. " +
-					"Run 'ssh -T git@github.com' to test your connection.",
-			}
+			stderr += "\n\nHint: Check your SSH keys or credentials. " +
+				"Run 'ssh -T git@github.com' to test your connection."
 		}
-		return output, &GitError{
-			Cmd:    strings.Join(args, " "),
-			Stderr: output,
-		}
+		return output, &GitError{Cmd: cmdline, Stderr: stderr}
 	}
 	return output, nil
 }
@@ -109,20 +106,33 @@ const maxTraceOutput = 2048
 // logGitCall writes a debug trace line for a git invocation. On failure it
 // records git's own output (redacted, truncated), falling back to the exec
 // error when git printed nothing.
-func logGitCall(dir string, args []string, elapsed time.Duration, output string, err error) {
+func logGitCall(dir, cmdline string, elapsed time.Duration, output string, err error) {
 	status := "ok"
 	if err != nil {
 		reason := output
 		if reason == "" {
 			reason = err.Error()
 		}
-		if len(reason) > maxTraceOutput {
-			reason = reason[:maxTraceOutput] + "...[truncated]"
-		}
-		status = "error: " + redactCredentials(strings.ReplaceAll(reason, "\n", " | "))
+		// Redact before truncating: a cut inside a URL's userinfo would
+		// leave a partial token the redaction pattern can't match.
+		reason = truncateUTF8(redactCredentials(reason), maxTraceOutput)
+		status = "error: " + strings.ReplaceAll(reason, "\n", " | ")
 	}
 	logging.Debug("git %s (dir=%s) %s %s",
-		redactCredentials(strings.Join(args, " ")), dir, elapsed.Round(time.Millisecond), status)
+		redactCredentials(cmdline), dir, elapsed.Round(time.Millisecond), status)
+}
+
+// truncateUTF8 caps s at max bytes without splitting a rune, appending a
+// marker when it cuts.
+func truncateUTF8(s string, max int) string {
+	if len(s) <= max {
+		return s
+	}
+	cut := max
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return s[:cut] + "...[truncated]"
 }
 
 // urlCredentials matches the userinfo part of a URL (scheme://user:pass@).
