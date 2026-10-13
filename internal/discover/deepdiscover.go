@@ -71,16 +71,11 @@ type repoCandidate struct {
 	root string
 }
 
-// DiscoverRepos deep-scans directories for git repos, deduped by remote URL.
+// DiscoverReposWithRemoteCache deep-scans directories for git repos, deduped by remote URL.
 // The fetcher function resolves a repo path to its remote URL (or "" if none).
 // When multiple paths share the same remote, direct children of configured dirs win.
 // Results are sorted by display name.
 // Pass nil for cache to skip caching; pass a non-nil map to use/populate it.
-func DiscoverRepos(dirs []string, fetcher func(string) string) []RepoInfo {
-	return DiscoverReposWithRemoteCache(dirs, nil, fetcher)
-}
-
-// DiscoverReposWithRemoteCache is like DiscoverRepos but uses the provided cache.
 func DiscoverReposWithRemoteCache(dirs []string, cache map[string]CacheEntry, fetcher func(string) string) []RepoInfo {
 	// Phase 1: filesystem scan
 	var candidates []repoCandidate

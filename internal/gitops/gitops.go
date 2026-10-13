@@ -522,66 +522,6 @@ func PRStatus(path string) *PRInfo {
 	return nil
 }
 
-// PRRef holds the resolved head branch and metadata for a pull request.
-// Used to seed a workspace from a PR URL (check out the existing head branch).
-type PRRef struct {
-	Number      int    `json:"number"`
-	HeadRefName string `json:"headRefName"`
-	Title       string `json:"title"`
-	State       string `json:"state"`
-	URL         string `json:"url"`
-	// HeadRepositoryOwner is the owner of the head repo. For fork PRs this
-	// differs from the base repo owner, meaning origin/<head> won't exist.
-	HeadRepositoryOwner string `json:"headRepositoryOwner"`
-}
-
-// GhPRResolve resolves a pull request's head branch + metadata via the gh CLI.
-// repoSlug is "owner/repo"; host is the GitHub host ("" defaults to github.com,
-// gh honors GH_HOST / its own config for enterprise). Returns an error if gh is
-// unavailable or the PR cannot be resolved.
-func GhPRResolve(repoSlug string, number int, host string) (*PRRef, error) {
-	ghPath, err := exec.LookPath("gh")
-	if err != nil {
-		return nil, fmt.Errorf("gh CLI not found")
-	}
-	args := []string{"pr", "view", strconv.Itoa(number),
-		"--json", "number,headRefName,title,state,url,headRepositoryOwner"}
-	if repoSlug != "" {
-		args = append(args, "--repo", repoSlug)
-	}
-	cmd := exec.Command(ghPath, args...)
-	cmd.Stdin = nil
-	if host != "" {
-		cmd.Env = append(os.Environ(), "GH_HOST="+host)
-	}
-	out, err := cmd.Output()
-	if err != nil {
-		return nil, fmt.Errorf("gh pr view %d: %w", number, err)
-	}
-	// gh nests headRepositoryOwner as an object {login: ...}; decode loosely.
-	var raw struct {
-		Number              int    `json:"number"`
-		HeadRefName         string `json:"headRefName"`
-		Title               string `json:"title"`
-		State               string `json:"state"`
-		URL                 string `json:"url"`
-		HeadRepositoryOwner struct {
-			Login string `json:"login"`
-		} `json:"headRepositoryOwner"`
-	}
-	if err := json.Unmarshal(out, &raw); err != nil {
-		return nil, fmt.Errorf("parsing gh output: %w", err)
-	}
-	return &PRRef{
-		Number:              raw.Number,
-		HeadRefName:         raw.HeadRefName,
-		Title:               raw.Title,
-		State:               raw.State,
-		URL:                 raw.URL,
-		HeadRepositoryOwner: raw.HeadRepositoryOwner.Login,
-	}, nil
-}
-
 func ghPRStatus(path string) *PRInfo {
 	ghPath, err := exec.LookPath("gh")
 	if err != nil {
@@ -664,13 +604,6 @@ func ReadGroveConfig(repoPath string) (*models.GroveConfig, error) {
 	groveConfigCache[repoPath] = &groveConfigEntry{cfg: cfg, err: err}
 	groveConfigMu.Unlock()
 	return cfg, err
-}
-
-// ClearGroveConfigCache clears the cache. Call in tests.
-func ClearGroveConfigCache() {
-	groveConfigMu.Lock()
-	groveConfigCache = make(map[string]*groveConfigEntry)
-	groveConfigMu.Unlock()
 }
 
 func readGroveConfigFromDisk(repoPath string) (*models.GroveConfig, error) {
