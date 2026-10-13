@@ -100,27 +100,26 @@ func (c *Checker) fetchAndCache() {
 	os.Rename(tmp, c.CachePath)
 }
 
-const (
-	releasesLatestURL = "https://github.com/nicksenap/grove/releases/latest"
-	releasesAPIURL    = "https://api.github.com/repos/nicksenap/grove/releases/latest"
-)
+const releasesLatestURL = "https://github.com/nicksenap/grove/releases/latest"
 
-// fetchLatestFromGitHub resolves the newest release tag. It follows the
-// github.com/<repo>/releases/latest redirect first, which is not subject to
-// the unauthenticated API rate limit (60 requests/hour per IP), mirroring
-// scripts/install.sh. The REST API is only a fallback.
+// fetchTimeout bounds the background release lookup. A var so tests can
+// exercise the timeout path without waiting.
+var fetchTimeout = 5 * time.Second
+
+// fetchLatestFromGitHub resolves the newest release tag by following the
+// github.com/<repo>/releases/latest redirect, which is not subject to the
+// unauthenticated API rate limit (60 requests/hour per IP). There is no REST
+// API fallback: the check is best-effort, and every way the redirect fails
+// (network down, no releases, rate limiting) would fail the API call too.
 func fetchLatestFromGitHub() (string, error) {
-	if v, err := fetchLatestFromRedirect(releasesLatestURL); err == nil {
-		return v, nil
-	}
-	return fetchLatestFromAPI(releasesAPIURL)
+	return fetchLatestFromRedirect(releasesLatestURL)
 }
 
 // fetchLatestFromRedirect issues a HEAD request and reads the tag from the
 // Location header, e.g. .../releases/tag/v1.2.3 -> "1.2.3".
 func fetchLatestFromRedirect(url string) (string, error) {
 	client := &http.Client{
-		Timeout: 5 * time.Second,
+		Timeout: fetchTimeout,
 		CheckRedirect: func(*http.Request, []*http.Request) error {
 			return http.ErrUseLastResponse
 		},
@@ -155,34 +154,6 @@ func versionFromTagURL(location string) (string, error) {
 		return "", fmt.Errorf("unexpected redirect target %q", location)
 	}
 	return tag, nil
-}
-
-func fetchLatestFromAPI(url string) (string, error) {
-	client := &http.Client{Timeout: 5 * time.Second}
-	req, err := http.NewRequest(http.MethodGet, url, nil)
-	if err != nil {
-		return "", err
-	}
-	req.Header.Set("User-Agent", "grove")
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != 200 {
-		return "", fmt.Errorf("GitHub API returned %d", resp.StatusCode)
-	}
-
-	var release struct {
-		TagName string `json:"tag_name"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&release); err != nil {
-		return "", err
-	}
-
-	return strings.TrimPrefix(release.TagName, "v"), nil
 }
 
 // compareVersions compares two semver strings.
