@@ -2,6 +2,7 @@ package update
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -249,14 +250,114 @@ func TestFetchLatestFromRedirectReadsTagFromLocation(t *testing.T) {
 	}
 }
 
-func TestFetchLatestFromRedirectRejectsNonRedirect(t *testing.T) {
+// Every way the redirect lookup can fail must surface as an error so the
+// checker leaves the cache untouched and shows no notice.
+func TestFetchLatestFromRedirectFailureModes(t *testing.T) {
+	cases := map[string]http.HandlerFunc{
+		"200 instead of redirect": func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusOK)
+		},
+		"404 repo missing": func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusNotFound)
+		},
+		"429 rate limited": func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusTooManyRequests)
+		},
+		"503 outage": func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusServiceUnavailable)
+		},
+		"302 without Location": func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusFound)
+		},
+		"302 to /releases (no releases yet)": func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Location", "https://github.com/nicksenap/grove/releases")
+			w.WriteHeader(http.StatusFound)
+		},
+		"302 to login page": func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Location", "https://github.com/login?return_to=%2Fnicksenap%2Fgrove")
+			w.WriteHeader(http.StatusFound)
+		},
+	}
+	for name, h := range cases {
+		t.Run(name, func(t *testing.T) {
+			srv := httptest.NewServer(h)
+			defer srv.Close()
+			if v, err := fetchLatestFromRedirect(srv.URL); err == nil {
+				t.Fatalf("got %q, want error", v)
+			}
+		})
+	}
+}
+
+func TestFetchLatestFromRedirectNetworkError(t *testing.T) {
+	srv := httptest.NewServer(http.NotFoundHandler())
+	url := srv.URL
+	srv.Close() // connection refused from here on
+
+	if v, err := fetchLatestFromRedirect(url); err == nil {
+		t.Fatalf("got %q, want error", v)
+	}
+}
+
+func TestFetchLatestFromRedirectTimeout(t *testing.T) {
+	old := fetchTimeout
+	fetchTimeout = 50 * time.Millisecond
+	t.Cleanup(func() { fetchTimeout = old })
+
+	release := make(chan struct{})
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		<-release
+	}))
+	defer srv.Close()
+	defer close(release)
+
+	start := time.Now()
+	if v, err := fetchLatestFromRedirect(srv.URL); err == nil {
+		t.Fatalf("got %q, want timeout error", v)
+	}
+	if d := time.Since(start); d > 2*time.Second {
+		t.Fatalf("took %v, timeout not honored", d)
+	}
+}
+
+// The tag lives in the Location header; following the redirect would waste a
+// request and lose it.
+func TestFetchLatestFromRedirectDoesNotFollow(t *testing.T) {
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		if r.URL.Path == "/latest" {
+			w.Header().Set("Location", "/nicksenap/grove/releases/tag/v2.0.0")
+			w.WriteHeader(http.StatusFound)
+			return
+		}
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer srv.Close()
 
-	if _, err := fetchLatestFromRedirect(srv.URL); err == nil {
-		t.Fatal("expected error for 200 response")
+	got, err := fetchLatestFromRedirect(srv.URL + "/latest")
+	if err != nil || got != "2.0.0" {
+		t.Fatalf("got %q, %v; want 2.0.0", got, err)
+	}
+	if n := hits.Load(); n != 1 {
+		t.Fatalf("server hit %d times, want 1", n)
+	}
+}
+
+func TestFetchAndCacheLeavesCacheOnFetchError(t *testing.T) {
+	c := testChecker(t)
+	prev := CacheData{LastCheck: 1, Latest: "1.0.0"}
+	data, _ := json.Marshal(prev)
+	if err := os.WriteFile(c.CachePath, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	c.FetchLatestFn = func() (string, error) { return "", errors.New("boom") }
+
+	c.fetchAndCache()
+
+	got := c.loadCache()
+	if got == nil || *got != prev {
+		t.Fatalf("cache = %+v, want unchanged %+v", got, prev)
 	}
 }
 
