@@ -1,14 +1,16 @@
 ---
 type: Concept
 title: Architecture
-description: System map for Grove's Cobra CLI, operation orchestration, lifecycle-free workspace and Git boundaries, durable state, plugin execution, and output. Explains the end-to-end prune flow, cleanup invariants, and failure propagation.
+description: Runtime and ownership map for Grove, from the thin `gw` entrypoint and Cobra commands through discovery, configuration, workspace orchestration, Git, state and statistics, lifecycle hooks, output, logging, and external plugin fallback.
 tags: [grove, architecture, cli, workspaces, git, persistence, plugins]
 verified:
   - by: openwiki/0.5.2
-    at: 2026-09-19T14:39:28.658Z
+    at: 2026-10-13T16:45:10.957Z
 sources:
   - id: openwiki-source-8e87dcc3b28172929ac32c27
     resource: repo://cmd/delete.go
+  - id: openwiki-source-c7a1513bb01b2fe1abbe86e7
+    resource: repo://cmd/gw/main.go
   - id: openwiki-source-b1648c12bdc7429a56ec8677
     resource: repo://cmd/plugin.go
   - id: openwiki-source-4d743cc9a373dec1a2ed59bd
@@ -17,139 +19,113 @@ sources:
     resource: repo://cmd/prune.go
   - id: openwiki-source-d88dd56dbc4620bda4c35f1c
     resource: repo://cmd/root.go
+  - id: openwiki-source-a8910515ddd14810ad43f5c1
+    resource: repo://internal/config/config.go
+  - id: openwiki-source-c7892bbdfc3002a62a48afad
+    resource: repo://internal/gitops/gitops.go
+  - id: openwiki-source-6e2ef7bffba8b16154bfe6e4
+    resource: repo://internal/lifecycle/lifecycle.go
+  - id: openwiki-source-a5147957bc4eb2270289c610
+    resource: repo://internal/logging/logging.go
+  - id: openwiki-source-1d1ad5865ebad91142ed8aee
+    resource: repo://internal/models/models.go
   - id: openwiki-source-9fa0f37ad88ce2a52ed9f800
     resource: repo://internal/operations/service.go
+  - id: openwiki-source-54ed4ed40a03cd339a0bec80
+    resource: repo://internal/output/output.go
   - id: openwiki-source-ab647e2cb1e7b3b70e7883be
     resource: repo://internal/plugin/plugin.go
   - id: openwiki-source-987bd1c73c75d81e98434684
     resource: repo://internal/plugin/registry.go
-  - id: openwiki-source-85c3963bfb86fa1072db7e79
-    resource: repo://internal/plugin/registry.json
   - id: openwiki-source-a31375378633c98afe544d37
     resource: repo://internal/state/lock.go
   - id: openwiki-source-04df3322ec2dc26efbad1e6f
     resource: repo://internal/state/state.go
+  - id: openwiki-source-f08a602731b001d518386466
+    resource: repo://internal/stats/stats.go
+  - id: openwiki-source-315bbc2fab6a49cc711be6d2
+    resource: repo://internal/workspace/create.go
   - id: openwiki-source-c98f76c921b18fb02cf31e14
     resource: repo://internal/workspace/remove.go
-generated: { by: "openwiki/0.5.2", at: "2026-09-19T14:39:28.658Z" }
+generated: { by: "openwiki/0.5.2", at: "2026-10-13T16:45:10.957Z" }
 ---
 
 # Architecture
 
-Grove is a local orchestrator for Git worktree workspaces. Cobra commands parse intent and choose targets; `internal/operations` applies user-facing lifecycle policy; `internal/workspace` performs workspace mutations; `internal/gitops` is the Git subprocess boundary; and `internal/state` owns durable workspace records. Git remains authoritative for worktree registrations and branches, while Grove persists the metadata needed to find and safely manage them.
+Grove is a local Git worktree workspace orchestrator. The executable entrypoint is intentionally thin: `cmd/gw/main.go` calls `cmd.Execute()`, while Cobra commands translate user intent into calls across the internal packages. Core owns workspace, Git, configuration, persistence, lifecycle, presentation, and diagnostics; integrations such as coding agents, dashboards, archives, and terminal tooling are external plugins rather than in-process subsystems.
 
 ## Runtime boundaries
 
 ```mermaid
 flowchart TD
-    CLI["Cobra commands in cmd"] --> OPS["operations.Service"]
-    OPS --> WS["workspace.Service"]
-    WS --> STATE["state.Store"]
-    WS --> GIT["internal/gitops"]
-    GIT --> SUB["git subprocess"]
-    OPS --> HOOK["lifecycle hooks"]
-    CLI --> CFG["config and discovery"]
-    CLI --> FALLBACK["unknown command fallback"]
-    FALLBACK --> EXT["gw-name executable"]
-    EXT --> ENV["GROVE environment"]
+    ENTRY["cmd/gw/main.go"] --> ROOT["cmd.Execute and Cobra root"]
+    ROOT --> DISC["discover and config"]
+    ROOT --> OPS["operations service"]
+    OPS --> WS["workspace service"]
+    WS --> LOCK["state lock"]
+    LOCK --> STATE["state.json"]
+    WS --> GITOPS["internal/gitops"]
+    GITOPS --> GIT["git subprocess"]
+    WS --> STATS["stats.json tracker"]
+    OPS --> HOOKS["lifecycle hooks"]
+    ROOT --> OUT["console and output formats"]
+    ROOT --> LOG["rotating grove.log"]
+    ROOT --> FALLBACK["unknown-command fallback"]
+    FALLBACK --> PLUGIN["external gw-name executable"]
+    PLUGIN --> ENV["Grove environment"]
 ```
 
-This boundary keeps command UX and hook policy out of workspace mechanics, and keeps shell details and Git failure interpretation behind `gitops`.
+This flow distinguishes Grove-owned control and persistence from the external process boundary. Commands own argument interpretation and presentation; services own policy and orchestration; workspace owns mutations; `gitops` is the only Git subprocess boundary.
 
-## CLI and operation orchestration
+## Entry point, commands, discovery, and configuration
 
-`cmd.Execute()` runs the Cobra root. The root registers built-in commands including `delete`, `prune`, and `plugin`. Its persistent pre-run skips update and logging setup for commands annotated offline and otherwise configures logging and an update notice. Cobra errors are silenced so the root can attempt external-plugin dispatch only for an unknown command.
+`cmd/gw/main.go` does no application work beyond calling `cmd.Execute()`. The root command registers the built-in command set, silences Cobra's default errors and usage so plugin fallback can be attempted, and runs a persistent pre-run for normal commands. Offline commands skip update checks and logging setup; otherwise a terminal-only update notice is offered and structured logging is initialized. The `--no-hooks` flag sets the lifecycle package's global disabled switch, while `--verbose` enables debug logging.
 
-`operations.Service` is the user-facing ordering boundary. `Create` calls workspace creation, reloads the committed record, then runs `post_create`; an aborting hook returns an error but does not roll back the already-created workspace. `Delete` loads the record, runs `pre_delete`, copies its `CreatedAt` and `Path` into the removal request, and then invokes workspace deletion. Missing hooks are non-fatal for these operations; non-aborting hook failures become warnings, while aborting failures stop the operation. The workspace package itself is lifecycle-free: its teardown commands are repository-local cleanup primitives, not global hook policy.
+Commands under `cmd/` orchestrate selection, validation, and output. They use the discovery package to find Git repositories in configured directories; discovery can walk repository trees and caches remote URLs on disk. Configuration is loaded from `~/.grove/config.toml`. A missing file means Grove is not initialized, `workspace_dir` defaults to `~/.grove/workspaces`, and the legacy `repos_dir` key is migrated to `repo_dirs`. `config.Save` validates preset names and replaces the file through a temporary file and rename. `models.Config` also carries global hooks and named presets; per-repository `.grove.toml` is read by `gitops.ReadGroveConfig` and supports `base_branch`, setup commands, and repository-local sync or teardown commands.
 
-## Prune control flow
+## Operation and workspace orchestration
 
-`cmd/prune.go` owns age parsing and candidate selection. `parseMinAge` accepts `h`, `d`, or `w` suffixes and interprets a bare number as days; negative and malformed values are rejected. `runPrune` then calls `state.Load`, and `pruneCandidates` retains records that are at least the requested age old **or whose directory is missing**, preserving state order. An unparseable timestamp is not old by itself, but a missing directory still makes that record a candidate.
+`internal/operations` is the user-facing ordering boundary around lifecycle-free workspace primitives. Create provisions through `workspace.Service`, reloads the committed record, then runs `post_create`. Delete loads the record, runs `pre_delete`, passes its recorded `CreatedAt` and `Path` as expected values, and then invokes workspace deletion. Missing hooks are acceptable for create/delete; a hook configured with `on_failure = "abort"` stops the operation, while other hook failures become warnings. A failed aborting `post_create` does not roll back a workspace that was already committed. The `on_close` operation is stricter and reports an absent required hook as an error.
 
-```mermaid
-flowchart TD
-    START["gw prune"] --> PARSE["parse --min-age"]
-    PARSE -->|invalid| PARSE_ERR["return parse error"]
-    PARSE -->|valid| LOAD["state.Load records"]
-    LOAD -->|error| LOAD_ERR["return state error"]
-    LOAD --> SELECT["pruneCandidates"]
-    SELECT --> AGE["old enough"]
-    SELECT --> MISSING["directory missing"]
-    AGE --> CANDIDATES["ordered candidates"]
-    MISSING --> CANDIDATES
-    CANDIDATES --> PREVIEW{"--yes?"}
-    PREVIEW -->|no| RENDER_PREVIEW["render preview or JSON"]
-    PREVIEW -->|yes| ATTEMPT["deleteCandidates attempts every candidate"]
-    ATTEMPT --> SERVICE["operations.Service.Delete with Force true"]
-    SERVICE --> HOOK["pre_delete policy"]
-    HOOK --> REMOVE["workspace.DeleteWithOptions"]
-    REMOVE --> RESULT["record per-candidate error"]
-    RESULT --> ATTEMPT
-    ATTEMPT --> RENDER_RESULT["render results or JSON"]
-    RENDER_RESULT --> RETURN_ERR["return errors.Join failures"]
-```
+Creation holds the state mutation lock while it creates the workspace directory, validates all selected repositories, fetches sources concurrently, and adds worktrees sequentially. Sequential provisioning preserves reverse-order rollback: failed creation removes created worktrees and only branches created by that operation. State is saved only after all worktrees exist. Repository-local setup commands run after the state commit and lock release, concurrently per repository; setup failures warn rather than roll back. A tracked remote branch can be selected for a repository, with fallback to a new branch from the resolved base when the remote ref is unavailable. Workspace records retain optional opaque source provenance for plugins and display, but core does not interpret provider-specific meaning.
 
-The diagram shows why prune is not the old `workspace.OlderThan` path: state loading, age interpretation, missing-directory detection, and result rendering belong to the command. With `--yes`, `deleteCandidates` deliberately attempts every candidate, writes each deletion failure into that candidate's `Error` field, joins the named errors, renders all results first, and only then returns the joined error. Thus a partial cleanup is visible in both human output and JSON and still produces a non-zero command result. Without `--yes`, prune is a preview and performs no deletion.
+Prune is command-owned batch policy rather than a workspace primitive. `cmd/prune.go` parses `--min-age` with `h`, `d`, or `w` suffixes and treats a bare number as days, loads state, and selects records old enough or whose directory is missing. Invalid ages fail before mutation. Preview mode renders candidates without deleting; `--yes` sends every candidate through `operations.Service.Delete` with force enabled, records each failure on its candidate, renders the complete human or JSON result, and returns joined candidate-named errors afterward. JSON results include name, branch, creation time, age in days, missing-directory status, and an error field when forced deletion fails. This makes partial cleanup visible while preserving a non-zero result.
 
-`gw delete NAME...` and `gw ws delete` resolve names from explicit arguments, newline-delimited stdin, or an interactive picker. Explicit names are de-duplicated. Each selected name is sent to `operations.Service.Delete` with `workspace.RemoveOptions{Force: true}`. Prune uses the same forced service path, but owns batch iteration and failure aggregation rather than stopping at the first failed workspace.
+Deletion is implemented as a guarded, lock-protected cleanup protocol. Without `Force`, it preflights Git registration, branch, current branch, and cleanliness. It verifies expected path and creation time, runs repository-local teardown before taking the mutation lock, reloads and verifies the record inside the lock, and renames an existing workspace root into a sibling `.trash` path. A missing root is treated as stale state, not as permission to skip remaining cleanup: recorded Git worktrees, state, and branches still need reconciliation. Grove prunes each recorded source repository, removes state only after all prune calls succeed, restores the quarantined root and attempts `git worktree repair` if a Git or state phase fails, and deletes non-preserved branches best-effort with warnings. Trash unlink is normally delegated to a detached `unlink-trash` process and falls back to synchronous cleanup when that process cannot start; unlink accepts only paths immediately below `.trash`.
 
-## Workspace deletion and cleanup invariants
+## Git, state, statistics, and models
 
-`workspace.DeleteWithOptions` first loads the record and verifies any expected `CreatedAt` and `Path` supplied by `operations.Service`. It preflights Git registration, branch, current branch, and clean status only when `Force` is false. Repository-local teardown commands run before the mutation lock; the record is then reloaded and checked again inside `state.lock`.
+All Git execution goes through `internal/gitops`. Commands run non-interactively with stdin detached, `GIT_TERMINAL_PROMPT=0`, and batch SSH behavior unless the caller supplied `GIT_SSH_COMMAND`. Combined output is wrapped in `GitError` with command context; verbose traces redact URL credentials and truncate noisy failure output. The wrapper covers repository detection, fetch, branch resolution and creation/deletion, worktree add/remove/list/prune/repair, status, switching, and repository configuration reads. Workspace orchestration therefore does not shell out directly to Git.
 
-Inside the lock, an existing workspace root is renamed into a sibling `.trash` item. A missing root is explicitly stale state: there is nothing to quarantine, but recorded Git worktree registrations, Grove state, and branches still require cleanup. Grove calls `git worktree prune` for every recorded source repository. If any prune fails, or state removal fails after quarantine, it restores the root and attempts `git worktree repair`. State is removed only after all worktree-prune calls succeed. Branch deletion happens after state removal, skips `PreserveBranch` records, and is best-effort with warnings.
+`state.Store` owns `~/.grove/state.json`, which is the durable index of named workspaces, paths, branches, repository worktrees, creation timestamps, preservation flags, and optional source metadata. Missing or empty state loads as an empty list; malformed JSON reports a `gw doctor --fix` hint. Saves use a temporary sibling and rename, and `WithLock` serializes read-modify-write operations through the stable `state.lock` file. Path lookup resolves symlinks where possible and is also used to identify the current workspace for plugins. Git remains authoritative for actual worktree registrations and branches; state is Grove's coordination record and can become stale, which is why cleanup and doctor paths explicitly reconcile it.
 
-After a successful quarantined deletion, trash unlink is scheduled outside `state.lock`; if the detached process cannot start, cleanup falls back to synchronous unlink. `UnlinkTrashPath` accepts only a path whose immediate parent is `.trash` and retries removal. Leftover trash therefore does not keep a workspace record alive, while a failed Git or state phase does not silently destroy the workspace.
+`workspace.Service` derives its state and statistics stores from `config.GroveDir`. The stats tracker appends `workspace_created` and `workspace_deleted` events to `stats.json` using atomic replacement, tolerates missing or corrupt stats by starting with no events, and renders usage summaries such as a contribution-style heatmap. Creation records a creation event after setup and user-facing success handling; deletion records the corresponding lifecycle event in the removal path. The `models` package defines the serialized workspace, repository worktree, configuration, hook, source-provenance, and stats-event contracts shared across these boundaries.
 
-## Creation, state, configuration, and Git
+## Lifecycle hooks, output, and logging
 
-Workspace creation acquires the state lock, validates repositories, fetches sources concurrently, adds worktrees sequentially, and saves the complete state atomically. A provisioning or save failure rolls back created worktrees in reverse order and deletes only branches created by that operation. Setup commands run after the commit and lock release and are warnings rather than rollback triggers.
+Global hooks are shell commands in `[hooks]`, accepted either as bare strings or metadata tables. `lifecycle.Run` expands shell-quoted `{name}`, `{path}`, `{branch}`, `{source_url}`, `{source_ref}`, and `{source_title}` values. Streamed hooks write line-prefixed output to stderr; quiet hooks capture combined output and reveal it on failure. A positive duration runs the hook in its own process group and kills the group on timeout. The lifecycle package reports whether a failure is aborting; operation policy decides whether that result is fatal or a warning. `--no-hooks` skips them all.
 
-`state.Store.Load` treats a missing or empty `state.json` as an empty workspace list and reports corrupt JSON with a `gw doctor --fix` hint. `Save` writes a temporary sibling and renames it over `state.json`; record removal filters the complete list and saves it. `WithLock` uses the stable sibling `state.lock`, so concurrent processes do not lose updates while `state.json` is replaced. The store also locates the workspace containing a path, which is used to construct plugin context.
+`internal/console` handles terminal-facing tables, color, warnings, and messages. `internal/output` provides stable table-adjacent machine formats: indented JSON, JSON Lines, TSV, and name/path formats, with validation of command-supported formats and compatibility for legacy `--json` flags. Commands therefore keep human output and machine output as explicit presentation choices rather than leaking internal structs indiscriminately. Hook output stays on stderr so commands such as `gw go` can keep stdout usable for shell integration.
 
-Configuration is loaded from `~/.grove/config.toml` through `config.Load`; a missing file returns no config, the default workspace directory is filled in, and the legacy `repos_dir` field is migrated to `repo_dirs`. `config.Save` also uses temporary-file replacement. Production workspace services derive their state and statistics stores from `config.GroveDir` and their workspace directory from configuration.
+Logging is a separate diagnostic channel. `internal/logging` writes timestamped Info, Warn, Error, and optional Debug records to `~/.grove/grove.log`; the file is opened during normal root setup and rotates at 1 MB with three backups. Git calls add verbose timing and sanitized failure traces, while normal command output remains controlled by console and output packages.
 
-All Git operations pass through `gitops`: commands are non-interactive, use combined output, and wrap failures as `GitError` values with command context. The wrapper owns worktree add, remove, prune, repair, branch operations, status, fetch, and synchronization primitives, so workspace orchestration does not shell out directly.
+## External plugin boundary and fallback
 
-## Hooks, lifecycle, and output
+Plugins are external executables named `gw-<name>`, not in-process extensions. When Cobra returns an unknown-command error, `cmd.Execute` extracts the command name, `plugin.Find` validates it, searches `~/.grove/plugins/` before `$PATH`, and dispatches only when an executable is found. Unix execution replaces the current process; Windows starts a child and propagates its exit code. If no executable is found, the original Cobra error is printed. Plugin execution receives `GROVE_DIR`, `GROVE_CONFIG`, `GROVE_STATE`, and, when the current directory lies inside a recorded workspace, `GROVE_WORKSPACE`.
 
-Global hooks are configured shell commands. `lifecycle.Run` expands workspace and optional source variables, supports streamed or captured output, and enforces a duration timeout by killing the hook process group. `--no-hooks` disables the runner. Operation policy decides whether hook absence is acceptable, whether a failure aborts, and whether a warning is sufficient. Hook output is streamed to stderr when requested; otherwise it is captured and emitted on failure. Workspace deletion additionally runs repository-local teardown commands before its lock-protected mutation.
+The embedded plugin registry is a separate catalog boundary. It validates and sorts `registry.json` entries for plugin search and resolves a bare install name to an `owner/repo`; it is not an inventory of installed binaries and does not control unknown-command dispatch. `plugin.List` scans executable `gw-*` files in the Grove plugin directory, while `plugin.Find` also discovers PATH installations. An installed plugin can therefore be dispatchable even when absent from the curated registry.
 
-Commands use console output for tables, previews, warnings, and success messages. `prune` supports human-readable output and `--json`; JSON candidates contain name, branch, creation time, age in days, a `missing` marker, and an `error` field when forced deletion fails. Plugin search and list also support JSON output, including `[]` for an empty result.
+## Focused tests and safe change map
 
-## External plugin boundary
-
-Plugins are external executables, not in-process extensions. An unknown `gw foo` is first rejected by Cobra, then `cmd.Execute` extracts `foo`, calls `plugin.Find`, and dispatches only if an executable `gw-foo` is found. `plugin.Find` validates the name and searches `~/.grove/plugins/` first, then `$PATH`; if neither contains the executable, the normal Cobra error is printed. On Unix `plugin.Exec` replaces the current process; on Windows it runs a child and propagates its exit code. The environment includes `GROVE_DIR`, `GROVE_CONFIG`, `GROVE_STATE`, and `GROVE_WORKSPACE` when the current directory is inside a recorded workspace.
-
-The embedded registry is a separate ownership boundary. `internal/plugin/registry.go` embeds and validates `internal/plugin/registry.json`, sorts entries, powers `gw plugin search`, and resolves a bare install name to an `owner/repo`. The built-in registry is a curated install/catalog source, not an inventory of installed executables and not the dispatch mechanism. `plugin.List` scans executable `gw-*` files in `~/.grove/plugins/`, while `plugin.Find` also discovers PATH installations. A name absent from the registry can still be dispatched if a matching executable is installed; install resolution and unknown-command fallback are separate decisions.
-
-```mermaid
-flowchart TD
-    INSTALL["plugin install argument"] --> SLASH{"contains slash?"}
-    SLASH -->|yes| REPO["use owner/repo"]
-    SLASH -->|no| REG["embedded registry lookup"]
-    REG --> KNOWN{"known name?"}
-    KNOWN -->|yes| REPO
-    KNOWN -->|no| INSTALL_ERR["install resolution error"]
-    UNKNOWN["unknown gw command"] --> FIND["plugin.Find"]
-    FIND --> LOCAL["~/.grove/plugins/gw-name"]
-    FIND --> PATH["$PATH gw-name"]
-    LOCAL --> EXEC["plugin.Exec"]
-    PATH --> EXEC
-    FIND --> FALLBACK_ERR["normal Cobra error if absent"]
-```
-
-The diagram distinguishes catalog resolution for installation from installed-executable discovery and unknown-command fallback.
-
-## Focused tests and change map
-
-Use real temporary Git repositories for cleanup and workspace behavior. `internal/workspace/remove_test.go` covers forced, dirty, stale-directory, and branch-cleanup paths; `remove_options_test.go` covers expected-record protection; and `service_unlink_test.go` covers detached trash removal. `internal/operations/service_test.go` checks hook ordering, authorized identity propagation, and abort policy. State locking and persistence are covered by `internal/state/state_test.go`. `cmd/prune_test.go` covers suffix and bare-number age parsing, age boundaries, missing-directory candidates, malformed timestamps, all-candidate attempts, per-candidate errors, preview, and JSON output. Plugin tests cover registry validation, install resolution, executable discovery, and dispatch. End-to-end fixtures under `e2e/` exercise the compiled `gw` with isolated homes and Git repositories.
+Use real temporary Git repositories for workspace and cleanup behavior. Workspace creation tests cover concurrent fetch, sequential provisioning, branch tracking, rollback, and setup timing; removal tests cover forced and dirty deletion, stale directories, quarantine restoration, preserved branches, expected-record protection, and detached trash cleanup. Operation tests establish hook order, warning versus abort policy, and the invariant that an aborting post-create hook does not undo committed creation. State tests cover atomic persistence, locking, corrupt input, and path lookup; stats tests cover event persistence and heatmap rendering. Command tests cover prune selection and output, discovery, plugin fallback, and machine-readable formats. End-to-end fixtures run the compiled `gw` with isolated homes and Git repositories.
 
 | Boundary | Primary sources | Safe change question |
 |---|---|---|
-| CLI and fallback | `cmd/root.go`, `cmd/delete.go`, `cmd/prune.go`, `cmd/plugin.go` | Is this Cobra input, prune selection, preview/output, or external dispatch policy? |
-| Operation policy | `internal/operations/service.go` | Does the hook run before or after durable mutation, and can it abort? |
-| Workspace cleanup | `internal/workspace/remove.go`, `internal/workspace/service.go` | Does stale-state handling preserve quarantine, restore, state, and branch invariants? |
-| Durable state | `internal/state/state.go`, `internal/state/lock.go` | Is the complete record updated atomically under the lock? |
-| Plugin catalog and execution | `internal/plugin/registry.go`, `internal/plugin/registry.json`, `internal/plugin/plugin.go` | Is registry resolution kept separate from executable discovery and fallback? |
-| Git boundary | `internal/gitops/gitops.go` | Are non-interactive execution and worktree registration semantics preserved? |
+| Entry point and CLI | `cmd/gw/main.go`, `cmd/root.go`, `cmd/*.go` | Is this command parsing, selection, offline setup, output, or plugin fallback policy? |
+| Discovery and configuration | `internal/discover/`, `internal/config/config.go`, `internal/models/models.go` | Does this preserve config migration, repository discovery, and per-repo `.grove.toml` semantics? |
+| Operation policy | `internal/operations/service.go`, `internal/lifecycle/lifecycle.go` | Does the hook run before or after durable mutation, and can it abort? |
+| Workspace mutation | `internal/workspace/create.go`, `internal/workspace/remove.go`, `internal/workspace/service.go` | Are lock, rollback, quarantine, stale-state, and branch invariants preserved? |
+| Durable state and usage | `internal/state/`, `internal/stats/`, `internal/models/models.go` | Is the complete record or event stream replaced atomically and safely serialized? |
+| Git boundary | `internal/gitops/gitops.go` | Are non-interactive execution, error context, and worktree registration semantics preserved? |
+| Presentation and diagnostics | `internal/console/`, `internal/output/output.go`, `internal/logging/logging.go` | Do human output, machine output, stderr behavior, and log redaction remain compatible? |
+| External extensions | `internal/plugin/plugin.go`, `internal/plugin/registry.go`, `internal/plugin/registry.json` | Is catalog resolution kept separate from installed-executable discovery and fallback dispatch? |

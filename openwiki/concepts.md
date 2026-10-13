@@ -1,17 +1,38 @@
 ---
 type: domain model
 title: Domain Concepts
-description: Grove models workspaces as persisted collections of repository worktrees and treats Git registrations, state records, timestamps, plugin identities, and lifecycle cleanup as separate but related concerns. This page defines the invariants and failure semantics that operations and extensions must preserve.
-tags: [workspace, worktree, state, lifecycle, plugins, timestamps]
+description: Grove models discovered repositories, workspaces, Git worktrees, configuration, provenance, and lifecycle records as separate concerns. This page defines the identity rules, branch and hook semantics, persistence compatibility, output contracts, and failure-safe invariants that changes must preserve.
+tags: [repository, workspace, worktree, branches, provenance, configuration, state, lifecycle]
+verified:
+  - by: openwiki/0.5.2
+    at: 2026-10-13T16:45:10.957Z
 sources:
+  - id: openwiki-source-5fb548baa501bcdc358d79a6
+    resource: repo://cmd/create.go
   - id: openwiki-source-b1648c12bdc7429a56ec8677
     resource: repo://cmd/plugin.go
   - id: openwiki-source-4d743cc9a373dec1a2ed59bd
     resource: repo://cmd/prune_test.go
   - id: openwiki-source-c713337c253fefedba109b9e
     resource: repo://cmd/prune.go
+  - id: openwiki-source-a8910515ddd14810ad43f5c1
+    resource: repo://internal/config/config.go
+  - id: openwiki-source-372e83c8b8d28982a038615c
+    resource: repo://internal/discover/cache.go
+  - id: openwiki-source-4258a83a93bef1b2aadaf678
+    resource: repo://internal/discover/deepdiscover.go
+  - id: openwiki-source-c7892bbdfc3002a62a48afad
+    resource: repo://internal/gitops/gitops.go
+  - id: openwiki-source-b9d3103a00db29cca13029b0
+    resource: repo://internal/gitops/remote.go
+  - id: openwiki-source-6e2ef7bffba8b16154bfe6e4
+    resource: repo://internal/lifecycle/lifecycle.go
+  - id: openwiki-source-de401d92c867d7956c5656fb
+    resource: repo://internal/models/models_test.go
   - id: openwiki-source-1d1ad5865ebad91142ed8aee
     resource: repo://internal/models/models.go
+  - id: openwiki-source-54ed4ed40a03cd339a0bec80
+    resource: repo://internal/output/output.go
   - id: openwiki-source-16cd47b644535c3977cf86c1
     resource: repo://internal/plugin/install.go
   - id: openwiki-source-ab647e2cb1e7b3b70e7883be
@@ -22,6 +43,8 @@ sources:
     resource: repo://internal/plugin/registry.json
   - id: openwiki-source-04df3322ec2dc26efbad1e6f
     resource: repo://internal/state/state.go
+  - id: openwiki-source-f08a602731b001d518386466
+    resource: repo://internal/stats/stats.go
   - id: openwiki-source-315bbc2fab6a49cc711be6d2
     resource: repo://internal/workspace/create.go
   - id: openwiki-source-3c568d28ba0929ed69dbb842
@@ -30,23 +53,33 @@ sources:
     resource: repo://internal/workspace/remove_test.go
   - id: openwiki-source-c98f76c921b18fb02cf31e14
     resource: repo://internal/workspace/remove.go
-generated: { by: "openwiki/0.5.2", at: "2026-09-19T14:39:28.658Z" }
-verified:
-  - by: openwiki/0.5.2
-    at: 2026-09-19T14:39:28.658Z
+  - id: openwiki-source-142be80b74015990b087e259
+    resource: repo://internal/workspace/status.go
+  - id: openwiki-source-518fc59687d34ca8836f1792
+    resource: repo://internal/workspace/sync.go
+generated: { by: "openwiki/0.5.2", at: "2026-10-13T16:45:10.957Z" }
 ---
 
 # Domain Concepts
 
-Grove coordinates independent Git repositories. Its durable model is not “one Git branch across many repositories”: a **workspace** is a named collection with one recorded worktree entry per repository. Git is authoritative for registrations and live checkout state; Grove state records what it created, where it belongs, and which branch it expects.
+Grove coordinates independent Git repositories. A workspace is not one shared Git branch: it is a named record containing one worktree entry per selected source repository. Git remains authoritative for registrations and live checkout state; Grove state records intended membership, paths, branches, and ownership information needed for safe mutation.
 
-## Workspace and repository worktree model
+## Repository discovery and identity
+
+Discovery starts from configured `repo_dirs` and deep-scans up to three levels, stopping descent when it finds a Git repository. Each result has a folder `Name`, absolute `Path`, `Remote`, and a display name derived as `owner/repo` when the remote is parseable. Remote URLs are resolved from `origin`, with a 24-hour cache invalidated by `.git/config` mtime; cache misses are fetched in parallel, capped at 16 concurrent fetches, and cache persistence is best effort.
+
+A repository's discovery name is the workspace-local selection key. `RepoMap` and `UniqueByName` keep the first repository for a name, so folder-name collisions are deterministic rather than a second identity. Discovery deduplicates repositories with the same remote identity. For remote-bearing repositories, canonical identity normalizes the host, strips a trailing `.git`, and treats URL and scp-like network forms alike; repositories without a remote are deduplicated by resolved local path. When duplicate paths share a remote, a direct child of the configured root wins over a nested copy, and final results are sorted by display name then path.
 
 ```mermaid
 erDiagram
     Workspace ||--o{ RepoWorktree : contains
-    Workspace ||--o| WorkspaceSource : seeded_from
-    RepoWorktree }o--|| SourceRepository : provisions_from
+    Workspace ||--o| WorkspaceSource : records
+    RepoWorktree }o--|| SourceRepository : uses
+    SourceRepository {
+        string path
+        string remote_identity
+        string discovery_name
+    }
     Workspace {
         string name
         string path
@@ -66,105 +99,90 @@ erDiagram
         string ref
         string title
     }
-    SourceRepository {
-        string path
-        string origin
-    }
 ```
 
-*The persisted relationships between a workspace, its per-repository worktrees, optional provenance, and source repositories.*
+*The conceptual relationships between discovery identity, source repositories, per-repository worktrees, and optional provenance.*
 
-`Workspace` contains a unique operational `Name`, root `Path`, workspace-level `Branch` string, `CreatedAt` timestamp, ordered `Repos`, and optional `Source`. A `RepoWorktree` identifies a repository by its discovery name, retains the source repository path, and records the expected worktree path and branch. `FindRepo` and `RemoveRepo` use `RepoName` as the workspace-local key; duplicate repository names are therefore not a second identity.
+## Workspaces, worktrees, and branches
 
-The workspace branch is a naming convention applied independently in each source repository, not a shared Git ref. A branch already attached to another worktree in the same source repository blocks provisioning. An existing local branch may be reused, so cleanup must distinguish branches Grove created from pre-existing branches. A duplicate workspace name is rejected before provisioning, while adding a repository already present is an idempotent no-op.
+`Workspace` contains a unique operational `Name`, root `Path`, workspace-level `Branch` string, local `CreatedAt` timestamp, ordered `Repos`, and optional `Source`. A `RepoWorktree` stores the discovery name, source repository path, expected worktree path, branch, and `PreserveBranch`. `FindRepo`, `RemoveRepo`, and `RepoNames` use `RepoName`; duplicate names are not a supported second identity.
 
-`PreserveBranch` controls branch-deletion ownership, not worktree retention. Successful removal deletes the Git worktree registration and then attempts to delete the branch unless this flag is true. Branch deletion is best effort and a failure is reported without undoing the completed state removal. Rollback deletes only branches created by the failed invocation; it does not delete a pre-existing branch merely because its attempted worktree was rolled back.
+The workspace branch is a convention applied independently in every source repository. Creation rejects a branch already attached to another worktree in that source repository. An existing local branch is reused rather than recreated, and its record is not automatically marked as Grove-owned. A branch created during the current provisioning attempt is tracked internally so rollback can delete only that branch. `PreserveBranch` controls branch deletion during later cleanup; it does not retain the worktree or its registration.
 
-## Recorded state versus live Git state
+Creation supports two branch modes:
 
-`RepoWorktree.Branch` is recorded intent used for safety checks and cleanup; it is not refreshed automatically. Status reads the current branch from the worktree and displays `(detached)` when Git reports no branch, while retaining the recorded branch in state. A manually switched or detached worktree is drift, not an implicit state update.
+- **Create mode**, the default, reuses an existing local branch or creates the requested branch from the resolved base.
+- **Track mode**, intended for an existing remote branch such as a pull-request head, creates a local tracking worktree when the remote branch exists. If it does not exist, it warns and falls back to create mode. A resolver can restrict tracking to one repository; sibling repositories then create branches from base instead of accidentally tracking the same name.
 
-Safe, non-forced removal validates that the recorded path is still registered in the source repository, that its registered branch and live current branch equal the recorded branch, and that the worktree is clean. It refuses a missing registration, branch mismatch, or dirty worktree. `--force` bypasses these preflight checks, but does not change the meaning of the recorded fields.
+Base resolution is per source repository: `.grove.toml` `base_branch` wins, otherwise the detected default branch is used as `origin/<branch>`. Branch creation retries with a plain branch name and finally `HEAD` if the resolved remote-qualified base cannot be used. Sync and status use the same base resolver, with status retaining an `origin/main` fallback when resolution fails.
 
-## Creation, mutation, and lifecycle
+`RepoWorktree.Branch` is recorded intent, not a live checkout claim. Status reads the current branch from the worktree and displays `(detached)` when Git reports none, while retaining the recorded branch in state. A manually switched or detached worktree is drift, not an implicit state update.
 
-The configured workspace directory defaults to `~/.grove/workspaces`. Creation makes `<workspace_dir>/<name>/` and places each linked worktree at `<workspace path>/<repo name>`; source repositories remain in their configured locations. Repositories are fetched in parallel, worktrees are provisioned sequentially for rollback safety, and the complete workspace is persisted only after provisioning succeeds.
+## Creation, mutation, and deletion safety
+
+Creation validates the workspace name before provisioning and rejects an existing workspace identity. It creates `<workspace_dir>/<name>/`, fetches selected source repositories in parallel, then adds worktrees sequentially so partial work can be rolled back. Complete state is written only after all worktrees succeed. A missing repository, failed worktree, or failed state commit rolls back worktrees and only branches created by that invocation; an empty root created by the attempt is removed. Setup commands run after the state commit and after releasing the cross-process mutation lock, because user commands may invoke Grove themselves. Setup failures warn and do not undo the committed workspace.
 
 ```mermaid
 stateDiagram-v2
-    [*] --> Planned
-    Planned --> Provisioning: create or add requested
-    Provisioning --> Committed: all worktrees succeed
-    Provisioning --> RolledBack: a worktree fails
-    Committed --> Active: state saved
-    Active --> Quarantined: delete with directory present
-    Active --> Stale: directory removed outside Grove
-    Quarantined --> Removed: registrations pruned and state removed
-    Stale --> Removed: registrations pruned and state removed
-    Removed --> [*]
+    [*] --> Validating
+    Validating --> Fetching: inputs valid
+    Fetching --> Provisioning: fetch phase complete
+    Provisioning --> Committed: all worktrees added and state saved
+    Provisioning --> RolledBack: provisioning or state write fails
+    Committed --> Setup: lock released
+    Setup --> Active: setup warnings do not undo state
+    Active --> Quarantined: delete and directory exists
+    Active --> Stale: directory missing outside Grove
+    Quarantined --> Removed: registrations and state removed
+    Stale --> Removed: registrations and state removed
     RolledBack --> [*]
+    Removed --> [*]
 ```
 
-*Workspace lifecycle states are the observable cleanup phases represented by creation, deletion, rollback, and stale-record handling; `Quarantined` and `Stale` are cleanup conditions rather than persisted enum values.*
+*Workspace lifecycle phases describe observable safety boundaries; `Quarantined`, `Stale`, and `RolledBack` are conditions rather than persisted enum values.*
 
-If provisioning fails, earlier worktrees and branches created by that invocation are rolled back and an empty workspace root is removed; a pre-existing root is not removed. State writes use a temporary file followed by rename. Mutating services use the state lock around the commit so concurrent successful mutations are not lost. Add operations reuse the workspace branch, skip existing repository names, and roll back earlier additions when a later one fails. Setup hooks run after the state mutation and lock release; teardown runs before deletion cleanup.
+Normal deletion runs per-repository teardown commands before the mutation lock, reloads and rechecks the record under the lock, and quarantines an existing workspace root by renaming it beneath `.trash`. It then prunes every recorded source-repository worktree registration and removes the state entry. If pruning or state removal fails, quarantined bytes are restored where possible and state remains evidence of incomplete cleanup. After successful cleanup, branch deletion is best effort and skips records with `PreserveBranch`; a branch-delete warning does not undo completed worktree and state removal. Trash unlinking is scheduled outside the lock and is constrained to a `.trash` child path.
 
-Normal deletion runs teardown commands, then quarantines an existing workspace root by renaming it under `.trash`. It prunes each source repository’s Git worktree registration, removes the state record, and schedules best-effort trash unlinking. If pruning or state removal fails, a quarantined directory is restored where possible and the state remains evidence of incomplete cleanup. Branch deletion follows successful cleanup and honors `PreserveBranch`.
+A missing workspace directory is a stale record, not proof that cleanup finished. There are no bytes to quarantine, but Git registrations, state, and eligible branches are still cleaned in the same order. This prevents external deletion of workspace files from leaving source repositories or durable metadata behind.
 
-### Missing paths and stale records
+Safe non-forced removal validates each recorded worktree path is still registered in its source repository, that the registered branch and live current branch equal the recorded branch, and that the worktree is clean. It refuses missing registrations, branch drift, detached state, or dirty worktrees. `--force` bypasses these preflight checks; it does not rewrite recorded intent. Teardown is separate from global hooks and is best effort through the workspace service.
 
-A workspace directory can disappear outside Grove while its source repositories still retain Git worktree registrations and its `state.json` record still lists the worktrees and eligible branches. This is a distinct stale-record condition, not proof that cleanup is complete.
+## Time, pruning, and compatibility
 
-For a missing directory, deletion intentionally has **no quarantine bytes**: there is nothing to rename into `.trash`. It still prunes every recorded Git worktree registration, removes the state record, and attempts the eligible branch cleanup. This ordering preserves the invariant that missing on-disk bytes do not excuse cleanup of Git metadata, durable state, or branch ownership.
+`NewWorkspace` writes `created_at` as a local wall-clock timestamp with six fractional digits (`2006-01-02T15:04:05.000000`). Prune readers also accept the older second-precision form. Invalid or missing timestamps are not age candidates while the workspace directory exists.
 
-```mermaid
-flowchart TD
-    Start[Read workspace record] --> Exists{Workspace directory exists}
-    Exists -->|yes| Trash[Quarantine directory under .trash]
-    Exists -->|no| Stale[No quarantine bytes]
-    Trash --> Prune[Prune recorded Git worktrees]
-    Stale --> Prune
-    Prune --> State[Remove state record]
-    State --> Branches[Delete eligible branches]
-    Branches --> Done[Schedule trash unlink when present]
-```
+`gw prune --min-age` accepts hours (`h`), days (`d`), weeks (`w`, seven days), and a bare non-negative number retaining the original day meaning. Empty, negative, malformed, and unsupported-unit values are rejected. A record is age-eligible when its parsed creation time is at least the requested duration before now. A missing workspace directory is eligible independently of age, including when its timestamp is invalid. Candidate output preserves state order and marks missing records with `missing: true`; preview does not mutate. With `--yes`, pruning attempts every candidate through forced deletion, continues after failures, and reports an error on only the candidates whose deletion attempt failed.
 
-*Deletion uses the same registration, state, and branch cleanup obligations for a normal workspace and a stale record; only quarantine is skipped when the directory is missing.*
+## Persisted state and config ownership
 
-## Timestamps and prune candidates
+`state.json` is a JSON array of workspaces. A missing or whitespace-only file loads as an empty collection; malformed JSON is an actionable corrupt-state error. Saves create the parent directory, write a temporary file, and atomically rename it. Store operations look up by name, and path lookup resolves symlinks before matching an exact workspace root or a contained path. Rename replaces the existing state entry, changes its name and root, and rewrites each recorded worktree path from the old root to the new root; it is not a new workspace identity. Mutating services use the state lock around read-modify-write commits to prevent lost concurrent updates.
 
-`NewWorkspace` writes `created_at` as a local wall-clock timestamp in `2006-01-02T15:04:05.000000` form. Readers parse that six-fractional-digit format in the current location and accept the older second-precision `2006-01-02T15:04:05` form as a compatibility fallback. Invalid or missing timestamps are not old candidates.
+Model JSON unmarshalling is intentionally tolerant for compatibility: old records may omit `repos`, `created_at`, or `source`, and nil `Source` is omitted when marshalled. New source fields round-trip without changing old records. State remains authoritative for intended membership, but not live Git drift; status and doctor should expose broken relationships rather than silently repair them.
 
-`gw prune` parses `--min-age` as a duration: `h` means hours, `d` means days, and `w` means seven days. A bare non-negative number retains the original day semantics, so `14` means fourteen days. Empty, negative, malformed, or unsupported-unit values are rejected. A workspace is age-eligible when its parsed creation time is at least the minimum age before `now`; `age_days` is the whole elapsed-day count used in previews. `pruneCandidates` computes this eligibility from the record's `Path` and `CreatedAt`; workspace records do not expose an `OlderThan` method or field.
+Global `~/.grove/config.toml` owns repository roots, workspace directory, named presets, and global hooks. `repo_dirs` is the current key. Loading a legacy `repos_dir` with no `repo_dirs` migrates it to a one-element `repo_dirs` list and saves the migrated configuration; a missing workspace directory defaults to `~/.grove/workspaces`. Config saves validate preset names (`[a-zA-Z0-9_-]+`) and use a temporary file plus rename. Initialization resolves and validates supplied directories, deduplicates them, creates Grove and workspace directories, and saves atomically.
 
-A missing workspace directory makes its record eligible independently of age. A fresh or unparsable timestamp therefore still produces a candidate when the directory is missing; an unparsable timestamp does not produce an age-based candidate when the directory exists. Candidate output preserves state order and includes `missing: true` in JSON for a missing record while retaining the computed `age_days` when parsing succeeded. Preview mode only reports candidates. With `--yes`, pruning attempts every candidate through the forced workspace deletion path; a candidate's `Error` is populated only when that deletion attempt fails, and the command reports the per-workspace failures after continuing with the remaining candidates.
+A `Preset` is only a named list of repository names for selection. It does not own branches, worktrees, or repository settings. Per-repository `.grove.toml` owns `base_branch`, setup commands, `pre_sync`, `post_sync`, and teardown. Unknown per-repository keys are ignored so plugins can extend that file. `.grove.toml` is cached for the process, so a command does not observe edits made after its first read.
 
-## Persisted state and lifecycle metadata
+## Provenance and hooks
 
-`state.json` is an array of workspaces. A missing or empty file loads as an empty collection; malformed JSON is an actionable corrupt-state error. Saves create the parent directory, write a temporary file, and atomically rename it into place. Lookup is by workspace name or canonical path containment, including symlink resolution. Rename replaces one state entry and rewrites each recorded worktree path from the old root to the new root; it is not a new workspace identity.
+`WorkspaceSource` contains opaque `Provider`, `URL`, optional `Ref`, and optional `Title` fields. Core persists and displays them, including in status table and JSON output, but does not resolve GitHub, GitLab, Notion, Slack, or other external references. Integrations and plugins resolve an external source and pass repository and branch choices into creation. Provenance is metadata: it cannot replace the recorded source repository, worktree path, or branch.
 
-State is authoritative for Grove’s intended workspace membership, but not for live Git drift. At mutation boundaries, each persisted worktree should correspond to its source repository, registered path, and expected branch, and successful cleanup must remove the corresponding state entry. Status and doctor should expose broken relationships rather than silently rewriting them.
+Global hooks in `[hooks]` accept either the legacy bare command string or a metadata table. Metadata can provide `description`, live `stream` output, a Go duration `timeout`, and `on_failure = "warn"` or `"abort"`. Bare hooks are written back as bare strings, preserving a minimal compatible config format. Commands expand shell-quoted `{name}`, `{path}`, `{branch}`, `{source_url}`, `{source_ref}`, and `{source_title}` placeholders. By default output is captured and shown, prefixed, only on failure; streamed output goes to stderr so stdout remains safe for commands such as `cd "$(gw go ...)"`. Invalid timeouts are warned about and ignored; valid timeouts kill the hook process group. Hook failures are represented with policy metadata, and callers decide whether `abort` is fatal. `--no-hooks` disables global hooks.
 
-`stats.json` is separate observational usage history, not workspace state. Successful create and delete operations append lifecycle events containing timestamp, workspace name, branch, repository names, and count. Stats corruption is resettable history, unlike corrupt `state.json`; recording an event after a state commit must not redefine identity or repair Git drift.
+Repository setup and teardown commands are separate from global hook metadata: setup is read from each source repository and runs after creation, while teardown runs before deletion cleanup. Sync skips dirty worktrees, runs `pre_sync`, rebases onto the resolved base, aborts a failed rebase, then runs `post_sync`; failures in these repository commands are warnings rather than state rewrites.
 
-## Plugin identity and extension boundary
+## Output and lifecycle statistics
 
-Plugins are external executables named `gw-<name>`. Lookup checks `~/.grove/plugins/` before `$PATH`; installed-directory listing includes executable `gw-` files there, while manually placed binaries may have no installation metadata. The plugin environment receives `GROVE_DIR`, `GROVE_CONFIG`, `GROVE_STATE`, and—when the current directory resolves inside a registered workspace—`GROVE_WORKSPACE`.
+The output package defines stable representations: table, indented JSON, compact JSON Lines, TSV, repository/workspace `name`, and `path`. `--json` is a compatibility alias for `--output json`; combining it with a different explicit output is rejected. Commands declare supported formats, and JSON/JSONL/TSV are designed for scripts while human tables may include status and provenance presentation. Status JSON includes workspace name, path, optional source, and per-repository live branch/status/ahead/behind data; JSONL emits one repository status per line.
 
-The embedded curated built-in registry has exactly two entries: `code` (`igor-kupczynski/gw-code`) and `dispatch` (`nicksenap/gw-dispatch`). Registry search is only a catalog of known plugins; it is not the complete installed-plugin set. `gw plugin list` discovers executable files in the plugins directory, and `$PATH` plugins are also valid for command lookup without appearing in that directory listing.
-
-Installation accepts a bare name only when it resolves through that registry, but an argument containing `/` is treated as an owner/repository reference. Thus arbitrary repositories remain installable with `owner/repo` (or a GitHub URL), even when they are not curated registry entries. Release metadata records the source repository and version for upgrades; manually installed binaries without metadata are skipped by bulk upgrade. Plugin names are validated before lookup or installation.
-
-## Provenance and configuration ownership
-
-`WorkspaceSource` stores `Provider`, `URL`, optional `Ref`, and optional `Title` describing an external seed such as a GitHub pull request, GitLab merge request, Notion page, or Slack thread. Core persists and displays these fields but does not interpret or resolve them; plugins and integrations resolve external references and pass repository and branch selection into workspace creation. Provenance cannot substitute for recorded repository paths and branches.
-
-Global `~/.grove/config.toml` owns repository search roots, workspace directory, presets, and global hooks. A preset is only a named list of repository names used for selection; it does not own branches, worktrees, or repository configuration. Per-repository `.grove.toml` owns base-branch selection and repository lifecycle commands. Configuration is not copied into workspace state.
+`stats.json` is separate observational history, not workspace state. Successful create and delete flows append `StatsEvent` records containing event kind, timestamp, workspace name, branch, repository names, and count. Stats timestamps accept both current six-digit and older second-precision forms for aggregation. Missing or empty stats load as no history; corrupt stats are silently reset as disposable history, unlike corrupt `state.json`. Stats recording after a state commit must not redefine workspace identity or repair Git drift. Reports derive created/deleted counts, active count, repository usage, lifetime, and a date heatmap from the event stream.
 
 ## Focused tests that protect the model
 
-- `cmd/prune_test.go` covers duration units, bare-number day compatibility, age reporting, missing-directory candidates, JSON output, and invalid values.
-- `internal/workspace/remove_test.go` verifies that a missing workspace directory still prunes Git registrations and removes state without creating quarantine content; related tests cover teardown and partial failure.
-- `internal/workspace/create_test.go` covers duplicate names, branch conflicts, tracking fallback, rollback ownership, concurrent state preservation, and opaque source persistence.
-- `internal/state/state.go` is the persistence ownership point for empty/malformed loads, atomic saves, path resolution, and rename replacement.
-- `internal/plugin/registry_test.go` verifies registry validation, search, and the distinction between bare-name resolution and arbitrary `owner/repo` installation; `internal/plugin/install_test.go` covers installation metadata and upgrade behavior.
+- `internal/models/models_test.go` protects workspace construction, repository-name operations, JSON round trips, opaque source persistence and omission, backward-compatible records, and doctor issue encoding.
+- `internal/state/state_test.go` protects empty/missing loads, corrupt-state behavior, atomic JSON saves, rename path rewriting, symlink-aware path lookup, and cross-process locking against lost updates.
+- `internal/workspace/create_test.go` protects duplicate names, branch conflicts, create/track fallback, tracking ownership and rollback, source persistence, and concurrent state preservation.
+- `internal/workspace/remove_test.go` protects safe preflight checks, quarantine/restore behavior, and stale-directory cleanup that still prunes Git registrations and state.
+- `internal/gitops/gitops_test.go` protects base-branch resolution, `.grove.toml` parsing, remote identity behavior, and configuration caching.
+- `cmd/prune_test.go` protects duration parsing, legacy bare-number semantics, missing-directory candidates, timestamp compatibility, JSON output, and continue-on-error deletion.
+- `internal/workspace/status_test.go`, `internal/workspace/sync_test.go`, and lifecycle tests protect provenance rendering, live-versus-recorded branch reporting, hook ordering, and sync safety.

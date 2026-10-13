@@ -10,6 +10,8 @@ sources:
     resource: repo://cmd/go_cmd.go
   - id: openwiki-source-b1648c12bdc7429a56ec8677
     resource: repo://cmd/plugin.go
+  - id: openwiki-source-7e0e5f5bae4ad5bb9ca873ad
+    resource: repo://cmd/prune_branches.go
   - id: openwiki-source-c713337c253fefedba109b9e
     resource: repo://cmd/prune.go
   - id: openwiki-source-d88dd56dbc4620bda4c35f1c
@@ -18,10 +20,14 @@ sources:
     resource: repo://cmd/shellinit.go
   - id: openwiki-source-d191e32409095eff0351d594
     resource: repo://docs/hooks.md
+  - id: openwiki-source-dfa9a1571a5c255494702235
+    resource: repo://internal/gitops/gitops_test.go
   - id: openwiki-source-c7892bbdfc3002a62a48afad
     resource: repo://internal/gitops/gitops.go
   - id: openwiki-source-6e2ef7bffba8b16154bfe6e4
     resource: repo://internal/lifecycle/lifecycle.go
+  - id: openwiki-source-1d1ad5865ebad91142ed8aee
+    resource: repo://internal/models/models.go
   - id: openwiki-source-9fa0f37ad88ce2a52ed9f800
     resource: repo://internal/operations/service.go
   - id: openwiki-source-16cd47b644535c3977cf86c1
@@ -34,14 +40,16 @@ sources:
     resource: repo://internal/plugin/registry.json
   - id: openwiki-source-315bbc2fab6a49cc711be6d2
     resource: repo://internal/workspace/create.go
+  - id: openwiki-source-20a3d9d55ff29a8f581b4a17
+    resource: repo://internal/workspace/prune_branches.go
   - id: openwiki-source-c98f76c921b18fb02cf31e14
     resource: repo://internal/workspace/remove.go
   - id: openwiki-source-518fc59687d34ca8836f1792
     resource: repo://internal/workspace/sync.go
-generated: { by: "openwiki/0.5.2", at: "2026-09-19T14:39:28.658Z" }
+generated: { by: "openwiki/0.5.2", at: "2026-10-13T16:51:28.495Z" }
 verified:
   - by: openwiki/0.5.2
-    at: 2026-09-19T14:39:28.658Z
+    at: 2026-10-13T16:51:28.495Z
 ---
 
 # Integrations
@@ -150,9 +158,11 @@ Deletion runs global `pre_delete` policy before destructive worktree cleanup. Th
 
 ## Git subprocess boundary
 
-Grove does not embed Git operations in its state layer: `internal/gitops` invokes the `git` executable with an explicit working directory, a process-wide environment, and stdin connected to the OS null device. It disables interactive authentication with `GIT_TERMINAL_PROMPT=0` and, unless the caller already set `GIT_SSH_COMMAND`, adds `ssh -o BatchMode=yes`. Combined output is trimmed and wrapped as `GitError`; authentication-shaped failures add a credentials hint. The boundary covers fetch, branch and worktree operations, status, rebases, and worktree registration pruning/repair, so callers receive structured Go errors rather than interactive Git prompts.
+Grove does not embed Git operations in its state layer: `internal/gitops` invokes the `git` executable with an explicit working directory, a process-wide environment computed at package initialization, and stdin connected to the OS null device. It disables interactive authentication with `GIT_TERMINAL_PROMPT=0` and, unless the process already has `GIT_SSH_COMMAND`, adds `ssh -o BatchMode=yes`. Combined output is trimmed and wrapped as `GitError`; authentication-shaped failures add a credentials hint. The boundary covers fetch, branch and worktree operations, status, rebases, and worktree registration pruning/repair, so callers receive structured Go errors rather than interactive Git prompts.
 
 Workspace provisioning fetches source repositories in parallel, then adds worktrees sequentially and rolls back already-created worktrees and branches if provisioning fails. Synchronization also fetches first, skips dirty worktrees, and aborts a failed rebase before continuing. Deletion uses `git worktree prune` for each source repository, removes state under Grove's mutation lock, and attempts branch deletion afterward; branch deletion failures are warnings rather than a failed workspace removal. The destructive service quarantines an existing workspace root in `.trash` and restores it, with worktree repair, when cleanup fails. A missing root skips quarantine but still cleans registrations, state, and branches.
+
+The nested `gw prune branches` command is a separate cleanup boundary for local branches in discovered main clones. It enumerates `refs/heads` with each branch's upstream and tracking status, then excludes the current branch, the resolved base branch, branches checked out in any worktree, and branches referenced by Grove workspaces. It reports branches merged into the base, and optionally upstream-gone branches with `--gone`; `--fetch` refreshes remote refs first. Preview is the default, while `--yes` deletes merged branches safely and gone branches forcibly.
 
 ## Global lifecycle hooks
 
@@ -211,7 +221,7 @@ sequenceDiagram
 
 *This lifecycle sequence shows hook ordering and failure policy around the Git-worktree operation.*
 
-For per-repository behavior, see [Hooks](../docs/hooks.md). Grove reads `.grove.toml` from each source repository, caches the result for the life of the process, and ignores keys it does not know. `base_branch` overrides the default branch used for creation and sync; `setup` runs once per repository after creation (in parallel), `teardown` runs before deletion, and `pre_sync`/`post_sync` surround a successful rebase. Per-repository hook failures are warnings and do not block their attached operation. `pre_run`, `run`, and `post_run` are consumed by the external `gw-run` plugin rather than supervised by Grove core.
+For per-repository behavior, see [Hooks](../docs/hooks.md). Grove reads `.grove.toml` from each source repository and caches both successful reads and read/parse errors by repository path for the life of the process; a changed file is not re-read until the process ends (tests can explicitly clear the cache). Core decodes `base_branch`, `setup`, `teardown`, `pre_sync`, and `post_sync` and ignores unknown keys, leaving the same file available for external consumers such as `gw-run`. `base_branch` overrides the default branch used for creation and sync; `setup` runs once per repository after creation (in parallel), `teardown` runs before deletion, and `pre_sync`/`post_sync` surround a successful rebase. Per-repository hook failures are warnings and do not block their attached operation. `pre_run`, `run`, and `post_run` are consumed by the external `gw-run` plugin rather than supervised by Grove core.
 
 ## Source provenance
 
