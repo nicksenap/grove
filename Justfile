@@ -4,17 +4,18 @@ set dotenv-load := false
 default:
     @just --list
 
-# Run all checks (test + vet + fmt + gocyclo + staticcheck + deadcode).
+# Run all checks (unit tests + e2e + vet + fmt + gocyclo + staticcheck + deadcode).
 # CI runs exactly this recipe — add new checks here, not in ci.yml.
-check: test vet fmt-check gocyclo staticcheck deadcode
+check: test e2e vet fmt-check gocyclo staticcheck deadcode
 
-# Run tests
+# Run unit tests. e2e is separate (`just e2e`): it shells out to `go build`,
+# so Go's test cache can't see source changes and would serve stale results.
 test *args:
-    go test ./... {{ args }}
+    go test ./cmd/... ./internal/... {{ args }}
 
-# Run tests with verbose output
+# Run unit tests with verbose output
 test-v *args:
-    go test -v ./... {{ args }}
+    go test -v ./cmd/... ./internal/... {{ args }}
 
 # Run go vet
 vet:

@@ -6,7 +6,7 @@ on:
   pull_request:
 
 jobs:
-  # Single source of truth: CI runs `just check` (tests incl. e2e, vet, gofmt,
+  # Single source of truth: CI runs `just check` (unit tests, e2e, vet, gofmt,
   # gocyclo, staticcheck, deadcode). Add new checks to the Justfile, not here.
   check:
     runs-on: ubuntu-latest
