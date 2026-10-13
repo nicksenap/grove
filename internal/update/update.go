@@ -100,9 +100,66 @@ func (c *Checker) fetchAndCache() {
 	os.Rename(tmp, c.CachePath)
 }
 
+const (
+	releasesLatestURL = "https://github.com/nicksenap/grove/releases/latest"
+	releasesAPIURL    = "https://api.github.com/repos/nicksenap/grove/releases/latest"
+)
+
+// fetchLatestFromGitHub resolves the newest release tag. It follows the
+// github.com/<repo>/releases/latest redirect first, which is not subject to
+// the unauthenticated API rate limit (60 requests/hour per IP), mirroring
+// scripts/install.sh. The REST API is only a fallback.
 func fetchLatestFromGitHub() (string, error) {
+	if v, err := fetchLatestFromRedirect(releasesLatestURL); err == nil {
+		return v, nil
+	}
+	return fetchLatestFromAPI(releasesAPIURL)
+}
+
+// fetchLatestFromRedirect issues a HEAD request and reads the tag from the
+// Location header, e.g. .../releases/tag/v1.2.3 -> "1.2.3".
+func fetchLatestFromRedirect(url string) (string, error) {
+	client := &http.Client{
+		Timeout: 5 * time.Second,
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+	req, err := http.NewRequest(http.MethodHead, url, nil)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("User-Agent", "grove")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 300 || resp.StatusCode > 399 {
+		return "", fmt.Errorf("releases/latest returned %d, expected redirect", resp.StatusCode)
+	}
+	return versionFromTagURL(resp.Header.Get("Location"))
+}
+
+// versionFromTagURL extracts "1.2.3" from ".../releases/tag/v1.2.3".
+func versionFromTagURL(location string) (string, error) {
+	const marker = "/releases/tag/"
+	idx := strings.LastIndex(location, marker)
+	if idx < 0 {
+		return "", fmt.Errorf("unexpected redirect target %q", location)
+	}
+	tag := strings.TrimPrefix(location[idx+len(marker):], "v")
+	if tag == "" || strings.ContainsAny(tag, "/?#") {
+		return "", fmt.Errorf("unexpected redirect target %q", location)
+	}
+	return tag, nil
+}
+
+func fetchLatestFromAPI(url string) (string, error) {
 	client := &http.Client{Timeout: 5 * time.Second}
-	req, err := http.NewRequest("GET", "https://api.github.com/repos/nicksenap/grove/releases/latest", nil)
+	req, err := http.NewRequest(http.MethodGet, url, nil)
 	if err != nil {
 		return "", err
 	}
