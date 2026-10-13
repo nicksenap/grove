@@ -4,8 +4,9 @@ set dotenv-load := false
 default:
     @just --list
 
-# Run all checks (test + vet + fmt + gocyclo + staticcheck)
-check: test vet fmt-check gocyclo staticcheck
+# Run all checks (test + vet + fmt + gocyclo + staticcheck + deadcode).
+# CI runs exactly this recipe — add new checks here, not in ci.yml.
+check: test vet fmt-check gocyclo staticcheck deadcode
 
 # Run tests
 test *args:
@@ -30,20 +31,28 @@ fmt-check:
         exit 1
     fi
 
-# Run cyclomatic-complexity check. Auto-installs gocyclo if missing.
+# Lint tools are pinned in go.mod (`tool` directive); bump with `go get -tool <pkg>@<version>`.
+
+# Run cyclomatic-complexity check.
 # Threshold 20 is a reasonable ceiling for non-test code.
 gocyclo:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    command -v gocyclo >/dev/null 2>&1 || go install github.com/fzipp/gocyclo/cmd/gocyclo@latest
-    gocyclo -over 20 .
+    go tool gocyclo -over 20 .
 
-# Run staticcheck (bugs, simplifications, deprecations, unused code). Auto-installs if missing.
+# Run staticcheck (bugs, simplifications, deprecations, unused code).
 staticcheck:
+    go tool staticcheck ./...
+
+# Fail on functions unreachable from main. Test-only helpers belong in _test.go files.
+# deadcode always exits 0, so fail on any output.
+deadcode:
     #!/usr/bin/env bash
     set -euo pipefail
-    command -v staticcheck >/dev/null 2>&1 || go install honnef.co/go/tools/cmd/staticcheck@latest
-    staticcheck ./...
+    out=$(go tool deadcode ./...)
+    if [ -n "$out" ]; then
+        echo "unreachable code (delete it, or move test-only helpers into _test.go):"
+        echo "$out"
+        exit 1
+    fi
 
 # Build the gw binary (version from git tag)
 build:

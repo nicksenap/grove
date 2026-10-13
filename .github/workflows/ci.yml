@@ -6,6 +6,8 @@ on:
   pull_request:
 
 jobs:
+  # Single source of truth: CI runs `just check` (tests incl. e2e, vet, gofmt,
+  # gocyclo, staticcheck, deadcode). Add new checks to the Justfile, not here.
   check:
     runs-on: ubuntu-latest
     steps:
@@ -16,31 +18,11 @@ jobs:
           go-version-file: go.mod
           cache-dependency-path: go.sum
 
-      - name: Test
-        run: go test ./cmd/... ./internal/...
+      - uses: extractions/setup-just@v4
+
+      - name: just check
+        run: just check
         env:
-          GIT_CEILING_DIRECTORIES: /
-
-  e2e:
-    needs: check
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          fetch-depth: 0
-
-      - uses: actions/setup-go@v7
-        with:
-          go-version-file: go.mod
-          cache-dependency-path: go.sum
-
-      - name: Build
-        run: go build -o gw ./cmd/gw
-
-      - name: Run e2e tests
-        run: go test ./e2e -count=1
-        env:
-          GW_BIN: ${{ github.workspace }}/gw
           GIT_CEILING_DIRECTORIES: /
 
   install-script:

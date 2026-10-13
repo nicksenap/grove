@@ -7,5 +7,5 @@ set -e
 unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE
 export GIT_CEILING_DIRECTORIES="/"
 
-go vet ./...
-go test ./...
+# Same gate as CI.
+exec just check
