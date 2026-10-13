@@ -82,7 +82,9 @@ func runGit(dir string, args ...string) (string, error) {
 	start := time.Now()
 	out, err := cmd.CombinedOutput()
 	output := strings.TrimSpace(string(out))
-	logGitCall(dir, args, time.Since(start), err)
+	if logging.Verbose() {
+		logGitCall(dir, args, time.Since(start), output, err)
+	}
 	if err != nil {
 		if isAuthError(output) {
 			return output, &GitError{
@@ -99,11 +101,17 @@ func runGit(dir string, args ...string) (string, error) {
 	return output, nil
 }
 
-// logGitCall writes a debug trace line for a git invocation (verbose only).
-func logGitCall(dir string, args []string, elapsed time.Duration, err error) {
+// logGitCall writes a debug trace line for a git invocation. On failure it
+// records git's own output (redacted), falling back to the exec error when
+// git printed nothing.
+func logGitCall(dir string, args []string, elapsed time.Duration, output string, err error) {
 	status := "ok"
 	if err != nil {
-		status = "error: " + err.Error()
+		reason := output
+		if reason == "" {
+			reason = err.Error()
+		}
+		status = "error: " + redactCredentials(strings.ReplaceAll(reason, "\n", " | "))
 	}
 	logging.Debug("git %s (dir=%s) %s %s",
 		redactCredentials(strings.Join(args, " ")), dir, elapsed.Round(time.Millisecond), status)

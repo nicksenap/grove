@@ -10,17 +10,20 @@ import (
 )
 
 // setupLog points logging at a temp dir and returns a reader for grove.log.
+// Cleanup resets verbose while still pointed at the temp dir, so nothing is
+// ever opened under the real ~/.grove.
 func setupLog(t *testing.T, verbose bool) func() string {
 	t.Helper()
 	orig := logging.LogDir
-	logging.LogDir = t.TempDir()
+	dir := t.TempDir()
+	logging.LogDir = dir
 	logging.Setup(verbose)
 	t.Cleanup(func() {
-		logging.LogDir = orig
 		logging.Setup(false)
+		logging.LogDir = orig
 	})
 	return func() string {
-		data, _ := os.ReadFile(filepath.Join(logging.LogDir, "grove.log"))
+		data, _ := os.ReadFile(filepath.Join(dir, "grove.log"))
 		return string(data)
 	}
 }
@@ -36,14 +39,20 @@ func TestRunGitTracesWhenVerbose(t *testing.T) {
 
 	log := readLog()
 	for _, want := range []string{
-		"DEBUG - git rev-parse HEAD (dir=" + repo + ")",
-		" ok\n",
-		"DEBUG - git rev-parse no-such-ref",
-		" error: ",
+		"DEBUG",
+		"git rev-parse HEAD",
+		"dir=" + repo,
+		"ok",
+		"git rev-parse no-such-ref",
+		"error: ",
+		"fatal:", // git's own stderr, not just the exec exit status
 	} {
 		if !strings.Contains(log, want) {
 			t.Errorf("log missing %q, got:\n%s", want, log)
 		}
+	}
+	if strings.Contains(log, "exit status") {
+		t.Errorf("log should carry git stderr, not the raw exec error, got:\n%s", log)
 	}
 }
 
@@ -56,6 +65,22 @@ func TestRunGitNoTraceWhenNotVerbose(t *testing.T) {
 	}
 	if log := readLog(); strings.Contains(log, "DEBUG") {
 		t.Errorf("expected no debug trace without verbose, got:\n%s", log)
+	}
+}
+
+func TestRunGitTraceRedactsStderr(t *testing.T) {
+	readLog := setupLog(t, true)
+
+	// Clone from a bogus URL with embedded credentials; git echoes the URL in
+	// its error output, which must not reach grove.log unredacted.
+	_, _ = runGit(t.TempDir(), "clone", "https://user:s3cret@127.0.0.1:1/o/r.git", "dest")
+
+	log := readLog()
+	if strings.Contains(log, "s3cret") {
+		t.Errorf("credential leaked into log:\n%s", log)
+	}
+	if !strings.Contains(log, "https://***@127.0.0.1:1/o/r.git") {
+		t.Errorf("expected redacted URL in log, got:\n%s", log)
 	}
 }
 
