@@ -58,12 +58,14 @@ func Setup(v bool) {
 // Verbose reports whether Debug messages are being written. Callers can use
 // it to skip building expensive debug-only arguments.
 func Verbose() bool {
+	mu.Lock()
+	defer mu.Unlock()
 	return verbose && logFile != nil
 }
 
 // Debug logs a debug message (only when verbose).
 func Debug(format string, args ...interface{}) {
-	if !verbose || logFile == nil {
+	if !Verbose() {
 		return
 	}
 	write("DEBUG", format, args...)

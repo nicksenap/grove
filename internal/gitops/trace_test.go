@@ -1,10 +1,12 @@
 package gitops
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/nicksenap/grove/internal/logging"
 )
@@ -68,19 +70,37 @@ func TestRunGitNoTraceWhenNotVerbose(t *testing.T) {
 	}
 }
 
-func TestRunGitTraceRedactsStderr(t *testing.T) {
+func TestLogGitCallRedactsStderr(t *testing.T) {
 	readLog := setupLog(t, true)
 
-	// Clone from a bogus URL with embedded credentials; git echoes the URL in
-	// its error output, which must not reach grove.log unredacted.
-	_, _ = runGit(t.TempDir(), "clone", "https://user:s3cret@127.0.0.1:1/o/r.git", "dest")
+	// Git echoes the remote URL in its error output; credentials in it must
+	// not reach grove.log. Feed the output directly so the test needs no
+	// network and no particular git wording.
+	stderr := "fatal: unable to access 'https://user:s3cret@example.com/o/r.git/': Could not resolve host"
+	logGitCall(t.TempDir(), []string{"clone", "https://user:s3cret@example.com/o/r.git", "dest"},
+		time.Millisecond, stderr, errors.New("exit status 128"))
 
 	log := readLog()
 	if strings.Contains(log, "s3cret") {
 		t.Errorf("credential leaked into log:\n%s", log)
 	}
-	if !strings.Contains(log, "https://***@127.0.0.1:1/o/r.git") {
-		t.Errorf("expected redacted URL in log, got:\n%s", log)
+	if strings.Count(log, "https://***@example.com/o/r.git") != 2 {
+		t.Errorf("expected redacted URL in both args and stderr, got:\n%s", log)
+	}
+}
+
+func TestLogGitCallTruncatesLongOutput(t *testing.T) {
+	readLog := setupLog(t, true)
+
+	long := strings.Repeat("x", maxTraceOutput*4)
+	logGitCall(t.TempDir(), []string{"fetch"}, time.Millisecond, long, errors.New("exit status 1"))
+
+	log := readLog()
+	if !strings.Contains(log, "...[truncated]") {
+		t.Errorf("expected truncation marker, got %d bytes", len(log))
+	}
+	if len(log) > maxTraceOutput+512 {
+		t.Errorf("trace line not truncated: %d bytes", len(log))
 	}
 }
 

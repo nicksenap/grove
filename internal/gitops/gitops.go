@@ -101,15 +101,23 @@ func runGit(dir string, args ...string) (string, error) {
 	return output, nil
 }
 
+// maxTraceOutput caps how much of a failed git call's output goes into one
+// trace line, so a chatty clone failure can't evict the rest of grove.log
+// (1MB, rotated).
+const maxTraceOutput = 2048
+
 // logGitCall writes a debug trace line for a git invocation. On failure it
-// records git's own output (redacted), falling back to the exec error when
-// git printed nothing.
+// records git's own output (redacted, truncated), falling back to the exec
+// error when git printed nothing.
 func logGitCall(dir string, args []string, elapsed time.Duration, output string, err error) {
 	status := "ok"
 	if err != nil {
 		reason := output
 		if reason == "" {
 			reason = err.Error()
+		}
+		if len(reason) > maxTraceOutput {
+			reason = reason[:maxTraceOutput] + "...[truncated]"
 		}
 		status = "error: " + redactCredentials(strings.ReplaceAll(reason, "\n", " | "))
 	}
@@ -118,6 +126,8 @@ func logGitCall(dir string, args []string, elapsed time.Duration, output string,
 }
 
 // urlCredentials matches the userinfo part of a URL (scheme://user:pass@).
+// It deliberately also matches non-secret userinfo such as ssh://git@host;
+// we do not try to tell usernames from tokens.
 var urlCredentials = regexp.MustCompile(`(://)[^/@\s]+@`)
 
 // redactCredentials masks credentials embedded in URLs, since grove.log is

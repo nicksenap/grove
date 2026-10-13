@@ -7,5 +7,5 @@ set -e
 unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE
 export GIT_CEILING_DIRECTORIES="/"
 
-# Same gate as CI.
-exec just check
+# Fast subset of `just check`; CI runs the full gate (e2e + linters).
+exec just test vet fmt-check
