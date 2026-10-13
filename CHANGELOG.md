@@ -1,5 +1,16 @@
 # Changelog
 
+## v1.1.19
+
+### Fixes
+
+- The background update check now reads the latest release from the `github.com/nicksenap/grove/releases/latest` redirect instead of the GitHub REST API, so users behind a shared IP (NAT, VPN, CI) no longer silently miss update notices once the unauthenticated API limit (60 requests/hour) is hit. No token is needed. There is no API fallback; if the lookup fails, gw shows no notice and tries again later.
+
+### Maintenance
+
+- Bumped `golang.org/x/sys` (0.48.0 → 0.49.0).
+- More e2e coverage for `gw prune --min-age` units and stale missing-directory records.
+
 ## v1.1.18
 
 ### Features
