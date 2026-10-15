@@ -168,6 +168,9 @@ var createCmd = &cobra.Command{
 		if name == "" {
 			name = deriveName(branch)
 		}
+		// The workspace name comes from the unprefixed branch, so
+		// `gw create -b feat-x` names the workspace feat-x on branch <prefix>feat-x.
+		branch = applyBranchPrefix(cfg.BranchPrefix, branch, createTrack)
 
 		// --replace: delete the current workspace (detected from cwd) before creating the new one.
 		replacedName := ""
@@ -242,6 +245,16 @@ func init() {
 
 	createCmd.RegisterFlagCompletionFunc("repos", completeRepoNames)
 	createCmd.RegisterFlagCompletionFunc("preset", completePresetNames)
+}
+
+// applyBranchPrefix prepends the configured branch_prefix to a new branch.
+// Existing branches checked out with --track keep their real name, and a
+// branch that already carries the prefix is left alone.
+func applyBranchPrefix(prefix, branch string, track bool) string {
+	if prefix == "" || track || strings.HasPrefix(branch, prefix) {
+		return branch
+	}
+	return prefix + branch
 }
 
 func deriveName(branch string) string {

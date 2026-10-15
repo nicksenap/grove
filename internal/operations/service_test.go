@@ -35,6 +35,64 @@ func TestCreateRunsPostCreateAfterWorkspaceCreation(t *testing.T) {
 	assertOrder(t, order, "create", "hook:post_create")
 }
 
+func TestAddReposRunsPostAddRepoAfterReposAreAdded(t *testing.T) {
+	var order []string
+	ws := models.Workspace{Name: "feature", Path: "/workspaces/feature", Branch: "feat/feature"}
+	deps := &fakeWorkspace{workspace: ws, order: &order, added: 1}
+	svc := Service{
+		Workspace: deps,
+		Store:     deps,
+		RunHook: func(name string, vars lifecycle.Vars) error {
+			order = append(order, "hook:"+name)
+			if vars.Name != ws.Name || vars.Path != ws.Path || vars.Branch != ws.Branch {
+				t.Fatalf("unexpected hook vars: %+v", vars)
+			}
+			return nil
+		},
+	}
+
+	if err := svc.AddRepos(AddReposRequest{Name: ws.Name, Repos: []string{"web"}}); err != nil {
+		t.Fatal(err)
+	}
+	assertOrder(t, order, "add", "hook:post_add_repo")
+}
+
+func TestAddReposSkipsHookWhenNothingWasAdded(t *testing.T) {
+	var order []string
+	deps := &fakeWorkspace{workspace: models.Workspace{Name: "feature"}, order: &order}
+	svc := Service{
+		Workspace: deps,
+		Store:     deps,
+		RunHook: func(name string, _ lifecycle.Vars) error {
+			order = append(order, "hook:"+name)
+			return nil
+		},
+	}
+
+	if err := svc.AddRepos(AddReposRequest{Name: "feature", Repos: []string{"web"}}); err != nil {
+		t.Fatal(err)
+	}
+	assertOrder(t, order, "add")
+}
+
+func TestAddReposAbortingHookIsAHookError(t *testing.T) {
+	var order []string
+	deps := &fakeWorkspace{workspace: models.Workspace{Name: "feature"}, order: &order, added: 1}
+	svc := Service{
+		Workspace: deps,
+		Store:     deps,
+		RunHook: func(name string, _ lifecycle.Vars) error {
+			return &lifecycle.HookError{Hook: name, Err: errors.New("boom"), Abort: true}
+		},
+	}
+
+	err := svc.AddRepos(AddReposRequest{Name: "feature", Repos: []string{"web"}})
+	var hookErr *HookError
+	if !errors.As(err, &hookErr) || hookErr.Hook != "post_add_repo" {
+		t.Fatalf("expected post_add_repo HookError, got %v", err)
+	}
+}
+
 func TestDeleteAbortingPreDeletePreventsDeletion(t *testing.T) {
 	var order []string
 	ws := models.Workspace{Name: "feature", Path: "/workspaces/feature", Branch: "feat/feature"}
@@ -161,6 +219,12 @@ type fakeWorkspace struct {
 	order      *[]string
 	getErr     error
 	deleteOpts workspace.RemoveOptions
+	added      int
+}
+
+func (f *fakeWorkspace) AddRepos(string, []string, map[string]string) (int, error) {
+	*f.order = append(*f.order, "add")
+	return f.added, nil
 }
 
 func (f *fakeWorkspace) CreateWithOpts(string, workspace.CreateOpts) error {

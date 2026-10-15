@@ -18,6 +18,7 @@ import (
 type WorkspaceService interface {
 	CreateWithOpts(name string, opts workspace.CreateOpts) error
 	DeleteWithOptions(name string, opts workspace.RemoveOptions) error
+	AddRepos(name string, repoNames []string, repoMap map[string]string) (int, error)
 }
 
 // WorkspaceStore reads the completed workspace used to build lifecycle context.
@@ -89,6 +90,33 @@ func (s *Service) Create(req CreateRequest) (CreateResult, error) {
 		return result, &HookError{Hook: "post_create", Err: err}
 	}
 	return result, nil
+}
+
+// AddReposRequest is the typed input for adding repos to an existing workspace.
+type AddReposRequest struct {
+	Name    string
+	Repos   []string
+	RepoMap map[string]string
+}
+
+// AddRepos adds repos to a workspace, then applies the post_add_repo policy.
+// The hook only fires when at least one repo was actually added.
+func (s *Service) AddRepos(req AddReposRequest) error {
+	added, err := s.Workspace.AddRepos(req.Name, req.Repos, req.RepoMap)
+	if err != nil || added == 0 {
+		return err
+	}
+	ws, err := s.Store.GetWorkspace(req.Name)
+	if err != nil {
+		return fmt.Errorf("loading workspace: %w", err)
+	}
+	if ws == nil {
+		return fmt.Errorf("workspace %s not found in state", req.Name)
+	}
+	if err := s.runHook("post_add_repo", lifecycleVars(*ws)); err != nil {
+		return &HookError{Hook: "post_add_repo", Err: err}
+	}
+	return nil
 }
 
 // DeleteRequest is the typed input for a workspace deletion operation.

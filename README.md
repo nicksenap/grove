@@ -135,6 +135,12 @@ base_branch = "stage"   # branch from origin/stage instead of origin/main
 setup = "pnpm install"  # run after the worktree is created
 ```
 
+To namespace your branches, set a prefix in `~/.grove/config.toml`. `gw create -b feat-login` then creates workspace `feat-login` on branch `nick/feat-login`. The prefix is skipped with `--track` and when the branch already starts with it.
+
+```toml
+branch_prefix = "nick/"
+```
+
 Presets, plugins, hooks, and the full command reference are covered in [Workflows](openwiki/workflows.md) and [Operations](openwiki/operations.md).
 
 ### Integrations

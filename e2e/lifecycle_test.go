@@ -94,3 +94,33 @@ command = "echo boom-details; exit 1"
 	env.mustGW("create", "warn-ws", "--branch", "feat/warn", "--repos", "svc-auth")
 	env.mustGW("delete", "warn-ws")
 }
+
+func TestPostAddRepoHook(t *testing.T) {
+	env := newEnv(t)
+	env.createRepo("svc-auth")
+	env.createRepo("svc-api")
+	env.init()
+	marker := filepath.Join(env.home, "post_add_repo_out")
+	env.writeConfig(`[hooks]
+post_add_repo = "echo name={name} branch={branch} >> ` + marker + `"
+`)
+
+	env.mustGW("create", "addhook-ws", "--branch", "feat/addhook", "--repos", "svc-auth")
+	env.requireMissing(marker)
+
+	env.mustGW("add-repo", "addhook-ws", "--repos", "svc-api")
+	data, err := os.ReadFile(marker)
+	if err != nil {
+		t.Fatalf("post_add_repo did not fire: %v", err)
+	}
+	if got := strings.TrimSpace(string(data)); got != "name=addhook-ws branch=feat/addhook" {
+		t.Fatalf("post_add_repo vars wrong: %q", got)
+	}
+
+	// Re-adding an existing repo adds nothing, so the hook must not fire again.
+	env.mustGW("add-repo", "addhook-ws", "--repos", "svc-api")
+	data, _ = os.ReadFile(marker)
+	if n := strings.Count(string(data), "\n"); n != 1 {
+		t.Fatalf("post_add_repo fired %d times, want 1", n)
+	}
+}

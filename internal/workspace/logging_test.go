@@ -108,7 +108,7 @@ func TestLoggingAddAndRemoveRepos(t *testing.T) {
 
 	env.createWorkspace("addrem-ws", "feat/addrem", []string{"api"})
 
-	err := env.svc.AddRepos("addrem-ws", []string{"web"}, env.repoMap)
+	_, err := env.svc.AddRepos("addrem-ws", []string{"web"}, env.repoMap)
 	if err != nil {
 		t.Fatalf("add-repo: %v", err)
 	}

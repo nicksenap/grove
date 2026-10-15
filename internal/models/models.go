@@ -91,6 +91,9 @@ type Config struct {
 	WorkspaceDir string            `toml:"workspace_dir"`
 	Presets      map[string]Preset `toml:"presets"`
 	Hooks        map[string]Hook   `toml:"hooks"`
+	// BranchPrefix is prepended verbatim to new branches created by gw create
+	// (e.g. "erebe/"). Not applied with --track.
+	BranchPrefix string `toml:"branch_prefix,omitempty"`
 	// Legacy field — auto-migrated to RepoDirs
 	ReposDir string `toml:"repos_dir"`
 }

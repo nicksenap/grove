@@ -20,6 +20,7 @@ Edit `~/.grove/config.toml` directly to configure these hooks.
 | Hook | Fired by | When | Example |
 |------|----------|------|---------|
 | `post_create` | `gw create` | After workspace creation | `./scripts/workspace-created {path}` |
+| `post_add_repo` | `gw add-repo` | After repos are added (skipped if none were new) | `./scripts/workspace-changed {path}` |
 | `pre_delete` | `gw delete` | Before worktree removal | `./scripts/workspace-closing {path}` |
 | `on_close` | `gw go -c` | Close terminal pane | `./scripts/close-workspace-pane {path}`, `tmux kill-pane` |
 

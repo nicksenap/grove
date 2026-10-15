@@ -190,3 +190,20 @@ func TestFinalCleanup(t *testing.T) {
 		t.Fatalf("expected 0 workspaces, got %d", got)
 	}
 }
+
+func TestCreateAppliesBranchPrefix(t *testing.T) {
+	env := newEnv(t)
+	env.createRepo("svc-auth")
+	env.init()
+	env.writeConfig(`branch_prefix = "erebe/"
+`)
+
+	env.mustGW("create", "--branch", "feat-foobar", "--repos", "svc-auth")
+	ws := env.showWorkspace("feat-foobar")
+	if ws.Branch != "erebe/feat-foobar" {
+		t.Fatalf("workspace branch = %q, want erebe/feat-foobar", ws.Branch)
+	}
+	if got := env.currentBranch(env.worktree("feat-foobar", "svc-auth")); got != "erebe/feat-foobar" {
+		t.Fatalf("worktree branch = %q, want erebe/feat-foobar", got)
+	}
+}
