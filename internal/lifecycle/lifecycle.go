@@ -72,33 +72,32 @@ func ShouldAbort(err error) bool {
 // A non-zero `timeout` aborts the hook after the given duration. On failure the
 // returned error is a *HookError; use ShouldAbort to honour on_failure = "abort".
 func Run(hookName string, vars Vars) error {
-	hook, cmd, ctx, cleanup, err := prepare(hookName, vars)
+	run, err := prepare(hookName, vars)
 	if err != nil {
 		return err
 	}
-	defer cleanup()
+	defer run.close()
 
-	prefix := fmt.Sprintf("[%s] ", hookName)
-	if hook.Stream {
+	if run.hook.Stream {
 		// Stream live to stderr, prefixed, so progress is visible. stderr keeps
 		// gw's stdout clean for shell integration (e.g. `cd "$(gw go ...)"`).
-		w := streamio.New(prefix, os.Stderr)
-		cmd.Stdout = w
-		cmd.Stderr = w
-		runErr := cmd.Run()
+		w := streamio.New(run.prefix(), os.Stderr)
+		run.cmd.Stdout = w
+		run.cmd.Stderr = w
+		runErr := run.cmd.Run()
 		w.Flush()
-		return wrap(hookName, hook, runErr, ctx)
+		return run.wrap(runErr)
 	}
 
 	// Quiet: capture combined output, echo it only on failure.
 	captured := &bytes.Buffer{}
-	cmd.Stdout = captured
-	cmd.Stderr = captured
-	runErr := cmd.Run()
+	run.cmd.Stdout = captured
+	run.cmd.Stderr = captured
+	runErr := run.cmd.Run()
 	if runErr != nil && captured.Len() > 0 {
-		echoCaptured(prefix, captured.Bytes())
+		echoCaptured(run.prefix(), captured.Bytes())
 	}
-	return wrap(hookName, hook, runErr, ctx)
+	return run.wrap(runErr)
 }
 
 // Resolve runs a value-returning hook and returns its stdout as the result.
@@ -111,37 +110,30 @@ func Run(hookName string, vars Vars) error {
 // aborting *HookError, regardless of on_failure: a wrong value is worse than
 // a failed command.
 func Resolve(hookName string, vars Vars) (string, error) {
-	hook, cmd, ctx, cleanup, err := prepare(hookName, vars)
+	run, err := prepare(hookName, vars)
 	if err != nil {
 		return "", err
 	}
-	defer cleanup()
+	defer run.close()
+	run.hook.OnFailure = "abort"
 
-	prefix := fmt.Sprintf("[%s] ", hookName)
 	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	var streamed *streamio.PrefixWriter
-	if hook.Stream {
-		streamed = streamio.New(prefix, os.Stderr)
-		cmd.Stderr = streamed
-	} else {
-		cmd.Stderr = &stderr
-	}
-	runErr := cmd.Run()
-	if streamed != nil {
-		streamed.Flush()
+	run.cmd.Stdout = &stdout
+	run.cmd.Stderr = &stderr
+	if run.hook.Stream {
+		w := streamio.New(run.prefix(), os.Stderr)
+		defer w.Flush()
+		run.cmd.Stderr = w
 	}
 
 	fail := func(err error) (string, error) {
 		if stderr.Len() > 0 {
-			echoCaptured(prefix, stderr.Bytes())
+			echoCaptured(run.prefix(), stderr.Bytes())
 		}
-		hookErr := wrap(hookName, hook, err, ctx).(*HookError)
-		hookErr.Abort = true
-		return "", hookErr
+		return "", run.wrap(err)
 	}
-	if runErr != nil {
-		return fail(runErr)
+	if err := run.cmd.Run(); err != nil {
+		return fail(err)
 	}
 	out := strings.TrimSpace(stdout.String())
 	switch {
@@ -153,44 +145,48 @@ func Resolve(hookName string, vars Vars) (string, error) {
 	return out, nil
 }
 
-// prepare loads the named hook and builds its command with placeholders
-// expanded and any timeout applied. The returned cleanup must be called.
-func prepare(hookName string, vars Vars) (models.Hook, *exec.Cmd, context.Context, func(), error) {
-	noop := func() {}
+// hookRun is a configured hook ready to run: its command has placeholders
+// expanded and any timeout applied. Call close when done.
+type hookRun struct {
+	name   string
+	hook   models.Hook
+	cmd    *exec.Cmd
+	ctx    context.Context
+	cancel context.CancelFunc // nil without a timeout
+}
+
+// prepare loads the named hook and builds its command. Returns ErrNoHook if
+// hooks are disabled or the hook is not configured.
+func prepare(hookName string, vars Vars) (*hookRun, error) {
 	if Disabled {
-		return models.Hook{}, nil, nil, noop, ErrNoHook
+		return nil, ErrNoHook
 	}
 
 	cfg, err := config.Load()
 	if err != nil || cfg == nil {
-		return models.Hook{}, nil, nil, noop, ErrNoHook
+		return nil, ErrNoHook
 	}
 
 	hook, ok := cfg.Hooks[hookName]
 	if !ok || hook.Command == "" {
-		return models.Hook{}, nil, nil, noop, ErrNoHook
+		return nil, ErrNoHook
 	}
 
 	expanded := expand(hook.Command, vars)
 	logging.Info("hook %s: %s", hookName, expanded)
 
-	ctx := context.Background()
-	cleanup := noop
-	hasTimeout := false
+	run := &hookRun{name: hookName, hook: hook, ctx: context.Background()}
 	if hook.Timeout != "" {
 		d, perr := time.ParseDuration(hook.Timeout)
 		if perr != nil {
 			logging.Warn("hook %s: invalid timeout %q, ignoring: %s", hookName, hook.Timeout, perr)
 		} else if d > 0 {
-			var cancel context.CancelFunc
-			ctx, cancel = context.WithTimeout(ctx, d)
-			cleanup = cancel
-			hasTimeout = true
+			run.ctx, run.cancel = context.WithTimeout(run.ctx, d)
 		}
 	}
 
-	cmd := exec.CommandContext(ctx, "sh", "-c", expanded)
-	if hasTimeout {
+	cmd := exec.CommandContext(run.ctx, "sh", "-c", expanded)
+	if run.cancel != nil {
 		// Run the hook in its own process group so a timeout can kill the whole
 		// tree. The shell typically spawns the real work (e.g. an installer) as
 		// a child; killing only the shell would leave that child running and
@@ -208,22 +204,32 @@ func prepare(hookName string, vars Vars) (models.Hook, *exec.Cmd, context.Contex
 		// group kill, don't let Wait hang — give it a moment, then force-close.
 		cmd.WaitDelay = 2 * time.Second
 	}
-	return hook, cmd, ctx, cleanup, nil
+	run.cmd = cmd
+	return run, nil
 }
+
+func (r *hookRun) close() {
+	if r.cancel != nil {
+		r.cancel()
+	}
+}
+
+// prefix labels output lines with the hook name, e.g. "[post_create] ".
+func (r *hookRun) prefix() string { return fmt.Sprintf("[%s] ", r.name) }
 
 // wrap converts a raw run error into a *HookError (or nil), annotating it with
 // the hook's on_failure policy and any timeout context.
-func wrap(hookName string, hook models.Hook, runErr error, ctx context.Context) error {
+func (r *hookRun) wrap(runErr error) error {
 	if runErr == nil {
 		return nil
 	}
-	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-		runErr = fmt.Errorf("timed out after %s", hook.Timeout)
+	if errors.Is(r.ctx.Err(), context.DeadlineExceeded) {
+		runErr = fmt.Errorf("timed out after %s", r.hook.Timeout)
 	}
 	return &HookError{
-		Hook:  hookName,
+		Hook:  r.name,
 		Err:   runErr,
-		Abort: strings.EqualFold(hook.OnFailure, "abort"),
+		Abort: strings.EqualFold(r.hook.OnFailure, "abort"),
 	}
 }
 

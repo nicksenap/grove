@@ -118,6 +118,29 @@ func TestCreateUsesResolvedBranch(t *testing.T) {
 	}
 }
 
+func TestResolverReceivesSourcePlaceholders(t *testing.T) {
+	var order []string
+	deps := &fakeWorkspace{workspace: models.Workspace{Name: "pr-42"}, order: &order}
+	var got lifecycle.Vars
+	svc := Service{
+		Workspace: deps,
+		Store:     deps,
+		RunHook:   func(string, lifecycle.Vars) error { return nil },
+		ResolveHook: func(_ string, vars lifecycle.Vars) (string, error) {
+			got = vars
+			return "pr-42", nil
+		},
+	}
+
+	src := &models.WorkspaceSource{URL: "https://example.com/pr/42", Ref: "42", Title: "Fix login"}
+	if _, err := svc.Create(CreateRequest{Name: "pr-42", Options: workspace.CreateOpts{Branch: "pr-42", Source: src}}); err != nil {
+		t.Fatal(err)
+	}
+	if got.SourceURL != src.URL || got.SourceRef != "42" || got.SourceTitle != "Fix login" || got.Path != "" {
+		t.Fatalf("unexpected resolve vars: %+v", got)
+	}
+}
+
 func TestCreateKeepsBranchWhenResolverUnset(t *testing.T) {
 	var order []string
 	deps := &fakeWorkspace{workspace: models.Workspace{Name: "feat-x"}, order: &order}

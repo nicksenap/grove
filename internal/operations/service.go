@@ -89,7 +89,7 @@ func (s *Service) ResolveBranch(req CreateRequest) (CreateRequest, error) {
 	if req.branchResolved || req.Options.BranchMode == workspace.BranchModeTrack {
 		return req, nil
 	}
-	branch, err := s.resolveBranch(req)
+	branch, err := s.callResolver(req)
 	if err != nil {
 		return req, &HookError{Hook: "resolve_branch", Err: err}
 	}
@@ -217,17 +217,16 @@ func (s *Service) runHook(name string, vars lifecycle.Vars) error {
 	return nil
 }
 
-// resolveBranch returns the branch produced by the resolve_branch hook, or the
+// callResolver returns the branch produced by the resolve_branch hook, or the
 // typed branch unchanged when no resolver is configured (or hooks are off).
-func (s *Service) resolveBranch(req CreateRequest) (string, error) {
+// {path} is empty: the workspace does not exist yet.
+func (s *Service) callResolver(req CreateRequest) (string, error) {
 	resolve := s.ResolveHook
 	if resolve == nil {
 		resolve = lifecycle.Resolve
 	}
-	vars := lifecycle.Vars{Name: req.Name, Branch: req.Options.Branch}
-	if src := req.Options.Source; src != nil {
-		vars.SourceURL, vars.SourceRef, vars.SourceTitle = src.URL, src.Ref, src.Title
-	}
+	opts := req.Options
+	vars := lifecycleVars(models.Workspace{Name: req.Name, Branch: opts.Branch, Source: opts.Source})
 	branch, err := resolve("resolve_branch", vars)
 	if errors.Is(err, lifecycle.ErrNoHook) {
 		return req.Options.Branch, nil
