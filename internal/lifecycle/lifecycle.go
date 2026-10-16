@@ -119,11 +119,12 @@ func Resolve(hookName string, vars Vars) (string, error) {
 
 	var stdout, stderr bytes.Buffer
 	run.cmd.Stdout = &stdout
-	run.cmd.Stderr = &stderr
 	if run.hook.Stream {
 		w := streamio.New(run.prefix(), os.Stderr)
 		defer w.Flush()
 		run.cmd.Stderr = w
+	} else {
+		run.cmd.Stderr = &stderr
 	}
 
 	fail := func(err error) (string, error) {
