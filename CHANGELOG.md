@@ -1,5 +1,19 @@
 # Changelog
 
+## v1.1.20
+
+### Features
+
+- New `resolve_branch` hook: its output becomes the branch for `gw create`, so prefixes and naming rules live in your shell instead of Grove config. For example `resolve_branch = "echo erebe/{branch}"` turns `gw create -b feat-foobar` into workspace `feat-foobar` on branch `erebe/feat-foobar`. stdout must be exactly one valid branch name; any failure aborts the create before anything is made (including before `--replace` deletes the current workspace). Skipped with `--track` and `--no-hooks`. See `docs/hooks.md`.
+- New `post_add_repo` hook: runs after `gw add-repo` adds at least one repo, with `{name}`, `{path}`, and `{branch}` and the same `on_failure` policy as `post_create`.
+- `--verbose` now does something: each git call writes one DEBUG line to `~/.grove/grove.log` with args, directory, duration, and result, including git's error output on failure (capped at 2 KB). Credentials in URLs are redacted, since `gw bug-report` attaches this log.
+- Grove ships an agent skill for Claude Code, Codex, Cursor, pi, and other skill-aware agents: `npx skills add nicksenap/grove --skill grove`. It teaches the agent to set up Grove and run `gw` safely: explicit flags instead of pickers, JSON output, and which commands destroy work.
+
+### Maintenance
+
+- Removed unused internal code.
+- CI and releases now run the full `just check` gate (unit and e2e tests, vet, gofmt, gocyclo, staticcheck, deadcode), with lint tools pinned in `go.mod`.
+
 ## v1.1.19
 
 ### Fixes
