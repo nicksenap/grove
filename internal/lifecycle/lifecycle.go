@@ -72,24 +72,110 @@ func ShouldAbort(err error) bool {
 // A non-zero `timeout` aborts the hook after the given duration. On failure the
 // returned error is a *HookError; use ShouldAbort to honour on_failure = "abort".
 func Run(hookName string, vars Vars) error {
+	hook, cmd, ctx, cleanup, err := prepare(hookName, vars)
+	if err != nil {
+		return err
+	}
+	defer cleanup()
+
+	prefix := fmt.Sprintf("[%s] ", hookName)
+	if hook.Stream {
+		// Stream live to stderr, prefixed, so progress is visible. stderr keeps
+		// gw's stdout clean for shell integration (e.g. `cd "$(gw go ...)"`).
+		w := streamio.New(prefix, os.Stderr)
+		cmd.Stdout = w
+		cmd.Stderr = w
+		runErr := cmd.Run()
+		w.Flush()
+		return wrap(hookName, hook, runErr, ctx)
+	}
+
+	// Quiet: capture combined output, echo it only on failure.
+	captured := &bytes.Buffer{}
+	cmd.Stdout = captured
+	cmd.Stderr = captured
+	runErr := cmd.Run()
+	if runErr != nil && captured.Len() > 0 {
+		echoCaptured(prefix, captured.Bytes())
+	}
+	return wrap(hookName, hook, runErr, ctx)
+}
+
+// Resolve runs a value-returning hook and returns its stdout as the result.
+// Returns ErrNoHook if the hook is not configured or hooks are disabled.
+//
+// Contract: stdout must be exactly one non-empty line (surrounding whitespace
+// is trimmed). stderr is kept out of the result: streamed live when
+// stream = true, otherwise echoed only on failure. stdin is not attached.
+// Any failure — non-zero exit, timeout, or malformed output — is always an
+// aborting *HookError, regardless of on_failure: a wrong value is worse than
+// a failed command.
+func Resolve(hookName string, vars Vars) (string, error) {
+	hook, cmd, ctx, cleanup, err := prepare(hookName, vars)
+	if err != nil {
+		return "", err
+	}
+	defer cleanup()
+
+	prefix := fmt.Sprintf("[%s] ", hookName)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	var streamed *streamio.PrefixWriter
+	if hook.Stream {
+		streamed = streamio.New(prefix, os.Stderr)
+		cmd.Stderr = streamed
+	} else {
+		cmd.Stderr = &stderr
+	}
+	runErr := cmd.Run()
+	if streamed != nil {
+		streamed.Flush()
+	}
+
+	fail := func(err error) (string, error) {
+		if stderr.Len() > 0 {
+			echoCaptured(prefix, stderr.Bytes())
+		}
+		hookErr := wrap(hookName, hook, err, ctx).(*HookError)
+		hookErr.Abort = true
+		return "", hookErr
+	}
+	if runErr != nil {
+		return fail(runErr)
+	}
+	out := strings.TrimSpace(stdout.String())
+	switch {
+	case out == "":
+		return fail(errors.New("produced no output"))
+	case strings.ContainsAny(out, "\r\n"):
+		return fail(fmt.Errorf("produced more than one line: %q", out))
+	}
+	return out, nil
+}
+
+// prepare loads the named hook and builds its command with placeholders
+// expanded and any timeout applied. The returned cleanup must be called.
+func prepare(hookName string, vars Vars) (models.Hook, *exec.Cmd, context.Context, func(), error) {
+	noop := func() {}
 	if Disabled {
-		return ErrNoHook
+		return models.Hook{}, nil, nil, noop, ErrNoHook
 	}
 
 	cfg, err := config.Load()
 	if err != nil || cfg == nil {
-		return ErrNoHook
+		return models.Hook{}, nil, nil, noop, ErrNoHook
 	}
 
 	hook, ok := cfg.Hooks[hookName]
 	if !ok || hook.Command == "" {
-		return ErrNoHook
+		return models.Hook{}, nil, nil, noop, ErrNoHook
 	}
 
 	expanded := expand(hook.Command, vars)
 	logging.Info("hook %s: %s", hookName, expanded)
 
 	ctx := context.Background()
+	cleanup := noop
 	hasTimeout := false
 	if hook.Timeout != "" {
 		d, perr := time.ParseDuration(hook.Timeout)
@@ -98,7 +184,7 @@ func Run(hookName string, vars Vars) error {
 		} else if d > 0 {
 			var cancel context.CancelFunc
 			ctx, cancel = context.WithTimeout(ctx, d)
-			defer cancel()
+			cleanup = cancel
 			hasTimeout = true
 		}
 	}
@@ -122,29 +208,7 @@ func Run(hookName string, vars Vars) error {
 		// group kill, don't let Wait hang — give it a moment, then force-close.
 		cmd.WaitDelay = 2 * time.Second
 	}
-
-	prefix := fmt.Sprintf("[%s] ", hookName)
-	var captured *bytes.Buffer
-	if hook.Stream {
-		// Stream live to stderr, prefixed, so progress is visible. stderr keeps
-		// gw's stdout clean for shell integration (e.g. `cd "$(gw go ...)"`).
-		w := streamio.New(prefix, os.Stderr)
-		cmd.Stdout = w
-		cmd.Stderr = w
-		runErr := cmd.Run()
-		w.Flush()
-		return wrap(hookName, hook, runErr, ctx)
-	}
-
-	// Quiet: capture combined output, echo it only on failure.
-	captured = &bytes.Buffer{}
-	cmd.Stdout = captured
-	cmd.Stderr = captured
-	runErr := cmd.Run()
-	if runErr != nil && captured.Len() > 0 {
-		echoCaptured(prefix, captured.Bytes())
-	}
-	return wrap(hookName, hook, runErr, ctx)
+	return hook, cmd, ctx, cleanup, nil
 }
 
 // wrap converts a raw run error into a *HookError (or nil), annotating it with

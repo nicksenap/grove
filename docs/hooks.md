@@ -19,6 +19,7 @@ Edit `~/.grove/config.toml` directly to configure these hooks.
 
 | Hook | Fired by | When | Example |
 |------|----------|------|---------|
+| `resolve_branch` | `gw create` | Before workspace creation; prints the branch name to use ([details](#resolving-the-branch-name)) | `echo erebe/{branch}` |
 | `post_create` | `gw create` | After workspace creation | `./scripts/workspace-created {path}` |
 | `post_add_repo` | `gw add-repo` | After repos are added (skipped if none were new) | `./scripts/workspace-changed {path}` |
 | `pre_delete` | `gw delete` | Before worktree removal | `./scripts/workspace-closing {path}` |
@@ -45,6 +46,25 @@ post_create = "./scripts/workspace-created {path}"
 pre_delete = "./scripts/workspace-closing {path}"
 on_close = "tmux kill-pane"
 ```
+
+### Resolving the branch name
+
+`resolve_branch` is the one hook whose output Grove uses. It runs before any worktree is created, and whatever it prints becomes the branch for every repo in the workspace. The workspace name still comes from the branch as typed, so `gw create -b feat-foobar` creates workspace `feat-foobar` on branch `erebe/feat-foobar`.
+
+```toml
+[hooks]
+resolve_branch = "echo erebe/{branch}"                            # prefix
+# resolve_branch = "echo {branch} | tr A-Z a-z"                   # transform
+# resolve_branch = "~/bin/branch-namer {branch}"                   # anything else
+```
+
+- **Input:** `{branch}` (as typed), `{name}` (workspace name), and the `{source_*}` placeholders. `{path}` is empty because the workspace does not exist yet. stdin is not attached.
+- **Output:** stdout must be exactly one non-empty line; surrounding whitespace is trimmed. The result must be a valid git branch name (`git check-ref-format --branch`). Printing `{branch}` back unchanged is fine.
+- **stderr** is never part of the result. It is shown if the hook fails, or live when `stream = true`.
+- **Failure always aborts** `gw create`, whatever `on_failure` says: a non-zero exit, a timeout, empty or multi-line output, or an invalid branch name. Nothing is created.
+- **Runs once.** It runs at `gw create` only, never again for that workspace; `gw add-repo` reuses the stored branch. Your hook does not need to be idempotent.
+- **Skipped** with `--track` (which checks out an existing branch by its real name) and with `--no-hooks` (the branch is used as typed).
+- Plugins that call `gw create -b X` get the resolved branch too. Read the real name from `gw ws show <name> --json`.
 
 ### Hook output and behavior
 

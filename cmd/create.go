@@ -168,9 +168,6 @@ var createCmd = &cobra.Command{
 		if name == "" {
 			name = deriveName(branch)
 		}
-		// The workspace name comes from the unprefixed branch, so
-		// `gw create -b feat-x` names the workspace feat-x on branch <prefix>feat-x.
-		branch = applyBranchPrefix(cfg.BranchPrefix, branch, createTrack)
 
 		// --replace: delete the current workspace (detected from cwd) before creating the new one.
 		replacedName := ""
@@ -221,7 +218,11 @@ var createCmd = &cobra.Command{
 			opts.BranchMode = workspace.BranchModeTrack
 		}
 
-		if _, err := operations.NewService().Create(operations.CreateRequest{Name: name, Options: opts}); err != nil {
+		result, err := operations.NewService().Create(operations.CreateRequest{Name: name, Options: opts})
+		if result.Created && result.Workspace.Branch != branch {
+			console.Infof("Branch: %s (from resolve_branch)", result.Workspace.Branch)
+		}
+		if err != nil {
 			if replacedName != "" {
 				exitError("failed to create new workspace (old workspace " + replacedName + " was already deleted): " + err.Error())
 			}
@@ -245,16 +246,6 @@ func init() {
 
 	createCmd.RegisterFlagCompletionFunc("repos", completeRepoNames)
 	createCmd.RegisterFlagCompletionFunc("preset", completePresetNames)
-}
-
-// applyBranchPrefix prepends the configured branch_prefix to a new branch.
-// Existing branches checked out with --track keep their real name, and a
-// branch that already carries the prefix is left alone.
-func applyBranchPrefix(prefix, branch string, track bool) string {
-	if prefix == "" || track || strings.HasPrefix(branch, prefix) {
-		return branch
-	}
-	return prefix + branch
 }
 
 func deriveName(branch string) string {

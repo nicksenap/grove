@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 
 	"github.com/nicksenap/grove/internal/console"
+	"github.com/nicksenap/grove/internal/gitops"
 	"github.com/nicksenap/grove/internal/lifecycle"
 	"github.com/nicksenap/grove/internal/models"
 	"github.com/nicksenap/grove/internal/workspace"
@@ -35,17 +36,20 @@ type Service struct {
 	Workspace WorkspaceService
 	Store     WorkspaceStore
 	RunHook   func(string, lifecycle.Vars) error
-	Warn      func(string)
+	// ResolveHook runs value-returning hooks (resolve_branch).
+	ResolveHook func(string, lifecycle.Vars) (string, error)
+	Warn        func(string)
 }
 
 // NewService creates an operation service with production dependencies.
 func NewService() *Service {
 	workspaceService := workspace.NewService()
 	return &Service{
-		Workspace: workspaceService,
-		Store:     workspaceService.State,
-		RunHook:   lifecycle.Run,
-		Warn:      console.Warning,
+		Workspace:   workspaceService,
+		Store:       workspaceService.State,
+		RunHook:     lifecycle.Run,
+		ResolveHook: lifecycle.Resolve,
+		Warn:        console.Warning,
 	}
 }
 
@@ -71,8 +75,20 @@ type HookError struct {
 func (e *HookError) Error() string { return e.Err.Error() }
 func (e *HookError) Unwrap() error { return e.Err }
 
-// Create provisions a workspace, then applies the shared post_create policy.
+// Create resolves the branch name, provisions a workspace, then applies the
+// shared post_create policy.
+//
+// resolve_branch runs exactly once per workspace, here, and never again: the
+// resolved branch is stored and reused by add-repo. It is skipped with --track,
+// which checks out an existing branch by its real name.
 func (s *Service) Create(req CreateRequest) (CreateResult, error) {
+	if req.Options.BranchMode != workspace.BranchModeTrack {
+		branch, err := s.resolveBranch(req)
+		if err != nil {
+			return CreateResult{}, &HookError{Hook: "resolve_branch", Err: err}
+		}
+		req.Options.Branch = branch
+	}
 	if err := s.Workspace.CreateWithOpts(req.Name, req.Options); err != nil {
 		return CreateResult{}, err
 	}
@@ -183,6 +199,30 @@ func (s *Service) runHook(name string, vars lifecycle.Vars) error {
 	}
 	s.warn(err)
 	return nil
+}
+
+// resolveBranch returns the branch produced by the resolve_branch hook, or the
+// typed branch unchanged when no resolver is configured (or hooks are off).
+func (s *Service) resolveBranch(req CreateRequest) (string, error) {
+	resolve := s.ResolveHook
+	if resolve == nil {
+		resolve = lifecycle.Resolve
+	}
+	vars := lifecycle.Vars{Name: req.Name, Branch: req.Options.Branch}
+	if src := req.Options.Source; src != nil {
+		vars.SourceURL, vars.SourceRef, vars.SourceTitle = src.URL, src.Ref, src.Title
+	}
+	branch, err := resolve("resolve_branch", vars)
+	if errors.Is(err, lifecycle.ErrNoHook) {
+		return req.Options.Branch, nil
+	}
+	if err != nil {
+		return "", err
+	}
+	if err := gitops.CheckBranchName(branch); err != nil {
+		return "", fmt.Errorf("resolve_branch hook output: %w", err)
+	}
+	return branch, nil
 }
 
 func (s *Service) callHook(name string, vars lifecycle.Vars) error {

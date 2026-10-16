@@ -55,23 +55,3 @@ func TestRepoNamesList_Empty(t *testing.T) {
 		t.Errorf("len = %d, want 0", len(got))
 	}
 }
-
-func TestApplyBranchPrefix(t *testing.T) {
-	tests := []struct {
-		name, prefix, branch string
-		track                bool
-		want                 string
-	}{
-		{"no prefix configured", "", "feat-foobar", false, "feat-foobar"},
-		{"prefix applied", "erebe/", "feat-foobar", false, "erebe/feat-foobar"},
-		{"already prefixed", "erebe/", "erebe/feat-foobar", false, "erebe/feat-foobar"},
-		{"tracking an existing branch", "erebe/", "someone/pr-head", true, "someone/pr-head"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := applyBranchPrefix(tt.prefix, tt.branch, tt.track); got != tt.want {
-				t.Errorf("applyBranchPrefix(%q, %q, %v) = %q, want %q", tt.prefix, tt.branch, tt.track, got, tt.want)
-			}
-		})
-	}
-}

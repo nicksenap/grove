@@ -313,3 +313,74 @@ func TestRunTimeoutKillsChildren(t *testing.T) {
 		t.Errorf("child process %d still alive after timeout; group kill did not reap it", pid)
 	}
 }
+
+func TestResolveReturnsTrimmedSingleLine(t *testing.T) {
+	useTempConfig(t, "[hooks]\nresolve_branch = \"echo erebe/{branch}-{name}\"\n")
+
+	got, err := Resolve("resolve_branch", Vars{Branch: "feat-x", Name: "ws"})
+	if err != nil {
+		t.Fatalf("Resolve = %v", err)
+	}
+	if got != "erebe/feat-x-ws" {
+		t.Fatalf("Resolve = %q, want erebe/feat-x-ws", got)
+	}
+}
+
+func TestResolveNotConfiguredOrDisabled(t *testing.T) {
+	useTempConfig(t, "[hooks]\nresolve_branch = \"echo x\"\n")
+	if _, err := Resolve("other_hook", Vars{}); !errors.Is(err, ErrNoHook) {
+		t.Fatalf("unconfigured: err = %v, want ErrNoHook", err)
+	}
+	Disabled = true
+	t.Cleanup(func() { Disabled = false })
+	if _, err := Resolve("resolve_branch", Vars{}); !errors.Is(err, ErrNoHook) {
+		t.Fatalf("disabled: err = %v, want ErrNoHook", err)
+	}
+}
+
+func TestResolveRejectsBadOutput(t *testing.T) {
+	tests := map[string]string{
+		"empty output":       "true",
+		"blank output":       "echo '   '",
+		"multi-line":         "printf 'a\\\\nb\\\\n'",
+		"non-zero exit":      "echo ok; exit 3",
+		"ignores on_failure": "exit 1",
+	}
+	for name, cmd := range tests {
+		t.Run(name, func(t *testing.T) {
+			body := "[hooks.resolve_branch]\ncommand = \"" + cmd + "\"\n"
+			if name == "ignores on_failure" {
+				body += "on_failure = \"warn\"\n"
+			}
+			useTempConfig(t, body)
+			var err error
+			captureStderr(t, func() { _, err = Resolve("resolve_branch", Vars{}) })
+			if err == nil {
+				t.Fatal("Resolve = nil error, want failure")
+			}
+			if !ShouldAbort(err) {
+				t.Fatalf("resolve failures must always abort, got %v", err)
+			}
+		})
+	}
+}
+
+func TestResolveKeepsStderrOutOfResult(t *testing.T) {
+	useTempConfig(t, "[hooks]\nresolve_branch = \"echo noise >&2; echo erebe/x\"\n")
+
+	var got string
+	var err error
+	captureStderr(t, func() { got, err = Resolve("resolve_branch", Vars{}) })
+	if err != nil || got != "erebe/x" {
+		t.Fatalf("Resolve = %q, %v; want erebe/x, nil", got, err)
+	}
+}
+
+func TestResolveEchoesStderrOnFailure(t *testing.T) {
+	useTempConfig(t, "[hooks]\nresolve_branch = \"echo why-it-failed >&2; exit 1\"\n")
+
+	out := captureStderr(t, func() { Resolve("resolve_branch", Vars{}) })
+	if !strings.Contains(out, "[resolve_branch] why-it-failed") {
+		t.Fatalf("stderr not echoed on failure, got %q", out)
+	}
+}
