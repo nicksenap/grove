@@ -27,7 +27,7 @@ func TestDiscoverReposBasic(t *testing.T) {
 		return "git@github.com:owner/" + name + ".git"
 	}
 
-	results := DiscoverRepos([]string{dir}, fetcher)
+	results := DiscoverReposWithRemoteCache([]string{dir}, nil, fetcher)
 
 	if len(results) != 2 {
 		t.Fatalf("expected 2 repos, got %d", len(results))
@@ -52,7 +52,7 @@ func TestDiscoverReposDedupeByRemoteURL(t *testing.T) {
 		return "git@github.com:owner/repo.git"
 	}
 
-	results := DiscoverRepos([]string{dir}, fetcher)
+	results := DiscoverReposWithRemoteCache([]string{dir}, nil, fetcher)
 
 	if len(results) != 1 {
 		t.Fatalf("expected 1 repo after dedup, got %d", len(results))
@@ -72,7 +72,7 @@ func TestDiscoverReposDirectChildWinsOverNested(t *testing.T) {
 		return "git@github.com:owner/myrepo.git" // same URL for both
 	}
 
-	results := DiscoverRepos([]string{dir}, fetcher)
+	results := DiscoverReposWithRemoteCache([]string{dir}, nil, fetcher)
 
 	if len(results) != 1 {
 		t.Fatalf("expected 1 after dedup, got %d", len(results))
@@ -90,7 +90,7 @@ func TestDiscoverReposNoRemoteUsesPath(t *testing.T) {
 		return "" // no remote
 	}
 
-	results := DiscoverRepos([]string{dir}, fetcher)
+	results := DiscoverReposWithRemoteCache([]string{dir}, nil, fetcher)
 
 	if len(results) != 1 {
 		t.Fatalf("expected 1 repo, got %d", len(results))
@@ -113,7 +113,7 @@ func TestDiscoverReposNoRemoteDedupByPath(t *testing.T) {
 		return "" // no remote for either
 	}
 
-	results := DiscoverRepos([]string{dir}, fetcher)
+	results := DiscoverReposWithRemoteCache([]string{dir}, nil, fetcher)
 
 	if len(results) != 2 {
 		t.Fatalf("repos with no remote and different paths should not dedup, got %d", len(results))
@@ -128,7 +128,7 @@ func TestDiscoverReposDisplayNameFromURL(t *testing.T) {
 		return "git@github.com:acme/cool-project.git"
 	}
 
-	results := DiscoverRepos([]string{dir}, fetcher)
+	results := DiscoverReposWithRemoteCache([]string{dir}, nil, fetcher)
 
 	if len(results) != 1 {
 		t.Fatalf("expected 1, got %d", len(results))
@@ -148,7 +148,7 @@ func TestDiscoverReposSortedByDisplayName(t *testing.T) {
 		return "" // use folder names as display
 	}
 
-	results := DiscoverRepos([]string{dir}, fetcher)
+	results := DiscoverReposWithRemoteCache([]string{dir}, nil, fetcher)
 
 	for i := 1; i < len(results); i++ {
 		if results[i].DisplayName < results[i-1].DisplayName {
@@ -163,7 +163,7 @@ func TestDiscoverReposSortsNameTiesByPath(t *testing.T) {
 	first := makeFakeRepo(t, dir1, "api")
 	second := makeFakeRepo(t, dir2, "api")
 
-	results := DiscoverRepos([]string{dir2, dir1}, func(string) string { return "" })
+	results := DiscoverReposWithRemoteCache([]string{dir2, dir1}, nil, func(string) string { return "" })
 
 	wantFirst := first
 	if second < first {
@@ -175,7 +175,7 @@ func TestDiscoverReposSortsNameTiesByPath(t *testing.T) {
 }
 
 func TestDiscoverReposEmptyDirs(t *testing.T) {
-	results := DiscoverRepos([]string{}, func(string) string { return "" })
+	results := DiscoverReposWithRemoteCache([]string{}, nil, func(string) string { return "" })
 	if len(results) != 0 {
 		t.Errorf("expected empty, got %d", len(results))
 	}
@@ -191,7 +191,7 @@ func TestDiscoverReposMaxDepthRespected(t *testing.T) {
 
 	fetcher := func(path string) string { return "" }
 
-	results := DiscoverRepos([]string{dir}, fetcher)
+	results := DiscoverReposWithRemoteCache([]string{dir}, nil, fetcher)
 
 	for _, r := range results {
 		if r.Name == "too-deep" {
@@ -219,7 +219,7 @@ func TestDiscoverReposMultipleDirs(t *testing.T) {
 		return "git@github.com:owner/" + filepath.Base(path) + ".git"
 	}
 
-	results := DiscoverRepos([]string{dir1, dir2}, fetcher)
+	results := DiscoverReposWithRemoteCache([]string{dir1, dir2}, nil, fetcher)
 
 	if len(results) != 2 {
 		t.Fatalf("expected 2 repos from 2 dirs, got %d", len(results))
@@ -230,7 +230,7 @@ func TestDiscoverReposFindsNestedRepos(t *testing.T) {
 	dir := t.TempDir()
 	makeFakeRepo(t, filepath.Join(dir, "org"), "nested-repo")
 
-	results := DiscoverRepos([]string{dir}, func(string) string { return "" })
+	results := DiscoverReposWithRemoteCache([]string{dir}, nil, func(string) string { return "" })
 
 	if len(results) != 1 || results[0].Name != "nested-repo" {
 		t.Fatalf("nested repo not discovered: %#v", results)
@@ -244,7 +244,7 @@ func TestDiscoverReposSkipsIgnoredDirectories(t *testing.T) {
 	makeFakeRepo(t, filepath.Join(dir, ".hidden"), "hidden")
 	makeFakeRepo(t, dir, "visible")
 
-	results := DiscoverRepos([]string{dir}, func(string) string { return "" })
+	results := DiscoverReposWithRemoteCache([]string{dir}, nil, func(string) string { return "" })
 
 	if len(results) != 1 || results[0].Name != "visible" {
 		t.Fatalf("ignored directories were scanned: %#v", results)

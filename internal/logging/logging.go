@@ -35,10 +35,16 @@ func init() {
 
 // Setup initializes logging. Call once at startup.
 // The log file is always opened; verbose controls whether Debug messages are written.
+// Calling Setup again (tests) closes the previously opened file first.
 func Setup(v bool) {
 	mu.Lock()
 	defer mu.Unlock()
 	verbose = v
+
+	if logFile != nil {
+		logFile.Close()
+		logFile = nil
+	}
 
 	os.MkdirAll(LogDir, 0o755)
 	path := filepath.Join(LogDir, "grove.log")
@@ -49,9 +55,17 @@ func Setup(v bool) {
 	logFile = f
 }
 
+// Verbose reports whether Debug messages are being written. Callers can use
+// it to skip building expensive debug-only arguments.
+func Verbose() bool {
+	mu.Lock()
+	defer mu.Unlock()
+	return verbose && logFile != nil
+}
+
 // Debug logs a debug message (only when verbose).
 func Debug(format string, args ...interface{}) {
-	if !verbose || logFile == nil {
+	if !Verbose() {
 		return
 	}
 	write("DEBUG", format, args...)

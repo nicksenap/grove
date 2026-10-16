@@ -124,3 +124,19 @@ func TestLogRotation(t *testing.T) {
 		t.Errorf("expected at least 2 log files (rotation), got %d", logFiles)
 	}
 }
+
+func TestSetupClosesPreviousFile(t *testing.T) {
+	LogDir = t.TempDir()
+	Setup(false)
+	first := logFile
+
+	LogDir = t.TempDir()
+	Setup(false)
+
+	if _, err := first.Stat(); err == nil {
+		t.Error("previous log file should be closed after re-Setup")
+	}
+	if logFile == nil || logFile == first {
+		t.Error("Setup should open a new log file")
+	}
+}

@@ -7,10 +7,12 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/BurntSushi/toml"
 	"github.com/nicksenap/grove/internal/logging"
@@ -78,22 +80,70 @@ func runGit(dir string, args ...string) (string, error) {
 	cmd.Env = gitEnv
 	cmd.Stdin = devNull
 
+	start := time.Now()
 	out, err := cmd.CombinedOutput()
 	output := strings.TrimSpace(string(out))
+	cmdline := strings.Join(args, " ")
+	if logging.Verbose() {
+		logGitCall(dir, cmdline, time.Since(start), output, err)
+	}
 	if err != nil {
+		stderr := output
 		if isAuthError(output) {
-			return output, &GitError{
-				Cmd: strings.Join(args, " "),
-				Stderr: output + "\n\nHint: Check your SSH keys or credentials. " +
-					"Run 'ssh -T git@github.com' to test your connection.",
-			}
+			stderr += "\n\nHint: Check your SSH keys or credentials. " +
+				"Run 'ssh -T git@github.com' to test your connection."
 		}
-		return output, &GitError{
-			Cmd:    strings.Join(args, " "),
-			Stderr: output,
-		}
+		return output, &GitError{Cmd: cmdline, Stderr: stderr}
 	}
 	return output, nil
+}
+
+// maxTraceOutput caps how much of a failed git call's output goes into one
+// trace line, so a chatty clone failure can't evict the rest of grove.log
+// (1MB, rotated).
+const maxTraceOutput = 2048
+
+// logGitCall writes a debug trace line for a git invocation. On failure it
+// records git's own output (redacted, truncated), falling back to the exec
+// error when git printed nothing.
+func logGitCall(dir, cmdline string, elapsed time.Duration, output string, err error) {
+	status := "ok"
+	if err != nil {
+		reason := output
+		if reason == "" {
+			reason = err.Error()
+		}
+		// Redact before truncating: a cut inside a URL's userinfo would
+		// leave a partial token the redaction pattern can't match.
+		reason = truncateUTF8(redactCredentials(reason), maxTraceOutput)
+		status = "error: " + strings.ReplaceAll(reason, "\n", " | ")
+	}
+	logging.Debug("git %s (dir=%s) %s %s",
+		redactCredentials(cmdline), dir, elapsed.Round(time.Millisecond), status)
+}
+
+// truncateUTF8 caps s at max bytes without splitting a rune, appending a
+// marker when it cuts.
+func truncateUTF8(s string, max int) string {
+	if len(s) <= max {
+		return s
+	}
+	cut := max
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return s[:cut] + "...[truncated]"
+}
+
+// urlCredentials matches the userinfo part of a URL (scheme://user:pass@).
+// It deliberately also matches non-secret userinfo such as ssh://git@host;
+// we do not try to tell usernames from tokens.
+var urlCredentials = regexp.MustCompile(`(://)[^/@\s]+@`)
+
+// redactCredentials masks credentials embedded in URLs, since grove.log is
+// attached to bug reports.
+func redactCredentials(s string) string {
+	return urlCredentials.ReplaceAllString(s, "${1}***@")
 }
 
 // IsGitRepo checks if a directory is a git repository.
@@ -522,66 +572,6 @@ func PRStatus(path string) *PRInfo {
 	return nil
 }
 
-// PRRef holds the resolved head branch and metadata for a pull request.
-// Used to seed a workspace from a PR URL (check out the existing head branch).
-type PRRef struct {
-	Number      int    `json:"number"`
-	HeadRefName string `json:"headRefName"`
-	Title       string `json:"title"`
-	State       string `json:"state"`
-	URL         string `json:"url"`
-	// HeadRepositoryOwner is the owner of the head repo. For fork PRs this
-	// differs from the base repo owner, meaning origin/<head> won't exist.
-	HeadRepositoryOwner string `json:"headRepositoryOwner"`
-}
-
-// GhPRResolve resolves a pull request's head branch + metadata via the gh CLI.
-// repoSlug is "owner/repo"; host is the GitHub host ("" defaults to github.com,
-// gh honors GH_HOST / its own config for enterprise). Returns an error if gh is
-// unavailable or the PR cannot be resolved.
-func GhPRResolve(repoSlug string, number int, host string) (*PRRef, error) {
-	ghPath, err := exec.LookPath("gh")
-	if err != nil {
-		return nil, fmt.Errorf("gh CLI not found")
-	}
-	args := []string{"pr", "view", strconv.Itoa(number),
-		"--json", "number,headRefName,title,state,url,headRepositoryOwner"}
-	if repoSlug != "" {
-		args = append(args, "--repo", repoSlug)
-	}
-	cmd := exec.Command(ghPath, args...)
-	cmd.Stdin = nil
-	if host != "" {
-		cmd.Env = append(os.Environ(), "GH_HOST="+host)
-	}
-	out, err := cmd.Output()
-	if err != nil {
-		return nil, fmt.Errorf("gh pr view %d: %w", number, err)
-	}
-	// gh nests headRepositoryOwner as an object {login: ...}; decode loosely.
-	var raw struct {
-		Number              int    `json:"number"`
-		HeadRefName         string `json:"headRefName"`
-		Title               string `json:"title"`
-		State               string `json:"state"`
-		URL                 string `json:"url"`
-		HeadRepositoryOwner struct {
-			Login string `json:"login"`
-		} `json:"headRepositoryOwner"`
-	}
-	if err := json.Unmarshal(out, &raw); err != nil {
-		return nil, fmt.Errorf("parsing gh output: %w", err)
-	}
-	return &PRRef{
-		Number:              raw.Number,
-		HeadRefName:         raw.HeadRefName,
-		Title:               raw.Title,
-		State:               raw.State,
-		URL:                 raw.URL,
-		HeadRepositoryOwner: raw.HeadRepositoryOwner.Login,
-	}, nil
-}
-
 func ghPRStatus(path string) *PRInfo {
 	ghPath, err := exec.LookPath("gh")
 	if err != nil {
@@ -664,13 +654,6 @@ func ReadGroveConfig(repoPath string) (*models.GroveConfig, error) {
 	groveConfigCache[repoPath] = &groveConfigEntry{cfg: cfg, err: err}
 	groveConfigMu.Unlock()
 	return cfg, err
-}
-
-// ClearGroveConfigCache clears the cache. Call in tests.
-func ClearGroveConfigCache() {
-	groveConfigMu.Lock()
-	groveConfigCache = make(map[string]*groveConfigEntry)
-	groveConfigMu.Unlock()
 }
 
 func readGroveConfigFromDisk(repoPath string) (*models.GroveConfig, error) {

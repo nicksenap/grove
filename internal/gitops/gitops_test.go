@@ -833,6 +833,13 @@ func currentBranch(t *testing.T, repo string) string {
 	return run(t, repo, "git", "branch", "--show-current")
 }
 
+// ClearGroveConfigCache resets the ReadGroveConfig cache between test cases.
+func ClearGroveConfigCache() {
+	groveConfigMu.Lock()
+	groveConfigCache = make(map[string]*groveConfigEntry)
+	groveConfigMu.Unlock()
+}
+
 func TestCheckBranchName(t *testing.T) {
 	for _, ok := range []string{"feat-x", "erebe/feat-x", "a/b/c"} {
 		if err := CheckBranchName(ok); err != nil {

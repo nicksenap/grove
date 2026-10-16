@@ -19,8 +19,10 @@ Git Worktree Workspace Orchestrator — CLI tool invoked as `gw`. Manages multi-
 
 ## Development
 
-- Go 1.25+
-- Run `just check` for tests + vet
+- Go 1.26+ (see `go.mod`)
+- Run `just check` before pushing — unit tests, e2e (uncached, `-count=1`), vet, gofmt, gocyclo, staticcheck, deadcode. CI and release run exactly this recipe; add new checks to the Justfile, not the workflows. The pre-commit hook runs only the fast subset (`just test vet fmt-check`).
+- Lint tools are pinned in `go.mod` (`tool` directive) and run via `go tool`; bump with `go get -tool <pkg>@<version>`.
+- `deadcode` fails on functions unreachable from `main`; test-only helpers belong in `_test.go` files.
 - Run `just build` to build the `gw` binary
 - Run a single test: `go test ./internal/workspace -run TestName -v`
 - Run e2e tests: `just e2e` (Go tests in `e2e/`; set `GROVE_EXTERNAL_E2E=1` for the opt-in HTTPS clone)

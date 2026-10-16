@@ -1,12 +1,18 @@
 ---
 type: engineering validation guide
-title: Testing and Change Validation
-description: A practical guide to validating Grove at package, service, and compiled-binary boundaries. It maps focused prune and deletion invariants, isolated test seams, fixtures, and the repository commands used before merging.
-tags: [testing, validation, prune, cleanup, end-to-end]
+title: Testing and Quality Gates
+description: How to validate Grove from focused package tests through compiled-binary end-to-end scenarios and the CI or release gate. Maps the tests and injected seams that protect CLI behavior, workspace lifecycle, state persistence, Git integration, hooks, and logging.
+tags: [testing, quality-gates, end-to-end, ci, go]
 verified:
   - by: openwiki/0.5.2
-    at: 2026-09-19T14:39:28.658Z
+    at: 2026-10-13T16:45:10.957Z
 sources:
+  - id: openwiki-source-bf5be0c9253ed1d07b502e10
+    resource: repo://.githooks/pre-commit
+  - id: openwiki-source-164e2da859b5277df81c7d94
+    resource: repo://.github/workflows/ci.yml
+  - id: openwiki-source-4d1d392666be6dfdd7a91a2e
+    resource: repo://.github/workflows/release.yml
   - id: openwiki-source-8037e2358a2c4f9b2c722a11
     resource: repo://AGENTS.md
   - id: openwiki-source-4d743cc9a373dec1a2ed59bd
@@ -15,10 +21,22 @@ sources:
     resource: repo://cmd/prune.go
   - id: openwiki-source-640eefd40cff46943d0dff10
     resource: repo://e2e/environment_test.go
+  - id: openwiki-source-6b1859c6bc35c4f29682760b
+    resource: repo://e2e/lifecycle_test.go
+  - id: openwiki-source-f190971660c28b50aa32c21f
+    resource: repo://e2e/main_test.go
   - id: openwiki-source-b442d335606a7325d9a4c71e
     resource: repo://e2e/plugin_test.go
   - id: openwiki-source-cefc1b19c7f172de09e25b8a
     resource: repo://e2e/prune_test.go
+  - id: openwiki-source-758c5518e845e43d580022be
+    resource: repo://e2e/repositories_test.go
+  - id: openwiki-source-7bd911fdd3026b7b031a01e3
+    resource: repo://go.mod
+  - id: openwiki-source-f9f2d803ad5afd4bbb4215a4
+    resource: repo://internal/gitops/trace_test.go
+  - id: openwiki-source-536b4d5c5276f99a2df8ca1a
+    resource: repo://internal/logging/logging_test.go
   - id: openwiki-source-7db1ac449b77d0939ccc3956
     resource: repo://internal/operations/service_test.go
   - id: openwiki-source-9fa0f37ad88ce2a52ed9f800
@@ -39,158 +57,150 @@ sources:
     resource: repo://internal/workspace/remove_test.go
   - id: openwiki-source-c98f76c921b18fb02cf31e14
     resource: repo://internal/workspace/remove.go
+  - id: openwiki-source-7d98bfa7edf9d3027b817e8f
+    resource: repo://internal/workspace/sync_test.go
   - id: openwiki-source-14e6a4e1ddc06973b783ff20
     resource: repo://Justfile
-generated: { by: "openwiki/0.5.2", at: "2026-09-19T14:39:28.658Z" }
+generated: { by: "openwiki/0.5.2", at: "2026-10-13T16:45:10.957Z" }
 ---
 
-# Testing and Change Validation
+# Testing and Quality Gates
 
-Grove has three useful validation layers: focused package tests for a change, the repository quality gate, and end-to-end tests that invoke the compiled `gw` binary. Start narrow, preserve the complete failure output, and broaden only after the smallest relevant test is green.
+Grove has three complementary validation boundaries:
+
+1. **Focused package tests** prove a local parser, state transition, Git wrapper, or workspace invariant quickly.
+2. **`just check`** is the repository gate: unit tests, uncached compiled-binary e2e tests, and static quality checks.
+3. **End-to-end tests** invoke the `gw` executable in isolated temporary environments and verify user-visible behavior across the filesystem, Git, state, and hooks.
+
+Start with the narrowest boundary that owns the behavior, then run the full gate before pushing.
 
 ```mermaid
 flowchart TD
-    changed["Identify changed behavior"] --> focused["Run focused package test"]
-    focused --> pass1{"Pass"}
-    pass1 -->|"no"| fix["Inspect failure and revise"]
+    change["Identify changed behavior"] --> focused["Run focused package test"]
+    focused --> decision{"Pass"}
+    decision -->|"no"| fix["Inspect failure and revise"]
     fix --> focused
-    pass1 -->|"yes"| check["Run just check"]
-    check --> e2e["Run just e2e"]
-    e2e --> release["For release run go test ./... and release checks"]
+    decision -->|"yes"| gate["Run just check"]
+    gate --> ci["CI or release validation"]
 ```
 
-This diagram shows the recommended progression from a targeted proof to repository and binary-level validation.
+This flow shows the recommended progression from a fast local proof to the single repository quality gate used by automation.
 
-## Commands and test boundaries
+## Commands and what they cover
 
-Use the smallest command that proves the behavior under change:
+Use these recipes from the repository root:
 
 ```sh
-# One focused package test
-go test ./cmd -run 'TestParseMinAge|TestPruneCandidates' -v
-go test ./internal/workspace -run 'TestDeleteWithMissingDirectory|TestDeletePreflights' -v
+# One named unit test, with verbose output
+go test ./internal/workspace -run TestName -v
 
-# All Go package tests
+# Unit tests for command and internal packages (optional extra args are forwarded)
 just test
-# Equivalent: go test ./... [optional extra arguments]
+# Equivalent base command: go test ./cmd/... ./internal/...
 
-# Full local quality gate
+# The complete repository gate
 just check
 
-# Compiled-binary end-to-end suite
+# Build gw and run the compiled-binary suite without the Go test cache
 just e2e
+
+# Optional network-dependent clone coverage
+GROVE_EXTERNAL_E2E=1 GW_BIN="$PWD/gw" go test ./e2e -count=1
 ```
 
-`just test` runs `go test ./...`. `just check` runs `test`, `vet`, `fmt-check`, `gocyclo`, and `staticcheck`; `fmt-check` fails if `gofmt -l .` reports files and does not rewrite them. The complexity and static-analysis recipes install `gocyclo` or `staticcheck` when absent. Use `gofmt -w .` deliberately to repair formatting. AGENTS.md recommends `go test ./internal/workspace -run TestName -v` for a single test and `just e2e` for the e2e suite.
+Use the correctly cased environment variable in the last example: `GROVE_EXTERNAL_E2E=1`.
 
-For Cobra parsing and preview formatting, `cmd` is the narrowest boundary. For state persistence, operation ordering, candidate selection, and deletion lifecycle, prefer the owning `internal` package. `e2e` is reserved for observable CLI behavior, filesystem effects, Git registrations, and branch changes.
+`just test` covers `./cmd/...` and `./internal/...`; e2e is intentionally separate. `just check` is defined as `test e2e vet fmt-check gocyclo staticcheck deadcode`, so it runs:
 
-## Prune coverage
+- unit tests;
+- `just e2e`, which builds `gw` and runs `go test ./e2e -count=1` with `GW_BIN` set;
+- `go vet ./...`;
+- `fmt-check`, which fails when `gofmt -l .` lists a file (repair deliberately with `gofmt -w .`);
+- `go tool gocyclo -over 20 .`;
+- `go tool staticcheck ./...`; and
+- `go tool deadcode ./...`, whose output is itself a failure even though the tool exits successfully.
 
-`cmd/prune.go` owns `--min-age` parsing, candidate selection, preview rendering, and the loop that invokes deletion. `parseMinAge` trims input; accepts hours (`12h`), days (`7d`), weeks (`2w`), and bare numbers interpreted as days for compatibility; accepts zero; and rejects empty, negative, malformed, and unsupported-unit values. The command default is `7d`, while `--yes` and `--json` default to false.
+The lint tools are pinned in the `tool` directive in `go.mod` and are invoked with `go tool`; update a tool with `go get -tool <pkg>@<version>`. The deadcode gate reports functions unreachable from `main`. Keep helpers used only by tests in `_test.go` files rather than production files, or they can fail this gate.
 
-`TestParseMinAge` in `cmd/prune_test.go` is the compact parser contract. `TestPruneCommandDefaults` protects the CLI defaults independently. Keep both focused tests when changing flags or duration syntax.
+## Hooks, CI, and release validation
 
-Candidate selection has two independent inclusion rules:
+After `just dev`, the `.githooks/pre-commit` hook clears Git repository environment variables, sets `GIT_CEILING_DIRECTORIES=/`, and runs only the fast subset `just test vet fmt-check`. It does not run e2e, gocyclo, staticcheck, or deadcode; those remain part of `just check`.
 
-- a parseable `created_at` is at least `minAge` old; the age boundary is inclusive;
-- the workspace directory is missing on disk, regardless of age or whether its timestamp parses.
+CI's check job runs exactly `just check` after checking out the repository, selecting the Go version from `go.mod`, and installing `just`. Its separate install-script job runs only after that check succeeds. The release workflow uses the same `just check` gate before extracting release notes and invoking GoReleaser. Add new validation to the `Justfile` rather than duplicating it in either workflow.
 
-Selection preserves state order. A candidate retains its name, branch, creation timestamp, and computed `age_days`; a missing directory sets `missing: true`. `TestPruneCandidatesReportsAgeDays`, `TestPruneCandidatesIncludesMissingDirectoryRegardlessOfAge`, and `TestPruneCandidatesBoundaryAndUnparseable` cover age calculation, the inclusive boundary, invalid timestamps, injected existence checks, and missing-directory inclusion.
+## The e2e build and cache boundary
 
-Preview output is part of the CLI contract: JSON emits `[]` rather than `null` when there are no candidates, and JSON candidates expose `missing`. Human output uses a `Note` column with `directory missing`; after deletion it reports `deleted`, and a failed deletion reports `FAILED: ...`. `TestWritePrunePreviewJSON` and `TestWritePrunePreviewEmptyJSON` cover JSON serialization and the empty case.
+The e2e package tests the compiled binary, not internal Go services. `TestMain` uses `GW_BIN` when supplied; otherwise it runs `go build -o <temporary path> ./cmd/gw`, verifies that the resulting path exists and is executable, and then runs the tests. `just e2e` builds the repository's `gw` first and supplies its absolute path through `GW_BIN`.
 
-With `--yes`, `runPrune` passes every candidate through the same forced workspace deletion service used by `gw delete`. `deleteCandidates` does not stop at the first failure: it attempts all candidates, mutates only the failed candidate's `Error`, and returns joined errors naming each failed workspace. `TestDeleteCandidatesContinuesAfterFailure` protects all three properties: ordering, continued attempts, and per-candidate error mutation.
+This is a deliberate cache boundary. The Justfile keeps e2e separate because it shells out to `go build`; the Go test cache cannot infer all source changes behind that separately built binary. The recipe therefore runs `go test ./e2e -count=1`.
 
-```mermaid
-flowchart TD
-    load["Load state"] --> select["Select old or missing records"]
-    select --> preview{"--yes?"}
-    preview -->|"no"| render["Render table or JSON preview"]
-    preview -->|"yes"| each["Attempt forced deletion for every candidate"]
-    each --> result["Record Error on failed candidate"]
-    result --> renderDeleted["Render results and return joined errors"]
-```
-
-This flow shows that preview is non-destructive and that deletion attempts are independent rather than fail-fast.
-
-## Workspace deletion invariants and seams
-
-Workspace deletion is a two-phase operation. `internal/workspace/remove.go` validates the state record and preflights every repository, runs teardown hooks, then takes the state lock. Under the lock it reloads and rechecks state, moves an existing workspace root into `.trash` or recognizes an already-missing root, prunes Git worktree registrations, removes the state record, and attempts branch cleanup. Only after state removal does it schedule best-effort trash unlinking.
-
-A missing root is a stale record, not a no-op: forced deletion still removes Git worktree registrations, state, and eligible branches, and does not quarantine anything. Existing-root deletion can quarantine asynchronously. If spawning the unlink fails, cleanup falls back to synchronous unlinking; leftover trash must not keep a deleted workspace in state or block immediate name reuse.
-
-The neighboring `internal/workspace/remove_test.go` tests protect the failure boundaries that must not regress:
-
-- `TestDeletePreflightsEveryRepoBeforeRemovingAny` requires all repositories to pass preflight before mutation begins.
-- Dirty worktrees fail safe without `Force`; prune uses force because it is an explicit destructive cleanup path.
-- Worktree-prune or state-removal failures restore a quarantined root and preserve state when possible.
-- Successful deletion removes state and eligible branches, while `PreserveBranch` and unmerged-branch policy protect user work.
-- `TestDeleteWithMissingDirectoryCleansStaleRecord` verifies stale-record cleanup, Git registration removal, and an empty `.trash`.
-- The unlink tests verify ordering, asynchronous scheduling, the spawn-failure fallback, safe trash-path validation, and immediate name reuse.
-
-Use the injected seams rather than sleeps or fragile filesystem races: workspace tests can replace `PruneWorktree`, `RepairWorktree`, `RemoveState`, `StartUnlink`, and `UnlinkTrash`. The operation service also accepts injected workspace, state, hook, and warning functions. Its tests verify hook ordering, abort-versus-warning behavior, and that delete passes the authorized `ExpectedCreatedAt` and `ExpectedPath` identity to the lower-level service.
-
-```mermaid
-sequenceDiagram
-    participant Caller
-    participant Operations
-    participant Workspace
-    participant State
-    participant Git
-    participant Trash
-    Caller->>Operations: Delete request
-    Operations->>State: Load workspace and run pre_delete
-    Operations->>Workspace: DeleteWithOptions with expected identity
-    Workspace->>Workspace: Preflight all repositories
-    Workspace->>State: Lock and reload
-    alt root exists
-        Workspace->>Trash: Rename root into .trash
-    else root missing
-        Workspace->>Workspace: Continue as stale record
-    end
-    Workspace->>Git: Prune worktree registrations
-    Workspace->>State: Remove workspace record
-    Workspace->>Git: Delete eligible branches
-    Workspace-->>Operations: Return result
-    Workspace->>Trash: Schedule best-effort unlink
-```
-
-This sequence shows the operation-level hook boundary and the state-safe deletion ordering.
-
-## State fixtures and package tests
-
-State tests use `t.TempDir()` to create an isolated `.grove` directory and `state.NewStore`, initialize an empty JSON array, and then exercise load, add, update, rename, remove, JSON persistence, atomic writes, and process serialization. This keeps tests independent of a developer's `~/.grove` and makes lock behavior reproducible.
-
-The workspace test helper similarly creates temporary Grove, workspace, and repository directories, initializes a temporary `state.Store`, and constructs a service with test-local configuration and stats. It creates real local Git repositories only where Git behavior matters. Preserve this boundary when adding tests: use fakes for ordering and injected failures, and use the temporary service environment for worktree, branch, quarantine, and state invariants.
-
-The operations tests are intentionally not shell-level tests. They use a fake workspace/store and record calls to prove that creation runs `post_create` after state creation, deletion runs `pre_delete` first, aborting hooks prevent deletion, warning hooks permit it, and identity checks are propagated. This is the right seam for lifecycle policy; `internal/workspace` remains focused on filesystem and Git mechanics.
-
-## End-to-end environment and scope
-
-The `e2e` package tests Grove as a user would, not by calling internal services. `TestMain` uses `GW_BIN` when supplied; otherwise it builds `./cmd/gw` into a temporary executable. `newEnv` gives each test a temporary `HOME`, repositories, `.grove` directory, workspace directory, Git identity, and a 45-second per-command timeout. Commands retain stdout, stderr, exit code, and errors; failed assertions include the complete invocation and both output streams.
-
-The required suite uses local repositories and `file://` remotes, including workspace lifecycle, repository operations, hooks, plugins, prune, and doctor. The public HTTPS clone test is opt-in:
+Each e2e environment gets an independent temporary `HOME`, repository directory, Grove state and workspace directories, Git identity, and command timeout. Required scenarios use local repositories and `file://` remotes, so the normal gate does not require network access. The public HTTPS clone check is skipped unless explicitly opted in:
 
 ```sh
 GROVE_EXTERNAL_E2E=1 GW_BIN="$PWD/gw" go test ./e2e -count=1
 ```
 
-`GROVE_EXTERNAL_E2E=1` enables only the network-dependent clone check. `GW_BIN` points tests at an already-built binary; if unset, e2e builds one itself. `just e2e` builds `gw` first and runs `GW_BIN="<repository>/gw" go test ./e2e -count=1` without enabling external network coverage.
+`GROVE_EXTERNAL_E2E=1` enables only that network-dependent check. Set `GW_BIN` when testing a prebuilt executable; leave it unset when the e2e harness should build a temporary one. A focused e2e scenario can be run with `go test ./e2e -run TestPrune -count=1`.
 
-The prune e2e tests are the user-visible regression suite:
+```mermaid
+sequenceDiagram
+    participant Test as go test e2e
+    participant Main as e2e TestMain
+    participant Build as go build
+    participant Binary as gw binary
+    participant Env as isolated test environment
+    Test->>Main: start package
+    alt GW_BIN supplied
+        Main->>Binary: validate supplied executable
+    else GW_BIN absent
+        Main->>Build: build ./cmd/gw in temporary directory
+        Build-->>Main: executable path
+    end
+    Main->>Env: run scenarios with temporary HOME and repositories
+    Env->>Binary: invoke CLI commands
+    Binary-->>Env: stdout stderr exit status and filesystem effects
+```
 
-- `TestPruneListsOldWorkspacesWithoutDeleting` proves preview JSON and dry-run non-deletion;
-- `TestPruneYesDeletesOldWorkspaces` proves old-workspace deletion, recent-workspace retention, source-branch deletion, state removal, and filesystem removal;
-- `TestPruneDefaultMinAgeKeepsRecentWorkspaces` protects the default `7d` threshold.
+This sequence shows why e2e validates the executable boundary and why `GW_BIN` controls whether the harness builds or reuses a binary.
 
-Run one scenario with `go test ./e2e -run TestPrune -count=1`; run the complete compiled-binary suite with `just e2e`. The e2e cleanup helper waits for background `unlink-trash` work before temporary-directory cleanup, so tests do not race asynchronous deletion.
+## Focused tests by behavioral seam
+
+### CLI parsing, prune selection, and output
+
+`cmd/prune_test.go` is the narrow boundary for prune semantics. Keep parser and flag tests close to the command:
+
+- `TestParseMinAge` covers hours (`12h`), days (`7d`), weeks (`2w`), zero, bare numbers interpreted as days, and rejection of empty, negative, malformed, or unsupported-unit values.
+- `TestPruneCommandDefaults` protects the `7d` default and the false defaults for `--yes` and `--json`.
+- Candidate tests protect the inclusive age boundary, computed `age_days`, state order, unparseable timestamps, and inclusion of a missing directory regardless of age.
+- Preview tests protect JSON `[]` rather than `null`, the `missing` field, and serialization; deletion tests prove every candidate is attempted, failures are recorded on the candidate, and errors are joined rather than fail-fast.
+
+The corresponding e2e tests (`TestPruneListsOldWorkspacesWithoutDeleting`, `TestPruneYesDeletesOldWorkspaces`, `TestPruneDefaultMinAgeKeepsRecentWorkspaces`, and stale-directory coverage) protect the observable contract: preview does not delete, `--yes` removes old workspaces and their source branches, recent workspaces remain, and a missing directory is still cleaned from state and Git registration.
+
+### Workspace lifecycle and deletion safety
+
+`internal/workspace` owns filesystem and Git mechanics. Its temporary test environment creates real local repositories only where worktree or branch behavior matters; injected functions are preferred for ordering and failure tests.
+
+Deletion is a two-phase operation: preflight all repositories before mutation, then lock and reload state before moving an existing root to `.trash`, pruning Git worktree registrations, removing state, and cleaning eligible branches. Trash unlinking is best effort and can be asynchronous. If the root is already missing, it is treated as a stale record: forced deletion still cleans registrations, state, and eligible branches without quarantining a nonexistent root.
+
+`remove_test.go` protects the important failure boundaries: dirty worktrees fail safely without `Force`, `Force` removes them, preflight does not partially mutate, prune or state-removal failures restore the root and preserve state when possible, branch-preservation and unmerged-branch policy are honored, stale records are cleaned, and trash unlinking has safe-path, spawn-fallback, ordering, and immediate-name-reuse coverage. Use the injected `PruneWorktree`, `RepairWorktree`, `RemoveState`, `StartUnlink`, and `UnlinkTrash` seams rather than sleeps or filesystem races.
+
+Other focused workspace tests map to distinct seams: `create_test.go` covers rollback and multi-repository creation, `sync_test.go` covers rebase and dirty/conflict behavior, `reset_test.go` covers branch reset safety, `prune_branches_test.go` covers unused branch selection, and `doctor_test.go` covers stale worktrees and trash repair.
+
+### State, Git, logging, and lifecycle hooks
+
+`internal/state/state_test.go` uses `t.TempDir()` and a temporary `state.Store` to exercise load, add, update, rename, remove, JSON persistence, atomic writes, and process-level lock serialization. This keeps tests independent of `~/.grove` and makes concurrent-update behavior reproducible.
+
+`internal/gitops` tests use local repositories to cover worktree and branch operations, remote and base-branch resolution, clone behavior, and Git error handling. `trace_test.go` specifically protects verbose command tracing, absence of debug traces when not verbose, credential redaction before truncation, bounded output, Git stderr preservation, and valid UTF-8 truncation. `internal/logging/logging_test.go` covers log-file creation in both modes, debug suppression, info and error levels, rotation, and closing the previous log file on reconfiguration.
+
+Lifecycle behavior is best tested at two levels. Operations or workspace package tests inject fake stores, workspace services, and hook functions to prove ordering and abort-versus-warning policy without spawning a shell. The e2e lifecycle tests verify the user boundary: `post_create` and `pre_delete` run, source placeholders are populated, streaming metadata is visible, `on_failure = "abort"` blocks creation, and the default failure policy warns and continues. `--no-hooks` and `-n` must skip both lifecycle hooks.
 
 ## Change checklist
 
-1. Identify the owning boundary and run its narrowest named test.
-2. For prune changes, test every duration unit, compatibility and rejection case, the inclusive age boundary, invalid timestamps, missing-directory selection, JSON `missing` and `[]`, table notes, all-candidate attempts, and per-candidate errors.
-3. For deletion changes, test preflight ordering, tolerant stale-record cleanup, Git registration removal, state cleanup, quarantine and rollback, branch policy, and asynchronous unlinking.
-4. For operation or hook changes, test ordering and abort-versus-warning policy with injected dependencies rather than invoking a shell.
-5. Run `just test`, `just check`, and `just e2e`; add `GROVE_EXTERNAL_E2E=1` only when network-dependent coverage is intentional.
-6. For release work, also run `go test ./...` and verify installer and changelog/tag readiness before `just release`.
+1. Identify the owning package and run its narrowest named test.
+2. For CLI changes, cover accepted, rejected, default, boundary, and output cases.
+3. For workspace changes, cover preflight ordering, dirty and force behavior, rollback, stale records, branch policy, and trash lifecycle.
+4. For state or Git changes, use temporary repositories and stores; use injected failures for ordering and rollback.
+5. For hooks, test lifecycle policy with injected dependencies and verify the observable path with e2e.
+6. Run `just check` before pushing. Use `just e2e` or `go test ./e2e -run TestName -count=1` for focused executable scenarios.
+7. Opt into `GROVE_EXTERNAL_E2E=1` only when network-dependent coverage is intentional.
+8. For a release, update `CHANGELOG.md`, commit, and use `just release X.Y.Z`; the release workflow has already required the same `just check` gate before GoReleaser.
