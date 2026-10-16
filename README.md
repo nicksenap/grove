@@ -86,7 +86,11 @@ Grove ships an [agent skill](skills/grove/SKILL.md) that teaches Claude Code, Co
 npx skills add nicksenap/grove --skill grove
 ```
 
-Or point your agent at it directly: *"Read https://raw.githubusercontent.com/nicksenap/grove/master/skills/grove/SKILL.md and set up Grove for me."*
+No skills installer? Paste this prompt into your agent instead:
+
+```text
+Read https://raw.githubusercontent.com/nicksenap/grove/master/skills/grove/SKILL.md and set up Grove for me.
+```
 
 ## Usage
 
