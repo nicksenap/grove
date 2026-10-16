@@ -232,10 +232,18 @@ func (s *Service) checkWorkspaceExists(ws models.Workspace, fix bool) (int, []mo
 		Workspace:       ws.Name,
 		Repo:            nil,
 		Issue:           "workspace directory missing",
-		SuggestedAction: "remove stale state entry",
+		SuggestedAction: "remove stale record, prune git worktrees, delete workspace branch",
 	}
 	if fix {
-		s.State.RemoveWorkspace(ws.Name)
+		// Same cleanup as gw delete / gw prune for a missing directory. Doctor
+		// already holds the state lock, so call the locked variant; it skips
+		// teardown hooks, which have no worktree to run in anyway.
+		deleted, _, err := s.deleteLocked(ws.Name, RemoveOptions{Force: true})
+		if err != nil {
+			issue.Issue += "; cleanup failed: " + err.Error()
+			return 0, []models.DoctorIssue{issue}
+		}
+		s.Stats.RecordDeleted(*deleted)
 		return 1, []models.DoctorIssue{issue}
 	}
 	return 0, []models.DoctorIssue{issue}

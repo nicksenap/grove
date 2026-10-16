@@ -34,7 +34,7 @@ Global flags: `--verbose` (debug log to `~/.grove/grove.log`), `-n`/`--no-hooks`
 | `gw repos` | `gw repos -o name\|json` | Discovered repos and remotes |
 | `gw preset add` | `gw preset add NAME -r a,b` | No `-r` → picker |
 | `gw preset list` / `show` / `remove` | `gw preset list --json`, `gw preset show NAME --json`, `gw preset remove NAME` | `remove` without NAME → picker |
-| `gw doctor` | `gw doctor --json`; `--fix` repairs | `--json` prints `null` (not `[]`) when healthy. `--fix` removes stale state and trash. |
+| `gw doctor` | `gw doctor --json`; `--fix` repairs | `--json` prints `null` (not `[]`) when healthy. `--fix` removes stale state and trash; for a workspace whose directory is gone it also prunes worktree registrations and force-deletes the workspace branch, like `gw delete`. |
 | `gw shell-init` | `gw shell-init [--shell nu]` | For the user's rc file only; agents never need it |
 | `gw plugin` | `install OWNER/REPO`, `list --json`, `search [term] --json`, `upgrade [name]`, `remove NAME` | No prompts |
 | `gw stats` | `gw stats` | Human-only output |

@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/nicksenap/grove/internal/gitops"
 )
 
 func TestDoctorHealthy(t *testing.T) {
@@ -83,6 +85,34 @@ func TestDoctorDetectsMissingWorkspaceDir(t *testing.T) {
 	}
 	if !found {
 		t.Error("expected 'workspace directory missing' issue")
+	}
+}
+
+// doctor --fix cleans a workspace whose directory vanished the same way
+// gw prune does: state entry, git worktree registration, and branch.
+func TestDoctorFixCleansMissingWorkspaceDir(t *testing.T) {
+	env := setupTestEnv(t)
+	repo := env.createRepo("api")
+	env.createWorkspace("ghost-ws", "feat/ghost", []string{"api"})
+	wtPath := filepath.Join(env.wsDir, "ghost-ws", "api")
+	os.RemoveAll(filepath.Join(env.wsDir, "ghost-ws"))
+
+	_, fixed, err := env.svc.Doctor(true)
+	if err != nil {
+		t.Fatalf("doctor fix: %v", err)
+	}
+	if fixed != 1 {
+		t.Errorf("fixed = %d, want 1", fixed)
+	}
+
+	if ws, _ := env.svc.State.GetWorkspace("ghost-ws"); ws != nil {
+		t.Error("state entry still present")
+	}
+	if out := env.run(repo, "git", "worktree", "list", "--porcelain"); strings.Contains(out, wtPath) {
+		t.Errorf("worktree registration for %s still present:\n%s", wtPath, out)
+	}
+	if gitops.BranchExists(repo, "feat/ghost") {
+		t.Error("workspace branch feat/ghost still present")
 	}
 }
 
