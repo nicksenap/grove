@@ -78,6 +78,16 @@ gw create -b feat/login -r svc-a,svc-b # create the feat-login workspace across 
 gw status feat-login                   # see every repo's branch and git status in one table
 ```
 
+### Let your coding agent drive it
+
+Grove ships an [agent skill](skills/grove/SKILL.md) that teaches Claude Code, Codex, Cursor, pi, and other skill-aware agents to set up Grove and run `gw` safely: explicit flags instead of pickers, JSON output, and which commands destroy work.
+
+```bash
+npx skills add nicksenap/grove --skill grove
+```
+
+Or point your agent at it directly: *"Read https://raw.githubusercontent.com/nicksenap/grove/master/skills/grove/SKILL.md and set up Grove for me."*
+
 ## Usage
 
 ```bash
@@ -167,5 +177,6 @@ If you used the install script, re-run it to get the latest release.
 - [Hooks](docs/hooks.md) — global hooks and per-repo `.grove.toml` hooks
 - [Plugins](docs/plugins.md) — extend `gw` with external commands
 - [AI coding tools](docs/ai-tools.md) — vendor-neutral agent workflows
+- [Agent skill](skills/grove/SKILL.md) — teach a coding agent to use `gw`
 
 Contributors can start with the [Architecture](openwiki/architecture.md) and [Integrations](openwiki/integrations.md) notes.

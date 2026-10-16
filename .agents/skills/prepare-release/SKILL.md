@@ -1,6 +1,8 @@
 ---
 name: prepare-release
 description: Prepare Grove release notes from commits since the latest tag. Use when asked to draft or prepare a release.
+metadata:
+  internal: true
 ---
 
 # Prepare a Grove release
