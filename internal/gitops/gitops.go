@@ -744,3 +744,15 @@ func FetchPrune(repo string) error {
 	_, err := runGit(repo, "fetch", "--prune", "--quiet", "origin")
 	return err
 }
+
+// CheckBranchName reports whether name is a valid git branch name, using
+// `git check-ref-format --branch`. It needs no repository.
+func CheckBranchName(name string) error {
+	if strings.HasPrefix(name, "-") {
+		return fmt.Errorf("invalid branch name %q", name)
+	}
+	if _, err := runGit("", "check-ref-format", "--branch", name); err != nil {
+		return fmt.Errorf("invalid branch name %q", name)
+	}
+	return nil
+}

@@ -17,7 +17,7 @@ func TestAddReposSuccess(t *testing.T) {
 
 	env.createWorkspace("add-ws", "feat/add", []string{"api"})
 
-	err := env.svc.AddRepos("add-ws", []string{"web"}, env.repoMap)
+	_, err := env.svc.AddRepos("add-ws", []string{"web"}, env.repoMap)
 	if err != nil {
 		t.Fatalf("add: %v", err)
 	}
@@ -40,7 +40,7 @@ func TestAddReposAlreadyPresent(t *testing.T) {
 
 	// Adding same repo again should be a no-op without wait progress.
 	output := captureStderr(t, func() {
-		if err := env.svc.AddRepos("dup-ws", []string{"api"}, env.repoMap); err != nil {
+		if _, err := env.svc.AddRepos("dup-ws", []string{"api"}, env.repoMap); err != nil {
 			t.Fatalf("add duplicate: %v", err)
 		}
 	})
@@ -58,7 +58,7 @@ func TestAddReposNotFound(t *testing.T) {
 	env := setupTestEnv(t)
 	_ = env
 
-	err := env.svc.AddRepos("nonexistent", []string{"api"}, env.repoMap)
+	_, err := env.svc.AddRepos("nonexistent", []string{"api"}, env.repoMap)
 	if err == nil {
 		t.Error("expected error")
 	}
@@ -76,7 +76,7 @@ func TestAddReposRollsBackEarlierAdditions(t *testing.T) {
 	conflictPath := filepath.Join(env.dir, "worker-conflict")
 	env.run(worker, "git", "worktree", "add", "-q", "-b", "feat/add-rollback", conflictPath)
 
-	err := env.svc.AddRepos("add-rollback", []string{"web", "worker"}, env.repoMap)
+	_, err := env.svc.AddRepos("add-rollback", []string{"web", "worker"}, env.repoMap)
 	if err == nil || !strings.Contains(err.Error(), "worker") {
 		t.Fatalf("expected worker conflict, got %v", err)
 	}
@@ -105,7 +105,7 @@ func TestAddReposRollbackPreservesPreexistingBranch(t *testing.T) {
 	conflictPath := filepath.Join(env.dir, "worker-preserve-conflict")
 	env.run(worker, "git", "worktree", "add", "-q", "-b", "feat/add-preserve", conflictPath)
 
-	err := env.svc.AddRepos("add-preserve", []string{"web", "worker"}, env.repoMap)
+	_, err := env.svc.AddRepos("add-preserve", []string{"web", "worker"}, env.repoMap)
 	if err == nil {
 		t.Fatal("expected worker conflict")
 	}
@@ -133,7 +133,7 @@ func TestAddReposCleansBranchWhenWorktreeAddFails(t *testing.T) {
 		t.Fatalf("write blocked path: %v", err)
 	}
 
-	if err := env.svc.AddRepos("add-provision-fail", []string{"web"}, env.repoMap); err == nil {
+	if _, err := env.svc.AddRepos("add-provision-fail", []string{"web"}, env.repoMap); err == nil {
 		t.Fatal("expected worktree add failure")
 	}
 	if gitops.BranchExists(web, "feat/add-provision-fail") {
@@ -320,7 +320,7 @@ func TestAddReposBranchConflict(t *testing.T) {
 	// feat/conflict. This should work because it's a different branch.
 	// But adding web with a branch that already has a worktree should fail.
 	// The branch "feat/conflict" already has a worktree, so adding it again should error.
-	err := env.svc.AddRepos("ws2", []string{"web"}, env.repoMap)
+	_, err := env.svc.AddRepos("ws2", []string{"web"}, env.repoMap)
 	// This will try to create branch "feat/other" on "web" — should work (different branch)
 	if err != nil {
 		t.Fatalf("adding web with different branch should succeed: %v", err)
@@ -347,7 +347,7 @@ func TestAddReposRunsSetupHooks(t *testing.T) {
 	}
 	defer func() { env.svc.RunCmd = origRunCmd }()
 
-	env.svc.AddRepos("setup-add-ws", []string{"web"}, env.repoMap)
+	_, _ = env.svc.AddRepos("setup-add-ws", []string{"web"}, env.repoMap)
 
 	found := false
 	for _, c := range setupCalls {
@@ -393,7 +393,7 @@ func TestAddReposShowsProgressOnStderr(t *testing.T) {
 			}
 
 			output := captureStderr(t, func() {
-				if err := env.svc.AddRepos(wsName, tt.toAdd, env.repoMap); err != nil {
+				if _, err := env.svc.AddRepos(wsName, tt.toAdd, env.repoMap); err != nil {
 					t.Fatalf("add repos: %v", err)
 				}
 			})

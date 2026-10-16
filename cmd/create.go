@@ -169,32 +169,6 @@ var createCmd = &cobra.Command{
 			name = deriveName(branch)
 		}
 
-		// --replace: delete the current workspace (detected from cwd) before creating the new one.
-		replacedName := ""
-		if createReplace {
-			cwd, err := os.Getwd()
-			if err != nil {
-				exitError("cannot determine working directory: " + err.Error())
-			}
-			currentWs, _ := state.FindWorkspaceByPath(cwd)
-			if currentWs == nil {
-				exitError("--replace requires running from inside an existing workspace")
-			}
-			if currentWs.Name == name {
-				exitError("--replace would collide: new workspace name matches the current one (" + name + "). Pass a different NAME.")
-			}
-			if !createForce {
-				if !console.Confirm("Delete workspace "+currentWs.Name+" and replace with "+name+"?", false) {
-					return
-				}
-			}
-			console.Infof("Replacing workspace: deleting %s", currentWs.Name)
-			if _, err := operations.NewService().Delete(operations.DeleteRequest{Name: currentWs.Name}); err != nil {
-				exitError("failed to delete current workspace: " + err.Error())
-			}
-			replacedName = currentWs.Name
-		}
-
 		// Build provenance + branch-mode options. A source URL is opaque to core;
 		// --track checks out an existing remote branch (e.g. a PR head) instead
 		// of creating a new one, falling back to create-mode if it is missing.
@@ -218,7 +192,45 @@ var createCmd = &cobra.Command{
 			opts.BranchMode = workspace.BranchModeTrack
 		}
 
-		if _, err := operations.NewService().Create(operations.CreateRequest{Name: name, Options: opts}); err != nil {
+		// Resolve the branch before --replace deletes anything, so a failing
+		// resolve_branch hook leaves the current workspace untouched.
+		svc := operations.NewService()
+		req, err := svc.ResolveBranch(operations.CreateRequest{Name: name, Options: opts})
+		if err != nil {
+			exitError(err.Error())
+		}
+
+		// --replace: delete the current workspace (detected from cwd) before creating the new one.
+		replacedName := ""
+		if createReplace {
+			cwd, err := os.Getwd()
+			if err != nil {
+				exitError("cannot determine working directory: " + err.Error())
+			}
+			currentWs, _ := state.FindWorkspaceByPath(cwd)
+			if currentWs == nil {
+				exitError("--replace requires running from inside an existing workspace")
+			}
+			if currentWs.Name == name {
+				exitError("--replace would collide: new workspace name matches the current one (" + name + "). Pass a different NAME.")
+			}
+			if !createForce {
+				if !console.Confirm("Delete workspace "+currentWs.Name+" and replace with "+name+"?", false) {
+					return
+				}
+			}
+			console.Infof("Replacing workspace: deleting %s", currentWs.Name)
+			if _, err := svc.Delete(operations.DeleteRequest{Name: currentWs.Name}); err != nil {
+				exitError("failed to delete current workspace: " + err.Error())
+			}
+			replacedName = currentWs.Name
+		}
+
+		result, err := svc.Create(req)
+		if result.Created && result.Workspace.Branch != branch {
+			console.Infof("Branch: %s (from resolve_branch)", result.Workspace.Branch)
+		}
+		if err != nil {
 			if replacedName != "" {
 				exitError("failed to create new workspace (old workspace " + replacedName + " was already deleted): " + err.Error())
 			}
