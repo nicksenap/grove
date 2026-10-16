@@ -190,3 +190,57 @@ func TestFinalCleanup(t *testing.T) {
 		t.Fatalf("expected 0 workspaces, got %d", got)
 	}
 }
+
+func TestCreateResolveBranchHook(t *testing.T) {
+	env := newEnv(t)
+	env.createRepo("svc-auth")
+	env.init()
+	env.writeConfig(`[hooks]
+resolve_branch = "echo erebe/{branch}"
+`)
+
+	res := env.mustGW("create", "--branch", "feat-foobar", "--repos", "svc-auth")
+	env.requireContains(res.combined(), "Branch: erebe/feat-foobar", "resolved branch notice")
+	ws := env.showWorkspace("feat-foobar")
+	if ws.Branch != "erebe/feat-foobar" {
+		t.Fatalf("workspace branch = %q, want erebe/feat-foobar", ws.Branch)
+	}
+	if got := env.currentBranch(env.worktree("feat-foobar", "svc-auth")); got != "erebe/feat-foobar" {
+		t.Fatalf("worktree branch = %q, want erebe/feat-foobar", got)
+	}
+
+	// --no-hooks skips the resolver: the branch is used exactly as typed.
+	env.mustGW("--no-hooks", "create", "raw-ws", "--branch", "feat-raw", "--repos", "svc-auth")
+	if got := env.showWorkspace("raw-ws").Branch; got != "feat-raw" {
+		t.Fatalf("--no-hooks branch = %q, want feat-raw", got)
+	}
+}
+
+func TestCreateResolveBranchFailureCreatesNothing(t *testing.T) {
+	env := newEnv(t)
+	env.createRepo("svc-auth")
+	env.init()
+	env.writeConfig(`[hooks]
+resolve_branch = "echo no-namer-configured >&2; exit 1"
+`)
+
+	res := env.gw("create", "--branch", "feat-x", "--repos", "svc-auth").mustFail(t)
+	env.requireContains(res.combined(), "no-namer-configured", "resolver stderr")
+	if got := len(env.listWorkspaces()); got != 0 {
+		t.Fatalf("expected no workspaces after resolver failure, got %d", got)
+	}
+}
+
+func TestReplaceKeepsOldWorkspaceWhenResolverFails(t *testing.T) {
+	env := newEnv(t)
+	env.createRepo("svc-auth")
+	env.init()
+	env.mustGW("create", "old-ws", "--branch", "feat-old", "--repos", "svc-auth")
+	env.writeConfig(`[hooks]
+resolve_branch = "exit 1"
+`)
+
+	env.gwIn(env.workspacePath("old-ws"), "create", "new-ws", "--branch", "feat-new",
+		"--repos", "svc-auth", "--replace", "--force").mustFail(t)
+	env.showWorkspace("old-ws") // fails the test if old-ws was deleted
+}

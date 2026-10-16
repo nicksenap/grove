@@ -135,6 +135,13 @@ base_branch = "stage"   # branch from origin/stage instead of origin/main
 setup = "pnpm install"  # run after the worktree is created
 ```
 
+To namespace your branches, add a `resolve_branch` hook to `~/.grove/config.toml`. `gw create -b feat-login` then creates workspace `feat-login` on branch `nick/feat-login`. See [docs/hooks.md](docs/hooks.md#resolving-the-branch-name).
+
+```toml
+[hooks]
+resolve_branch = "echo nick/{branch}"
+```
+
 Presets, plugins, hooks, and the full command reference are covered in [Workflows](openwiki/workflows.md) and [Operations](openwiki/operations.md).
 
 ### Integrations

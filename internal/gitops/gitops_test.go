@@ -839,3 +839,16 @@ func ClearGroveConfigCache() {
 	groveConfigCache = make(map[string]*groveConfigEntry)
 	groveConfigMu.Unlock()
 }
+
+func TestCheckBranchName(t *testing.T) {
+	for _, ok := range []string{"feat-x", "erebe/feat-x", "a/b/c"} {
+		if err := CheckBranchName(ok); err != nil {
+			t.Errorf("CheckBranchName(%q) = %v, want nil", ok, err)
+		}
+	}
+	for _, bad := range []string{"bad..name", "has space", "trailing/", "x.lock", "-dash"} {
+		if err := CheckBranchName(bad); err == nil {
+			t.Errorf("CheckBranchName(%q) = nil, want error", bad)
+		}
+	}
+}

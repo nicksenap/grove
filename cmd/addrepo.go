@@ -7,6 +7,7 @@ import (
 	"github.com/nicksenap/grove/internal/console"
 	"github.com/nicksenap/grove/internal/discover"
 	"github.com/nicksenap/grove/internal/gitops"
+	"github.com/nicksenap/grove/internal/operations"
 	"github.com/nicksenap/grove/internal/picker"
 	"github.com/nicksenap/grove/internal/workspace"
 	"github.com/spf13/cobra"
@@ -76,7 +77,8 @@ var addRepoCmd = &cobra.Command{
 			repoNames = selected
 		}
 
-		if err := workspace.NewService().AddRepos(ws.Name, repoNames, repoMap); err != nil {
+		req := operations.AddReposRequest{Name: ws.Name, Repos: repoNames, RepoMap: repoMap}
+		if err := operations.NewService().AddRepos(req); err != nil {
 			exitError(err.Error())
 		}
 	},

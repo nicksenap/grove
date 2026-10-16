@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 
 	"github.com/nicksenap/grove/internal/console"
+	"github.com/nicksenap/grove/internal/gitops"
 	"github.com/nicksenap/grove/internal/lifecycle"
 	"github.com/nicksenap/grove/internal/models"
 	"github.com/nicksenap/grove/internal/workspace"
@@ -18,6 +19,7 @@ import (
 type WorkspaceService interface {
 	CreateWithOpts(name string, opts workspace.CreateOpts) error
 	DeleteWithOptions(name string, opts workspace.RemoveOptions) error
+	AddRepos(name string, repoNames []string, repoMap map[string]string) (int, error)
 }
 
 // WorkspaceStore reads the completed workspace used to build lifecycle context.
@@ -34,17 +36,20 @@ type Service struct {
 	Workspace WorkspaceService
 	Store     WorkspaceStore
 	RunHook   func(string, lifecycle.Vars) error
-	Warn      func(string)
+	// ResolveHook runs value-returning hooks (resolve_branch).
+	ResolveHook func(string, lifecycle.Vars) (string, error)
+	Warn        func(string)
 }
 
 // NewService creates an operation service with production dependencies.
 func NewService() *Service {
 	workspaceService := workspace.NewService()
 	return &Service{
-		Workspace: workspaceService,
-		Store:     workspaceService.State,
-		RunHook:   lifecycle.Run,
-		Warn:      console.Warning,
+		Workspace:   workspaceService,
+		Store:       workspaceService.State,
+		RunHook:     lifecycle.Run,
+		ResolveHook: lifecycle.Resolve,
+		Warn:        console.Warning,
 	}
 }
 
@@ -52,6 +57,8 @@ func NewService() *Service {
 type CreateRequest struct {
 	Name    string
 	Options workspace.CreateOpts
+	// branchResolved is set by ResolveBranch so Create never resolves twice.
+	branchResolved bool
 }
 
 // CreateResult reports whether the workspace was fully created. Created remains
@@ -70,8 +77,34 @@ type HookError struct {
 func (e *HookError) Error() string { return e.Err.Error() }
 func (e *HookError) Unwrap() error { return e.Err }
 
-// Create provisions a workspace, then applies the shared post_create policy.
+// ResolveBranch applies the resolve_branch hook to req's branch. Call it before
+// any destructive step that precedes Create (e.g. --replace deleting the
+// current workspace), so a failing resolver aborts while nothing has changed.
+// Create calls it itself when the caller has not.
+//
+// resolve_branch runs exactly once per workspace, at creation, and never
+// again: the resolved branch is stored and reused by add-repo. It is skipped
+// with --track, which checks out an existing branch by its real name.
+func (s *Service) ResolveBranch(req CreateRequest) (CreateRequest, error) {
+	if req.branchResolved || req.Options.BranchMode == workspace.BranchModeTrack {
+		return req, nil
+	}
+	branch, err := s.callResolver(req)
+	if err != nil {
+		return req, &HookError{Hook: "resolve_branch", Err: err}
+	}
+	req.Options.Branch = branch
+	req.branchResolved = true
+	return req, nil
+}
+
+// Create resolves the branch name (unless ResolveBranch already did),
+// provisions a workspace, then applies the shared post_create policy.
 func (s *Service) Create(req CreateRequest) (CreateResult, error) {
+	req, err := s.ResolveBranch(req)
+	if err != nil {
+		return CreateResult{}, err
+	}
 	if err := s.Workspace.CreateWithOpts(req.Name, req.Options); err != nil {
 		return CreateResult{}, err
 	}
@@ -89,6 +122,33 @@ func (s *Service) Create(req CreateRequest) (CreateResult, error) {
 		return result, &HookError{Hook: "post_create", Err: err}
 	}
 	return result, nil
+}
+
+// AddReposRequest is the typed input for adding repos to an existing workspace.
+type AddReposRequest struct {
+	Name    string
+	Repos   []string
+	RepoMap map[string]string
+}
+
+// AddRepos adds repos to a workspace, then applies the post_add_repo policy.
+// The hook only fires when at least one repo was actually added.
+func (s *Service) AddRepos(req AddReposRequest) error {
+	added, err := s.Workspace.AddRepos(req.Name, req.Repos, req.RepoMap)
+	if err != nil || added == 0 {
+		return err
+	}
+	ws, err := s.Store.GetWorkspace(req.Name)
+	if err != nil {
+		return fmt.Errorf("loading workspace: %w", err)
+	}
+	if ws == nil {
+		return fmt.Errorf("workspace %s not found in state", req.Name)
+	}
+	if err := s.runHook("post_add_repo", lifecycleVars(*ws)); err != nil {
+		return &HookError{Hook: "post_add_repo", Err: err}
+	}
+	return nil
 }
 
 // DeleteRequest is the typed input for a workspace deletion operation.
@@ -155,6 +215,29 @@ func (s *Service) runHook(name string, vars lifecycle.Vars) error {
 	}
 	s.warn(err)
 	return nil
+}
+
+// callResolver returns the branch produced by the resolve_branch hook, or the
+// typed branch unchanged when no resolver is configured (or hooks are off).
+// {path} is empty: the workspace does not exist yet.
+func (s *Service) callResolver(req CreateRequest) (string, error) {
+	resolve := s.ResolveHook
+	if resolve == nil {
+		resolve = lifecycle.Resolve
+	}
+	opts := req.Options
+	vars := lifecycleVars(models.Workspace{Name: req.Name, Branch: opts.Branch, Source: opts.Source})
+	branch, err := resolve("resolve_branch", vars)
+	if errors.Is(err, lifecycle.ErrNoHook) {
+		return req.Options.Branch, nil
+	}
+	if err != nil {
+		return "", err
+	}
+	if err := gitops.CheckBranchName(branch); err != nil {
+		return "", fmt.Errorf("resolve_branch hook output: %w", err)
+	}
+	return branch, nil
 }
 
 func (s *Service) callHook(name string, vars lifecycle.Vars) error {

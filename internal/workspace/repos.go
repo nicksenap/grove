@@ -9,26 +9,27 @@ import (
 	"github.com/nicksenap/grove/internal/models"
 )
 
-// AddRepos adds repos to an existing workspace.
-func (s *Service) AddRepos(wsName string, repoNames []string, repoMap map[string]string) error {
+// AddRepos adds repos to an existing workspace and reports how many were
+// actually added (repos already in the workspace are skipped).
+func (s *Service) AddRepos(wsName string, repoNames []string, repoMap map[string]string) (int, error) {
 	var added []models.RepoWorktree
 	if err := s.State.WithLock(func() error {
 		var err error
 		added, err = s.addReposLocked(wsName, repoNames, repoMap)
 		return err
 	}); err != nil {
-		return err
+		return 0, err
 	}
 
 	if len(added) == 0 {
-		return nil
+		return 0, nil
 	}
 
 	// As with create, setup runs after the state mutation lock is released.
 	s.runSetupHooks(models.Workspace{Repos: added})
 	logging.Info("added %d repo(s) to workspace %q", len(added), wsName)
 	console.Successf("Added %d repo(s) to %s", len(added), wsName)
-	return nil
+	return len(added), nil
 }
 
 func (s *Service) addReposLocked(wsName string, repoNames []string, repoMap map[string]string) ([]models.RepoWorktree, error) {
