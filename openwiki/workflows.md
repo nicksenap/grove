@@ -3,59 +3,29 @@ type: Reference
 title: Workflows
 description: End-to-end Grove workflows for discovery, workspace creation, operation, synchronization, navigation, cleanup, pruning, hooks, and machine-readable automation. Documents ordering, locks, Git boundaries, rollback, quarantine, and partial-failure behavior.
 tags: [grove, workflows, workspaces, git, cli, operations]
-verified:
-  - by: openwiki/0.5.2
-    at: 2026-10-13T16:45:10.957Z
 sources:
-  - id: openwiki-source-183c4c7db709eae12cf639de
-    resource: repo://cmd/addrepo.go
   - id: openwiki-source-5fb548baa501bcdc358d79a6
     resource: repo://cmd/create.go
-  - id: openwiki-source-8e87dcc3b28172929ac32c27
-    resource: repo://cmd/delete.go
-  - id: openwiki-source-f03c6eedf6d8f9495e3d7211
-    resource: repo://cmd/go_cmd.go
-  - id: openwiki-source-2cdd82df233710bc057f775e
-    resource: repo://cmd/init_cmd.go
-  - id: openwiki-source-7e0e5f5bae4ad5bb9ca873ad
-    resource: repo://cmd/prune_branches.go
-  - id: openwiki-source-4d743cc9a373dec1a2ed59bd
-    resource: repo://cmd/prune_test.go
-  - id: openwiki-source-c713337c253fefedba109b9e
-    resource: repo://cmd/prune.go
   - id: openwiki-source-d88dd56dbc4620bda4c35f1c
     resource: repo://cmd/root.go
-  - id: openwiki-source-fdc127993fc61e535879a71e
-    resource: repo://cmd/shellinit.go
-  - id: openwiki-source-90ab86597712b7881e7c8057
-    resource: repo://docs/plugins.md
-  - id: openwiki-source-0b02352526895154e5b5a4e1
-    resource: repo://internal/console/console.go
+  - id: openwiki-source-6b1859c6bc35c4f29682760b
+    resource: repo://e2e/lifecycle_test.go
+  - id: openwiki-source-c7892bbdfc3002a62a48afad
+    resource: repo://internal/gitops/gitops.go
   - id: openwiki-source-6e2ef7bffba8b16154bfe6e4
     resource: repo://internal/lifecycle/lifecycle.go
+  - id: openwiki-source-a5147957bc4eb2270289c610
+    resource: repo://internal/logging/logging.go
+  - id: openwiki-source-7db1ac449b77d0939ccc3956
+    resource: repo://internal/operations/service_test.go
   - id: openwiki-source-9fa0f37ad88ce2a52ed9f800
     resource: repo://internal/operations/service.go
-  - id: openwiki-source-04df3322ec2dc26efbad1e6f
-    resource: repo://internal/state/state.go
-  - id: openwiki-source-315bbc2fab6a49cc711be6d2
-    resource: repo://internal/workspace/create.go
-  - id: openwiki-source-20a3d9d55ff29a8f581b4a17
-    resource: repo://internal/workspace/prune_branches.go
-  - id: openwiki-source-0cf556597f692ad56afe2a7d
-    resource: repo://internal/workspace/remove_test.go
-  - id: openwiki-source-c98f76c921b18fb02cf31e14
-    resource: repo://internal/workspace/remove.go
   - id: openwiki-source-ed256bc11bc3e46909d033e5
     resource: repo://internal/workspace/repos.go
-  - id: openwiki-source-f17c2e39946320331020bb09
-    resource: repo://internal/workspace/reset.go
-  - id: openwiki-source-142be80b74015990b087e259
-    resource: repo://internal/workspace/status.go
-  - id: openwiki-source-518fc59687d34ca8836f1792
-    resource: repo://internal/workspace/sync.go
-  - id: openwiki-source-23775c3de52f3ab95a13cb8b
-    resource: repo://README.md
-generated: { by: "openwiki/0.5.2", at: "2026-10-13T16:45:10.957Z" }
+generated: { by: "openwiki/0.5.2", at: "2026-10-16T17:09:57.908Z" }
+verified:
+  - by: openwiki/0.5.2
+    at: 2026-10-16T17:09:57.908Z
 ---
 
 # Workflows
@@ -70,7 +40,11 @@ gw init ~/dev ~/work/microservices
 
 `gw init` writes configuration for the supplied repository directories and immediately scans them with the discovery cache. Later commands rediscover repositories from those configured directories and de-duplicate them by name. A create or add operation can also accept a Git URL: Grove clones it into the first configured `repo_dir`, then rejects a name collision if that name already maps to another local path (`cmd/init_cmd.go#L10-L26`, `cmd/create.go#L55-L80`, `cmd/addrepo.go#L32-L57`).
 
-## Create: provision, persist, then hook
+## Diagnostics and output contracts
+
+`--verbose` is a persistent root flag that enables debug logging at startup; it is not a `status` formatting option. Grove always writes its rotating `~/.grove/grove.log` flight recorder (1 MB with three backups), while verbose additionally enables debug records. Each Git invocation is traced with its working directory, elapsed time, and success or failure; failure output is credential-redacted and truncated before being written. Normal command contracts remain unchanged: query data and `gw go` destinations stay on stdout, while progress, prompts, warnings, hook output, and errors stay on stderr (`cmd/root.go#L42-L67`, `internal/logging/logging.go#L1-L6`, `internal/logging/logging.go#L36-L71`, `internal/gitops/gitops.go#L76-L123`). Credential masking covers URL userinfo, including SSH-style userinfo, and truncation protects the log from chatty failures (`internal/gitops/gitops.go#L101-L147`).
+
+## Create: resolve, provision, persist, then hook
 
 Typical non-interactive creation is:
 
@@ -83,42 +57,50 @@ gw create pr-42 --branch feat/login --repos svc-auth --track \
 
 Without repository flags, create offers configured presets and otherwise prompts for a multi-selection. Repository names are validated before provisioning. `--track` applies to all selected repositories unless the resolver identifies one `TrackBranchRepo`; it checks out an existing remote branch when available and otherwise falls back to creating a fresh branch from the base. Source fields are opaque provenance persisted on the workspace and expanded only into hook placeholders (`cmd/create.go#L81-L150`, `internal/workspace/create.go#L29-L53`, `internal/lifecycle/lifecycle.go#L27-L38`).
 
+Before any destructive `--replace` deletion, `cmd/create.go` calls `operations.Service.ResolveBranch`. The `resolve_branch` hook runs once before provisioning, receives the typed branch, workspace name, and source context, and must return one non-empty line that passes Git branch-name validation. A hook failure, timeout, malformed output, or invalid branch leaves the existing workspace untouched. If no resolver is configured, Grove keeps the typed branch; `--track` skips resolution. The resolved branch is carried into `Create`, which does not resolve it a second time, persisted in state, and reused by later `add-repo` operations (`cmd/create.go#L195-L229`, `internal/operations/service.go#L80-L124`, `internal/operations/service.go#L220-L240`, `internal/lifecycle/lifecycle.go#L103-L146`).
+
 Creation has two phases. It fetches selected source repositories concurrently, treating fetch failure as a warning and continuing with local refs. It then creates worktrees sequentially so a later failure can roll back safely. Base resolution falls back to `HEAD`; branch creation retries with the `origin/` prefix removed and then `HEAD`. A branch already used by a worktree is rejected (`internal/workspace/create.go#L126-L165`, `internal/workspace/create.go#L178-L256`).
 
 ```mermaid
 sequenceDiagram
     participant CLI as gw create
     participant Disc as discovery
+    participant Ops as operations service
     participant Git as source repositories
     participant State as state.json
-    participant Hook as setup and post_create hooks
+    participant Hook as lifecycle hooks
     CLI->>Disc: resolve selected repositories
     CLI->>Git: clone URL repositories when needed
-    par Fetch sources
-        CLI->>Git: git fetch
-    end
-    loop Selection order
-        CLI->>Git: resolve base or tracking branch
-        CLI->>Git: add worktree
-    end
-    alt Provisioning or state write fails
-        CLI->>Git: remove created worktrees in reverse order
-        CLI->>Git: delete only branches created by Grove
-        CLI-->>CLI: remove empty workspace root
-    else All worktrees provisioned
-        CLI->>State: add workspace under state lock
-        CLI->>Hook: run setup after lock release
-        CLI->>Hook: run post_create policy
+    CLI->>Ops: resolve_branch before --replace deletion
+    alt Resolver fails or returns invalid output
+        Ops-->>CLI: abort without workspace mutation
+    else Branch resolved or typed branch retained
+        par Fetch sources
+            CLI->>Git: git fetch
+        end
+        loop Selection order
+            CLI->>Git: resolve base or tracking branch
+            CLI->>Git: add worktree
+        end
+        alt Provisioning or state write fails
+            CLI->>Git: remove created worktrees in reverse order
+            CLI->>Git: delete only branches created by Grove
+            CLI-->>CLI: remove empty workspace root
+        else All worktrees provisioned
+            CLI->>State: add workspace under state lock
+            CLI->>Hook: run setup after lock release
+            CLI->>Ops: run post_create after persistence
+        end
     end
 ```
 
-*Create separates parallel fetch, ordered provisioning, rollback, locked persistence, and post-commit hooks.*
+*Create resolves branch selection before replacement, then separates parallel fetch, ordered provisioning, rollback, locked persistence, and post-commit hooks.*
 
 The workspace is added to state only after all worktrees exist. Setup commands from each source repository’s `.grove.toml` run concurrently after the lock is released; failures are warnings and do not undo the committed workspace. The operation-level `post_create` hook runs after creation too: warning-policy failures are reported, while `on_failure = "abort"` makes the command fail without rolling back the persisted workspace (`internal/workspace/create.go#L55-L84`, `internal/workspace/create.go#L259-L310`, `internal/operations/service.go#L73-L91`).
 
 ## Hooks and lock boundaries
 
-Lifecycle hooks are configured globally and executed through `sh -c`. They support `{name}`, `{path}`, `{branch}`, `{source_url}`, `{source_ref}`, and `{source_title}`. Hooks may stream prefixed output to stderr or capture output until failure; a positive timeout kills the hook process group. A non-zero hook is warning-only unless its metadata sets `on_failure = "abort"`. `--no-hooks` and `-n` disable lifecycle hooks (`internal/lifecycle/lifecycle.go#L21-L38`, `internal/lifecycle/lifecycle.go#L62-L124`, `cmd/root.go#L63-L68`).
+Lifecycle hooks are configured globally and executed through `sh -c`. They support `{name}`, `{path}`, `{branch}`, `{source_url}`, `{source_ref}`, and `{source_title}`. Hooks may stream prefixed output to stderr or capture output until failure; a positive timeout kills the hook process group. Ordinary non-zero hooks are warning-only unless metadata sets `on_failure = "abort"`; `resolve_branch` is stricter because any command, timeout, output-shape, or branch-validation failure aborts creation. `--no-hooks` and `-n` disable lifecycle hooks, so create keeps the typed branch and post-operation hooks do not run (`internal/lifecycle/lifecycle.go#L21-L38`, `internal/lifecycle/lifecycle.go#L62-L146`, `cmd/root.go#L63-L68`).
 
 `pre_delete` is evaluated before destructive mutation. An aborting hook prevents deletion; a warning-policy failure allows it to continue. Repository-local `setup`, `teardown`, `pre_sync`, and `post_sync` commands come from `.grove.toml`; setup and teardown run outside the state lock because user commands may invoke `gw` (`internal/operations/service.go#L106-L126`, `internal/workspace/remove.go#L239-L246`, `internal/workspace/sync.go#L48-L62`).
 
@@ -148,7 +130,25 @@ gw remove-repo [NAME] --repos svc-worker
 gw remove-repo [NAME] --repos svc-worker --force
 ```
 
-`add-repo` resolves the workspace from its argument or current directory, discovers or clones sources, and sequentially provisions worktrees on the workspace’s recorded branch. It updates state only after all selected additions succeed; a failure rolls back worktrees and branches created by that attempt. Setup runs after the state lock is released (`cmd/addrepo.go#L27-L80`, `internal/workspace/repos.go#L12-L89`).
+`add-repo` resolves the workspace from its argument or current directory, discovers or clones sources, and sequentially provisions worktrees on the workspace’s persisted branch—the branch resolved during create is reused, not recalculated. It updates state only after all selected additions succeed; a failure rolls back worktrees and branches created by that attempt. Setup runs after the state lock is released (`cmd/addrepo.go#L27-L80`, `internal/workspace/repos.go#L12-L89`).
+
+```mermaid
+flowchart TD
+    A["add-repo request"] --> B["Provision new worktrees under state lock"]
+    B --> C{"Any repositories added?"}
+    C -->|No| D["Finish without post_add_repo"]
+    C -->|Yes| E["Persist updated workspace"]
+    E --> F["Release state lock and run setup"]
+    F --> G["Run post_add_repo with stored name path branch and source context"]
+    G --> H{"Hook outcome"}
+    H -->|Warning failure| I["Warn and continue"]
+    H -->|Abort failure| J["Return error after mutation"]
+    H -->|Success or absent| K["Finish"]
+```
+
+*`post_add_repo` is evaluated only after at least one addition has been persisted; setup remains outside the state lock, and hook policy cannot roll back the committed addition.*
+
+`operations.Service.AddRepos` invokes the global `post_add_repo` hook only when the workspace service reports at least one actual addition and the updated workspace can be read from state. Its placeholders use the stored workspace name, path, resolved branch, and source fields. A warning-policy failure is reported and ignored; `on_failure = "abort"` returns an operation error after the state mutation, without undoing the added worktrees (`internal/operations/service.go#L127-L152`, `internal/operations/service.go#L208-L217`, `internal/operations/service.go#L268-L275`).
 
 `remove-repo` prompts unless `--force` is supplied. Safe preflight checks the expected registration, branch, current checkout, and clean status. Under the lock, each successful removal immediately removes its worktree, deletes its non-preserved branch, and updates the in-memory workspace; failures are accumulated while successful removals remain, so multi-repository removal is intentionally partial rather than transactional (`cmd/removerepo.go#L27-L63`, `internal/workspace/repos.go#L92-L166`, `internal/workspace/remove.go#L261-L311`).
 
@@ -239,12 +239,14 @@ gw list -o name | grep '^old-' | gw delete --stdin --yes
 
 Unknown commands are delegated to standalone `gw-<name>` executables searched in `~/.grove/plugins/` and then `$PATH`. Grove supplies `GROVE_DIR`, `GROVE_CONFIG`, `GROVE_STATE`, and `GROVE_WORKSPACE` when available; plugins should use Grove commands for mutations rather than editing state (`cmd/root.go#L101-L121`, `docs/plugins.md#L1-L3`, `docs/plugins.md#L52-L67`).
 
-Focused coverage exercises source placeholders, hook warning versus abort policy, `--no-hooks`, create rollback, prune age syntax and preview, stale-directory cleanup, two-phase delete restoration, and destructive prune state/registration/branch removal (`e2e/lifecycle_test.go#L10-L96`, `cmd/prune_test.go#L21-L120`, `e2e/prune_test.go#L21-L137`, `internal/workspace/remove_test.go#L162-L338`).
+Focused coverage exercises source placeholders, `post_add_repo` only-after-real-add behavior, resolver output and source context, resolver failure and invalid-branch safety, track and no-resolver paths, hook warning versus abort policy, `--no-hooks`, create rollback, prune age syntax and preview, stale-directory cleanup, two-phase delete restoration, and destructive prune state/registration/branch removal (`e2e/lifecycle_test.go#L10-L126`, `internal/operations/service_test.go#L38-L237`, `cmd/prune_test.go#L21-L120`, `e2e/prune_test.go#L21-L137`, `internal/workspace/remove_test.go#L162-L338`).
 
 ## Safe modification invariants
 
 - Validate repository selections and expected workspace identity before mutation.
+- Resolve and validate `resolve_branch` before `--replace` or provisioning; never destroy an existing workspace for a branch that cannot be resolved.
 - Hold the state lock for persisted mutations; run user-owned setup and teardown outside it.
+- Run `post_add_repo` only after a real addition and state update, using persisted workspace context; hook failure must not be mistaken for rollback.
 - Preserve per-repository independence for status, sync, reset, and prune reporting.
 - Keep dirty-worktree protection as the default; make intentional loss explicit with `--discard` or `--force`.
 - Roll back only resources created by a failed create/add attempt.

@@ -3,63 +3,31 @@ type: Operational runbook
 title: Operations and Runbook
 description: Configure, diagnose, clean up, extend, and release Grove safely. Covers on-disk state, hooks, Git tracing, plugins, recovery commands, and contributor validation for failed workspace operations.
 tags: [grove, operations, runbook, configuration, troubleshooting, maintenance]
-verified:
-  - by: openwiki/0.5.2
-    at: 2026-10-13T16:51:28.495Z
 sources:
-  - id: openwiki-source-164e2da859b5277df81c7d94
-    resource: repo://.github/workflows/ci.yml
-  - id: openwiki-source-4d1d392666be6dfdd7a91a2e
-    resource: repo://.github/workflows/release.yml
   - id: openwiki-source-3e0d0add2c6f99598546739a
     resource: repo://cmd/bug_report.go
-  - id: openwiki-source-4d743cc9a373dec1a2ed59bd
-    resource: repo://cmd/prune_test.go
-  - id: openwiki-source-c713337c253fefedba109b9e
-    resource: repo://cmd/prune.go
-  - id: openwiki-source-b33438ed586700495e3d7655
-    resource: repo://cmd/query_output.go
-  - id: openwiki-source-d88dd56dbc4620bda4c35f1c
-    resource: repo://cmd/root.go
-  - id: openwiki-source-d787e5420b7b1b0d74113e86
-    resource: repo://cmd/status.go
-  - id: openwiki-source-bdbdd96d4e411ce150e48b0f
-    resource: repo://cmd/unlink_trash.go
+  - id: openwiki-source-4a20513926f0658ee53b3ddf
+    resource: repo://cmd/doctor.go
   - id: openwiki-source-a8910515ddd14810ad43f5c1
     resource: repo://internal/config/config.go
-  - id: openwiki-source-0b02352526895154e5b5a4e1
-    resource: repo://internal/console/console.go
   - id: openwiki-source-c7892bbdfc3002a62a48afad
     resource: repo://internal/gitops/gitops.go
-  - id: openwiki-source-f9f2d803ad5afd4bbb4215a4
-    resource: repo://internal/gitops/trace_test.go
   - id: openwiki-source-6e2ef7bffba8b16154bfe6e4
     resource: repo://internal/lifecycle/lifecycle.go
-  - id: openwiki-source-536b4d5c5276f99a2df8ca1a
-    resource: repo://internal/logging/logging_test.go
   - id: openwiki-source-a5147957bc4eb2270289c610
     resource: repo://internal/logging/logging.go
-  - id: openwiki-source-16cd47b644535c3977cf86c1
-    resource: repo://internal/plugin/install.go
-  - id: openwiki-source-ab647e2cb1e7b3b70e7883be
-    resource: repo://internal/plugin/plugin.go
-  - id: openwiki-source-987bd1c73c75d81e98434684
-    resource: repo://internal/plugin/registry.go
-  - id: openwiki-source-85c3963bfb86fa1072db7e79
-    resource: repo://internal/plugin/registry.json
+  - id: openwiki-source-9fa0f37ad88ce2a52ed9f800
+    resource: repo://internal/operations/service.go
   - id: openwiki-source-a31375378633c98afe544d37
     resource: repo://internal/state/lock.go
   - id: openwiki-source-04df3322ec2dc26efbad1e6f
     resource: repo://internal/state/state.go
   - id: openwiki-source-0af407bb538616acaaa4baca
     resource: repo://internal/workspace/doctor.go
-  - id: openwiki-source-0cf556597f692ad56afe2a7d
-    resource: repo://internal/workspace/remove_test.go
-  - id: openwiki-source-c98f76c921b18fb02cf31e14
-    resource: repo://internal/workspace/remove.go
-  - id: openwiki-source-14e6a4e1ddc06973b783ff20
-    resource: repo://Justfile
-generated: { by: "openwiki/0.5.2", at: "2026-10-13T16:51:28.495Z" }
+generated: { by: "openwiki/0.5.2", at: "2026-10-16T17:04:27.136Z" }
+verified:
+  - by: openwiki/0.5.2
+    at: 2026-10-16T17:04:27.136Z
 ---
 
 # Operations and Runbook
@@ -174,14 +142,19 @@ Global hooks are configured under `[hooks]`, run through `sh -c`, and support `{
 
 ```mermaid
 flowchart TD
-    create["gw create"] --> post["global post_create"]
-    delete["gw delete or gw prune --yes"] --> pre["global pre_delete"]
+    create["gw create"] --> resolve["resolve_branch"]
+    resolve --> provision["create workspace and state"]
+    provision --> post["post_create"]
+    add["gw add-repo"] --> added{"new repo added"}
+    added -->|yes| addhook["post_add_repo"]
+    added -->|no| unchanged["no hook"]
+    delete["gw delete or gw prune --yes"] --> pre["pre_delete"]
     pre --> teardown["per-repo teardown"]
     teardown --> remove["quarantine and remove worktrees"]
-    close["gw go -c"] --> onclose["global on_close"]
+    close["gw go -c"] --> onclose["on_close"]
 ```
 
-This shows the user-visible actions that trigger global lifecycle hooks and the deletion ordering around per-repo teardown.
+This shows hook ordering around creation, repo addition, close, and deletion. A post-operation hook failure does not undo the already-completed create or add operation.
 
 A hook may be a command string or metadata table:
 
@@ -193,6 +166,18 @@ stream = true
 timeout = "5m"
 on_failure = "abort"
 ```
+
+Global hooks have distinct operation boundaries:
+
+| Hook | Entry point and ordering | Result or safety note |
+|---|---|---|
+| `resolve_branch` | `gw create`, before worktree creation | stdout must be exactly one non-empty line after trimming and must pass Git branch validation; failure always aborts creation. Skipped by `--track` and `--no-hooks`. |
+| `post_create` | `gw create`, after workspace and state creation | Runs once after creation; an aborting failure reports an error but does not roll back the workspace. |
+| `post_add_repo` | `gw add-repo`, after one or more repos are actually added | Does not run when nothing new was added; failure does not undo additions. |
+| `pre_delete` | `gw delete`, before destructive worktree removal | An aborting failure prevents deletion. |
+| `on_close` | `gw go -c` | Required for the close operation; an absent hook is reported as not configured. |
+
+`resolve_branch` receives `{branch}` as typed, `{name}`, and source placeholders; `{path}` is empty because no workspace exists yet. Its output is never combined with stderr, is trimmed, and must contain no carriage return or newline. `post_create` and `post_add_repo` receive the stored workspace name, path, resolved branch, and any source metadata.
 
 - `stream = false` (default) captures combined output and stays quiet on success; failures echo captured output to stderr with a hook prefix.
 - `stream = true` sends line-prefixed progress to stderr, preserving stdout for shell integration.
@@ -206,7 +191,7 @@ gw --no-hooks create my-feature --repos svc-api
 gw -n delete my-feature
 ```
 
-`--no-hooks` only disables global lifecycle hooks. It does not disable per-repo `setup`, `teardown`, `pre_sync`, or `post_sync`. Hook commands are plain text in `config.toml` and expanded commands are logged, so keep tokens and passwords out of them.
+`--no-hooks` only disables global lifecycle hooks. It does not disable per-repo `setup`, `teardown`, `pre_sync`, or `post_sync`. Hook commands are plain text in `config.toml` and expanded commands are logged, so keep tokens and passwords out of them. A `post_create` failure never rolls back the workspace that was already created: with `on_failure = "warn"` the operation continues, while `on_failure = "abort"` returns an error but leaves the workspace and its state for inspection or later cleanup. Likewise, `post_add_repo` runs only after at least one repo was added; its failure does not undo those additions.
 
 ## Git diagnostics and logging
 
@@ -334,7 +319,7 @@ Use these recovery paths:
 - **Leftover `.trash`:** confirm no delete or doctor cleanup is active, then use `gw doctor` and `gw doctor --fix`. Never pass an arbitrary path to `unlink-trash`.
 - **Git authentication:** load the intended key (`ssh-add ~/.ssh/id_ed25519`), test `ssh -T git@github.com`, and correct the remote or credential helper. Grove will not prompt interactively.
 - **Git clone, fetch, rebase, or worktree failure:** rerun with `gw --verbose ...`, inspect the redacted Git trace and the command's error, then verify the source repository, remote, branch, and credentials. Resolve conflicts or dirty files in the worktree before retrying; do not delete the workspace as a first response.
-- **Hook failure or timeout:** inspect prefixed stderr and `grove.log`; enable `stream = true`, increase `timeout`, or select `on_failure = "warn"` only when continuing is safe. Per-repo setup has no Grove timeout, so supervise unusually long commands in the command itself.
+- **Hook failure or timeout:** inspect prefixed stderr and `grove.log`; enable `stream = true`, increase `timeout`, or select `on_failure = "warn"` only when continuing is safe. A failed `post_create` does not roll back the created workspace, so use `gw doctor`, inspect the workspace, and delete it deliberately if it is unusable. A failed `post_add_repo` likewise leaves newly added repos in place. Per-repo setup has no Grove timeout, so supervise unusually long commands in the command itself.
 - **Workspace path already exists:** use `gw doctor` to distinguish live data, stale state, and quarantine data. Do not overwrite it manually; delete the registered workspace or choose another name after checking for uncommitted work.
 
 ## Contributor validation and releases
