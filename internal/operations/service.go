@@ -57,6 +57,8 @@ func NewService() *Service {
 type CreateRequest struct {
 	Name    string
 	Options workspace.CreateOpts
+	// branchResolved is set by ResolveBranch so Create never resolves twice.
+	branchResolved bool
 }
 
 // CreateResult reports whether the workspace was fully created. Created remains
@@ -75,19 +77,33 @@ type HookError struct {
 func (e *HookError) Error() string { return e.Err.Error() }
 func (e *HookError) Unwrap() error { return e.Err }
 
-// Create resolves the branch name, provisions a workspace, then applies the
-// shared post_create policy.
+// ResolveBranch applies the resolve_branch hook to req's branch. Call it before
+// any destructive step that precedes Create (e.g. --replace deleting the
+// current workspace), so a failing resolver aborts while nothing has changed.
+// Create calls it itself when the caller has not.
 //
-// resolve_branch runs exactly once per workspace, here, and never again: the
-// resolved branch is stored and reused by add-repo. It is skipped with --track,
-// which checks out an existing branch by its real name.
+// resolve_branch runs exactly once per workspace, at creation, and never
+// again: the resolved branch is stored and reused by add-repo. It is skipped
+// with --track, which checks out an existing branch by its real name.
+func (s *Service) ResolveBranch(req CreateRequest) (CreateRequest, error) {
+	if req.branchResolved || req.Options.BranchMode == workspace.BranchModeTrack {
+		return req, nil
+	}
+	branch, err := s.resolveBranch(req)
+	if err != nil {
+		return req, &HookError{Hook: "resolve_branch", Err: err}
+	}
+	req.Options.Branch = branch
+	req.branchResolved = true
+	return req, nil
+}
+
+// Create resolves the branch name (unless ResolveBranch already did),
+// provisions a workspace, then applies the shared post_create policy.
 func (s *Service) Create(req CreateRequest) (CreateResult, error) {
-	if req.Options.BranchMode != workspace.BranchModeTrack {
-		branch, err := s.resolveBranch(req)
-		if err != nil {
-			return CreateResult{}, &HookError{Hook: "resolve_branch", Err: err}
-		}
-		req.Options.Branch = branch
+	req, err := s.ResolveBranch(req)
+	if err != nil {
+		return CreateResult{}, err
 	}
 	if err := s.Workspace.CreateWithOpts(req.Name, req.Options); err != nil {
 		return CreateResult{}, err

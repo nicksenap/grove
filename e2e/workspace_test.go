@@ -230,3 +230,17 @@ resolve_branch = "echo no-namer-configured >&2; exit 1"
 		t.Fatalf("expected no workspaces after resolver failure, got %d", got)
 	}
 }
+
+func TestReplaceKeepsOldWorkspaceWhenResolverFails(t *testing.T) {
+	env := newEnv(t)
+	env.createRepo("svc-auth")
+	env.init()
+	env.mustGW("create", "old-ws", "--branch", "feat-old", "--repos", "svc-auth")
+	env.writeConfig(`[hooks]
+resolve_branch = "exit 1"
+`)
+
+	env.gwIn(env.workspacePath("old-ws"), "create", "new-ws", "--branch", "feat-new",
+		"--repos", "svc-auth", "--replace", "--force").mustFail(t)
+	env.showWorkspace("old-ws") // fails the test if old-ws was deleted
+}

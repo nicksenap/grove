@@ -384,3 +384,12 @@ func TestResolveEchoesStderrOnFailure(t *testing.T) {
 		t.Fatalf("stderr not echoed on failure, got %q", out)
 	}
 }
+
+func TestResolveTimeoutAborts(t *testing.T) {
+	useTempConfig(t, "[hooks.resolve_branch]\ncommand = \"sleep 5; echo late\"\ntimeout = \"100ms\"\n")
+
+	_, err := Resolve("resolve_branch", Vars{})
+	if !ShouldAbort(err) || !strings.Contains(err.Error(), "timed out") {
+		t.Fatalf("Resolve = %v, want aborting timeout error", err)
+	}
+}

@@ -158,6 +158,33 @@ func TestCreateTrackSkipsResolver(t *testing.T) {
 	}
 }
 
+func TestResolveBranchThenCreateResolvesOnce(t *testing.T) {
+	var order []string
+	deps := &fakeWorkspace{workspace: models.Workspace{Name: "feat-x"}, order: &order}
+	svc := Service{
+		Workspace: deps,
+		Store:     deps,
+		RunHook:   func(string, lifecycle.Vars) error { return nil },
+		ResolveHook: func(name string, _ lifecycle.Vars) (string, error) {
+			order = append(order, "resolve")
+			return "erebe/feat-x", nil
+		},
+	}
+
+	req := CreateRequest{Name: "feat-x", Options: workspace.CreateOpts{Branch: "feat-x"}}
+	req, err := svc.ResolveBranch(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Create(req); err != nil {
+		t.Fatal(err)
+	}
+	assertOrder(t, order, "resolve", "create")
+	if deps.createOpts.Branch != "erebe/feat-x" {
+		t.Fatalf("created with branch %q, want erebe/feat-x", deps.createOpts.Branch)
+	}
+}
+
 func TestCreateResolverFailureAbortsBeforeCreate(t *testing.T) {
 	tests := map[string]func(string, lifecycle.Vars) (string, error){
 		"hook fails": func(name string, _ lifecycle.Vars) (string, error) {
