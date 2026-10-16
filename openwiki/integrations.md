@@ -1,231 +1,93 @@
 ---
 type: concept
 title: Integrations
-description: Integration contracts for Grove's Git worktrees, shell and output surfaces, lifecycle hooks, external plugins, source provenance, and the curated plugin registry.
-tags: [grove, integrations, plugins, hooks, git, shell]
+description: Public integration contracts between Grove and Git, shells, lifecycle hooks, external plugins, source providers, editors, installers, and machine-oriented consumers.
+tags: [grove, integrations, git, shells, hooks, plugins]
+verified:
+  - by: openwiki/0.5.2
+    at: 2026-10-16T17:04:27.136Z
 sources:
   - id: openwiki-source-5fb548baa501bcdc358d79a6
     resource: repo://cmd/create.go
-  - id: openwiki-source-f03c6eedf6d8f9495e3d7211
-    resource: repo://cmd/go_cmd.go
-  - id: openwiki-source-b1648c12bdc7429a56ec8677
-    resource: repo://cmd/plugin.go
-  - id: openwiki-source-7e0e5f5bae4ad5bb9ca873ad
-    resource: repo://cmd/prune_branches.go
-  - id: openwiki-source-c713337c253fefedba109b9e
-    resource: repo://cmd/prune.go
+  - id: openwiki-source-b33438ed586700495e3d7655
+    resource: repo://cmd/query_output.go
   - id: openwiki-source-d88dd56dbc4620bda4c35f1c
     resource: repo://cmd/root.go
   - id: openwiki-source-fdc127993fc61e535879a71e
     resource: repo://cmd/shellinit.go
   - id: openwiki-source-d191e32409095eff0351d594
     resource: repo://docs/hooks.md
-  - id: openwiki-source-dfa9a1571a5c255494702235
-    resource: repo://internal/gitops/gitops_test.go
+  - id: openwiki-source-6b1859c6bc35c4f29682760b
+    resource: repo://e2e/lifecycle_test.go
   - id: openwiki-source-c7892bbdfc3002a62a48afad
     resource: repo://internal/gitops/gitops.go
   - id: openwiki-source-6e2ef7bffba8b16154bfe6e4
     resource: repo://internal/lifecycle/lifecycle.go
+  - id: openwiki-source-a5147957bc4eb2270289c610
+    resource: repo://internal/logging/logging.go
   - id: openwiki-source-1d1ad5865ebad91142ed8aee
     resource: repo://internal/models/models.go
   - id: openwiki-source-9fa0f37ad88ce2a52ed9f800
     resource: repo://internal/operations/service.go
-  - id: openwiki-source-16cd47b644535c3977cf86c1
-    resource: repo://internal/plugin/install.go
+  - id: openwiki-source-54ed4ed40a03cd339a0bec80
+    resource: repo://internal/output/output.go
   - id: openwiki-source-ab647e2cb1e7b3b70e7883be
     resource: repo://internal/plugin/plugin.go
-  - id: openwiki-source-987bd1c73c75d81e98434684
-    resource: repo://internal/plugin/registry.go
-  - id: openwiki-source-85c3963bfb86fa1072db7e79
-    resource: repo://internal/plugin/registry.json
   - id: openwiki-source-315bbc2fab6a49cc711be6d2
     resource: repo://internal/workspace/create.go
-  - id: openwiki-source-20a3d9d55ff29a8f581b4a17
-    resource: repo://internal/workspace/prune_branches.go
-  - id: openwiki-source-c98f76c921b18fb02cf31e14
-    resource: repo://internal/workspace/remove.go
-  - id: openwiki-source-518fc59687d34ca8836f1792
-    resource: repo://internal/workspace/sync.go
-generated: { by: "openwiki/0.5.2", at: "2026-10-13T16:51:28.495Z" }
-verified:
-  - by: openwiki/0.5.2
-    at: 2026-10-13T16:51:28.495Z
+generated: { by: "openwiki/0.5.2", at: "2026-10-16T17:04:27.136Z" }
 ---
 
 # Integrations
 
-Grove owns workspace records and the Git worktrees represented by them. Integration boundaries are deliberately process- and file-based: external plugins are executables, lifecycle hooks are shell commands, `.grove.toml` supplies per-repository hooks, and shell wrappers consume carefully reserved output. Plugins can read the paths Grove supplies, but should use Grove commands rather than editing Grove-owned state files directly.
+Grove is a process- and file-oriented coordinator. It owns workspace records, Git worktrees, and the files under its Grove directory; shells, hooks, plugins, source providers, and automation cross that boundary through commands, environment variables, stdout/stderr, and JSON state. An integration should use Grove commands and the documented environment rather than editing Grove-owned state directly.
 
-## External plugin contract
+## External plugins
 
-A plugin is an executable named `gw-<name>`. Built-in Cobra commands are resolved first. Only an unknown command reaches plugin fallback, so a plugin cannot override a built-in command with the same name. Fallback searches the user plugin directory first and then `$PATH`:
+A plugin is an executable named `gw-<name>`. Cobra resolves built-in commands first. Only an unknown command enters plugin fallback, so an executable cannot override a built-in command with the same name. Grove looks in this order:
 
 1. `~/.grove/plugins/gw-<name>`
-2. `gw-<name>` resolved through `$PATH`
+2. `gw-<name>` on `$PATH`
 
-The selected executable receives the arguments following the plugin name and takes over the terminal. On Unix Grove replaces its process with the plugin; on Windows it starts a child and propagates the child's exit code. Plugin names must begin with an alphanumeric character and may contain alphanumerics, `-`, `_`, and `.`.
+The plugin receives the arguments after its name and inherits the invoking environment. On Unix Grove replaces itself with the plugin; on Windows it starts a child process, forwards standard streams, and propagates the child's exit code. Names must start with an ASCII letter or digit and may then contain letters, digits, `-`, `_`, or `.`.
 
 ```mermaid
 sequenceDiagram
     participant User
-    participant GW as gw command
+    participant Grove as gw
     participant Resolver as Plugin resolver
     participant Plugin as gw plugin
-    User->>GW: gw name args
-    GW->>GW: Check built-in commands
-    alt built-in matches
-        GW-->>User: Run built-in
+    User->>Grove: gw name args
+    Grove->>Grove: Resolve built-in commands
+    alt built-in command
+        Grove-->>User: Run built-in
     else unknown command
-        GW->>Resolver: Find gw-name
-        Resolver->>Resolver: Check ~/.grove/plugins then PATH
-        Resolver-->>GW: Executable path
-        GW->>Plugin: Execute with args and environment
-        Plugin-->>User: Terminal output and exit status
+        Grove->>Resolver: Find gw-name
+        Resolver->>Resolver: Check Grove plugin directory then PATH
+        Resolver-->>Grove: Executable path
+        Grove->>Plugin: Execute with forwarded args and environment
+        Plugin-->>User: Standard output and exit status
     end
 ```
 
-*This sequence shows process dispatch and fallback; it is not a plugin API for mutating Grove state.*
+*This diagram shows dispatch only. Plugins are not an API for replacing or directly mutating Grove's state.*
 
-Grove preserves the invoking environment and adds:
+Grove adds these variables to the plugin environment while preserving the rest of the environment:
 
 | Variable | Meaning |
 |---|---|
 | `GROVE_DIR` | Grove configuration directory, normally `~/.grove` |
 | `GROVE_CONFIG` | Path to `config.toml` |
 | `GROVE_STATE` | Path to `state.json` |
-| `GROVE_WORKSPACE` | Detected workspace name when the current directory is inside a workspace; otherwise it is not added |
+| `GROVE_WORKSPACE` | Current workspace name when the working directory is inside one; otherwise omitted |
 
-`gw plugin list` (or `--json`) reports executable plugins in the user plugin directory only. `gw plugin remove <name>` removes that directory's executable and its installer metadata; it does not remove an arbitrary `$PATH` executable.
+Plugins can inspect those paths and invoke `gw` commands. Core does not prescribe a plugin storage format, editor, agent, notification service, or provider integration. For example, `gw-run` consumes additional `.grove.toml` keys, `gw-code` opens an editor workspace, and `gw-dispatch` starts an agent command; these behaviors remain outside Grove core.
 
-## Curated registry versus executable discovery
+`gw plugin list` (or `--json`) reports executable plugins in the user plugin directory, not arbitrary `$PATH` executables. `gw plugin remove <name>` removes only the user-directory executable and adjacent installer metadata. The embedded registry used by `gw plugin search` and bare-name installation is a curated offline lookup, not runtime discovery; an `OWNER/REPOSITORY` argument installs an unlisted repository. Released-plugin installation selects a compatible HTTPS GitHub release asset, optionally verifies `checksums.txt`, writes the binary to `~/.grove/plugins/`, and records release metadata. `GITHUB_TOKEN` is used for GitHub API requests when supplied.
 
-The embedded registry is a curated install-name lookup, not the discovery mechanism used to run commands. The current registry contains only these built-in names:
+## Source-seeded creation and branch integration
 
-| Registry name | Repository mapping |
-|---|---|
-| `code` | `igor-kupczynski/gw-code` |
-| `dispatch` | `nicksenap/gw-dispatch` |
-
-`gw plugin search [term]` searches this embedded registry by name, repository, or description and is offline. A bare `gw plugin install code` or `gw plugin install dispatch` resolves through the registry. This list is shipped with the `gw` build and can be stale relative to a repository's releases.
-
-An argument containing `/` bypasses registry lookup and is treated as an arbitrary repository reference. Thus `gw plugin install nicksenap/gw-run`, `gw plugin install nicksenap/gw-recipe`, and `gw plugin install github.com/OWNER/REPOSITORY` are valid external installation paths even though those projects are not registry names. Installing a repository and discovering an executable are separate concerns: after installation Grove looks for `gw-<name>` in `~/.grove/plugins/`, then `$PATH`, while manual plugins can be placed in either location.
-
-## Installing and upgrading released plugins
-
-Install from a GitHub repository using an `OWNER/REPOSITORY` identifier; the full `github.com/OWNER/REPOSITORY` form is also accepted:
-
-```bash
-gw plugin install nicksenap/gw-run
-gw plugin install nicksenap/gw-dispatch
-gw plugin install igor-kupczynski/gw-code
-```
-
-The installer discovers the latest release, first trying the conventional public GoReleaser release URL and then the GitHub API, selects an archive matching the current OS and architecture, requires an HTTPS asset URL, downloads and extracts the `gw-<name>` binary into `~/.grove/plugins/`, and records the repository and release tag in adjacent metadata. If `checksums.txt` is available, it is used to verify the download. Public releases need no token; `GITHUB_TOKEN` is used for API requests when set. A compatible archive is required.
-
-`gw plugin upgrade <name>` re-fetches the latest release using recorded metadata. `gw plugin upgrade` skips manually copied executables because they have no installer metadata. `gw plugin remove` also removes the adjacent metadata. Released plugins should publish archives using the `gw-<name>_<version>_<os>_<arch>.tar.gz` convention supported by the installer.
-
-For a local plugin, install an executable directly:
-
-```bash
-cp my-plugin ~/.grove/plugins/gw-myplugin
-chmod +x ~/.grove/plugins/gw-myplugin
-```
-
-See [Plugin documentation](../docs/plugins.md) for the command reference and authoring checklist.
-
-## Integration examples and extension boundary
-
-These are external integrations, not Grove core commands:
-
-- [`gw-run`](https://github.com/nicksenap/gw-run) supervises per-repository `run` hooks across a workspace and prefixes output with the repository name. Install it before using `gw run`.
-- [`gw-dispatch`](https://github.com/nicksenap/gw-dispatch) creates a workspace and starts a selected coding-agent command with an initial prompt. It is agent-agnostic and can use built-in or user-defined agent commands.
-- [`gw-code`](https://github.com/igor-kupczynski/gw-code) generates a multi-folder editor workspace and opens it in VS Code; its configuration can select another compatible editor executable.
-- [`gw-recipe`](https://github.com/nicksenap/gw-recipe) is an external plugin for declarative multi-repository recipes. Recipe validation and recipe-based creation are not core Grove surfaces.
-
-```bash
-gw plugin install nicksenap/gw-dispatch
-gw dispatch -n -r api,web -P "Implement login"
-gw dispatch -b feat/login -p backend --agent pi -P "Implement login"
-```
-
-Coding-agent instructions remain repository-owned: put repository-specific guidance in `AGENTS.md`, and put reusable review, testing, or release workflows in agent skills or an equivalent agent extension mechanism. Grove does not prescribe an agent, editor, notification service, or plugin storage format.
-
-## Git worktrees and lifecycle ordering
-
-Workspace creation fetches configured repositories in parallel, then creates worktrees sequentially so partially provisioned workspaces can be rolled back. It creates or reuses a local branch, can track an existing remote branch with `--track`, and records the resulting worktree paths in state. A failed provisioning step rolls back already-created worktrees and branches.
-
-Deletion runs global `pre_delete` policy before destructive worktree cleanup. The workspace directory is quarantined into `.trash` when present; each source repository's worktree registration is pruned, state is removed, and created branches are deleted. If cleanup fails, Grove attempts to restore the quarantined directory and repair registrations. A missing workspace directory is treated as a stale state record: there is no directory to quarantine, but worktree registrations, state, and branches are still cleaned up. The operation service supplies the recorded creation time and path as an optimistic consistency check, so a workspace changed between hook execution and deletion is not removed.
-
-## Git subprocess boundary
-
-Grove does not embed Git operations in its state layer: `internal/gitops` invokes the `git` executable with an explicit working directory, a process-wide environment computed at package initialization, and stdin connected to the OS null device. It disables interactive authentication with `GIT_TERMINAL_PROMPT=0` and, unless the process already has `GIT_SSH_COMMAND`, adds `ssh -o BatchMode=yes`. Combined output is trimmed and wrapped as `GitError`; authentication-shaped failures add a credentials hint. The boundary covers fetch, branch and worktree operations, status, rebases, and worktree registration pruning/repair, so callers receive structured Go errors rather than interactive Git prompts.
-
-Workspace provisioning fetches source repositories in parallel, then adds worktrees sequentially and rolls back already-created worktrees and branches if provisioning fails. Synchronization also fetches first, skips dirty worktrees, and aborts a failed rebase before continuing. Deletion uses `git worktree prune` for each source repository, removes state under Grove's mutation lock, and attempts branch deletion afterward; branch deletion failures are warnings rather than a failed workspace removal. The destructive service quarantines an existing workspace root in `.trash` and restores it, with worktree repair, when cleanup fails. A missing root skips quarantine but still cleans registrations, state, and branches.
-
-The nested `gw prune branches` command is a separate cleanup boundary for local branches in discovered main clones. It enumerates `refs/heads` with each branch's upstream and tracking status, then excludes the current branch, the resolved base branch, branches checked out in any worktree, and branches referenced by Grove workspaces. It reports branches merged into the base, and optionally upstream-gone branches with `--gone`; `--fetch` refreshes remote refs first. Preview is the default, while `--yes` deletes merged branches safely and gone branches forcibly.
-
-## Global lifecycle hooks
-
-Global hooks are configured in `~/.grove/config.toml` under `[hooks]`. The supported workspace-level events are:
-
-| Hook | Timing | Typical integration |
-|---|---|---|
-| `post_create` | After workspace creation | Install dependencies, prepare ignored files, publish session metadata |
-| `pre_delete` | Before worktree removal | Revoke temporary resources or notify an external service |
-| `on_close` | From `gw go -c` when closing a terminal pane | Close a multiplexer pane or external session |
-
-A hook can be a command string or a table with metadata:
-
-```toml
-[hooks]
-post_create = "./scripts/workspace-created {path} {name}"
-pre_delete = "./scripts/workspace-closing {path} {name}"
-on_close = "tmux kill-pane"
-
-[hooks.post_create]
-command = "npm install && npm run build"
-description = "Install dependencies and build assets"
-stream = true
-timeout = "5m"
-on_failure = "abort"
-```
-
-Hook commands run through `sh -c`. Supported placeholders are `{name}`, `{path}`, `{branch}`, `{source_url}`, `{source_ref}`, and `{source_title}`. Non-empty values are single-quoted, including embedded single quotes escaped for the shell; empty values expand to an empty string. This quoting applies to paths, branch names, and provenance values, preventing a value such as `feat/x; rm -rf ~` from becoming a second command.
-
-`stream = true` sends live, line-prefixed output to stderr. By default output is captured quietly and echoed with the hook-name prefix only when the hook fails. Keeping hook output on stderr preserves stdout for shell integrations such as `cd "$(gw go my-feature)"`. A valid positive Go duration imposes a timeout; on supported macOS and Linux builds Grove kills the hook's process group, including child processes. An invalid duration is warned about and ignored.
-
-The default failure policy is `warn`: the operation continues after a hook failure. `on_failure = "abort"` makes the failure fatal. Creation is not rolled back if an aborting `post_create` hook fails, because the workspace has already been provisioned. `pre_delete` runs before destructive removal, so an aborting failure prevents that removal. `--no-hooks` (or `-n`) disables all global hooks for that invocation; per-repository hooks are unaffected. `on_close` is required by `gw go -c` and reports an error when it is not configured.
-
-```mermaid
-sequenceDiagram
-    participant User
-    participant Service as Operation service
-    participant Hooks as Lifecycle runner
-    participant Shell as sh -c hook
-    participant Workspace as Workspace state
-    User->>Service: create or delete
-    alt create
-        Service->>Workspace: Provision workspace
-        Service->>Hooks: post_create with workspace and source vars
-        Hooks->>Shell: Expand quoted placeholders and run
-        Shell-->>Hooks: Exit status and output
-        Hooks-->>Service: Continue or abort by policy
-    else delete
-        Service->>Hooks: pre_delete with workspace and source vars
-        Hooks->>Shell: Expand quoted placeholders and run
-        Shell-->>Hooks: Exit status and output
-        Hooks-->>Service: Continue or abort by policy
-        Service->>Workspace: Remove worktrees when permitted
-    end
-```
-
-*This lifecycle sequence shows hook ordering and failure policy around the Git-worktree operation.*
-
-For per-repository behavior, see [Hooks](../docs/hooks.md). Grove reads `.grove.toml` from each source repository and caches both successful reads and read/parse errors by repository path for the life of the process; a changed file is not re-read until the process ends (tests can explicitly clear the cache). Core decodes `base_branch`, `setup`, `teardown`, `pre_sync`, and `post_sync` and ignores unknown keys, leaving the same file available for external consumers such as `gw-run`. `base_branch` overrides the default branch used for creation and sync; `setup` runs once per repository after creation (in parallel), `teardown` runs before deletion, and `pre_sync`/`post_sync` surround a successful rebase. Per-repository hook failures are warnings and do not block their attached operation. `pre_run`, `run`, and `post_run` are consumed by the external `gw-run` plugin rather than supervised by Grove core.
-
-## Source provenance
-
-A workspace may carry an optional `source` object in `state.json`:
+`gw create` accepts optional source provenance:
 
 ```bash
 gw create my-feature -b feat/login -r svc-a,svc-b \
@@ -235,31 +97,103 @@ gw create my-feature -b feat/login -r svc-a,svc-b \
   --source-title "Add login flow"
 ```
 
-The object records `provider`, `url`, `ref`, and `title`. Grove stores and displays these fields but treats their meaning as opaque; it does not resolve GitHub, GitLab, Notion, Slack, or any other provider. Provider-specific resolution belongs in an external plugin. Lifecycle hooks receive URL, ref, and title through `{source_url}`, `{source_ref}`, and `{source_title}`. There is no `{source_provider}` placeholder. Missing source fields are empty, and an absent source object remains absent in state.
+Grove persists an optional `source` object in `state.json` with `provider`, `url`, `ref`, and `title`. These values are metadata, not a provider API: core stores and displays them but never resolves GitHub, GitLab, Notion, Slack, or another provider-specific source. A plugin or caller performs provider-specific lookup and passes the resulting values to `gw create`. Missing `ref` and `title` are omitted by the state model; if neither source URL nor provider is supplied, the source object remains absent. Hooks receive URL, ref, and title as `{source_url}`, `{source_ref}`, and `{source_title}`. There is deliberately no `{source_provider}` placeholder.
 
-## Shell and output integration
+```mermaid
+sequenceDiagram
+    participant Caller as User or plugin
+    participant Create as gw create
+    participant Hooks as lifecycle hooks
+    participant Git as Git worktrees
+    participant State as Grove state
+    Caller->>Create: Name branch repos source metadata
+    alt normal branch mode
+        Create->>Hooks: resolve_branch with branch name and source values
+        Hooks-->>Create: One valid branch line
+    else --track
+        Create->>Create: Skip resolve_branch
+    end
+    Create->>Git: Fetch selected repositories in parallel
+    Create->>Git: Create worktrees sequentially
+    Git-->>Create: Worktree paths or failure
+    alt provisioning succeeds
+        Create->>State: Commit workspace and source metadata
+        Create->>Hooks: post_create
+        Create-->>Caller: Success and workspace path side effect
+    else provisioning fails
+        Create->>Git: Roll back created worktrees and branches
+        Create-->>Caller: Error
+    end
+```
 
-`gw shell-init` prints a shell wrapper rather than changing the parent shell itself:
+*This sequence shows the command boundary for a source-seeded create; source resolution itself is intentionally external to Grove.*
+
+### `resolve_branch`
+
+`resolve_branch` is a special global hook configured in `~/.grove/config.toml`. The operation service runs it once before provisioning, and `gw create --replace` resolves it before deleting the current workspace. Its `{branch}` value is the branch as typed, `{name}` is the workspace name, and source placeholders are available; `{path}` is empty because the workspace does not exist. stdin is not attached.
+
+The hook's stdout must trim to exactly one non-empty line, and that line must pass Git branch-name validation. stderr is never interpreted as the branch: it is streamed to stderr when `stream = true`, otherwise shown on failure. Any non-zero exit, timeout, empty or multi-line output, or invalid branch aborts creation regardless of `on_failure`; nothing is created. `--track` skips the resolver because the real remote branch name is used, and `--no-hooks` skips it and uses the typed branch. A later `gw add-repo` reuses the branch already stored in the workspace and does not resolve it again.
+
+### `--track`
+
+`gw create --track` checks out an existing `origin/<branch>` remote-tracking ref rather than creating a new branch from the base. Grove fetches before provisioning and uses `git worktree add --track -b <branch> <path> origin/<branch>` when that ref exists. Track mode falls back to normal branch creation for a repository where the remote branch is absent; when a workspace contains multiple repositories, `TrackBranchRepo` can restrict tracking to the source repository while sibling repositories receive fresh branches from their base.
+
+Creation fetches repositories in parallel, then adds worktrees sequentially so a failure can roll back already-created worktrees and branches. The resulting paths, branch, and source metadata are committed to Grove state. Per-repository `base_branch` and setup/teardown/sync hooks come from `.grove.toml`; unknown keys are ignored by core so external consumers can use the same file.
+
+## Lifecycle hooks
+
+Global hooks are configured under `[hooks]` in `~/.grove/config.toml`:
+
+| Hook | Boundary and timing |
+|---|---|
+| `resolve_branch` | Before create provisioning; its stdout selects the branch, with the strict contract above |
+| `post_create` | After the workspace is provisioned and committed |
+| `post_add_repo` | After `gw add-repo` adds at least one new repository; skipped when none was added |
+| `pre_delete` | Before destructive worktree removal |
+| `on_close` | From `gw go -c`; this hook is required for the close operation |
+
+A hook may be a command string or a table with `command`, `description`, `stream`, `timeout`, and `on_failure`. Commands run through `sh -c`. `{name}`, `{path}`, `{branch}`, `{source_url}`, `{source_ref}`, and `{source_title}` are replaced with single-quoted values; embedded single quotes are escaped, and empty values become empty text. This prevents a branch or source title such as `feat/x; rm -rf ~` from becoming a second shell command.
+
+By default hook output is captured and stays quiet on success. On failure captured output is line-prefixed with the hook name and written to stderr. `stream = true` sends prefixed output live to stderr. This keeps stdout safe for path capture. A positive Go `timeout` bounds execution; on supported macOS and Linux builds Grove kills the hook's process group, including children. Invalid durations are warned about and ignored. Ordinary hook failures warn and allow the operation to continue unless `on_failure = "abort"`; `post_create` failure does not roll back an already-created workspace, while an aborting `pre_delete` failure prevents removal. `--no-hooks` disables global hooks for that invocation but does not disable per-repository hooks.
+
+Per-repository `.grove.toml` supports core keys `base_branch`, `setup`, `teardown`, `pre_sync`, and `post_sync`. Setup runs after creation, teardown before deletion, and sync hooks surround a successful rebase; their failures are warnings. `pre_run`, `run`, and `post_run` are read by the external `gw-run` plugin rather than supervised by Grove.
+
+## Shell integration and stdout/stderr
+
+`gw shell-init` prints a wrapper, and does not change the parent shell itself:
 
 ```bash
 eval "$(gw shell-init)"
 gw shell-init --shell nu | save -f ~/.config/nushell/grove.nu
 ```
 
-The bash/zsh wrapper delegates to `command gw`, avoiding recursive invocation. `gw go` prints only the destination path on stdout; the wrapper changes directory when a successful path names an existing directory and otherwise prints the command output. With `gw create`, the wrapper supplies `GROVE_CD_FILE`; Grove writes the created workspace path there, and the wrapper changes directory after success. The Nushell wrapper provides the same `go` and `create` behavior with Nushell environment semantics. Hook output and navigation-time deletion output go to stderr so they cannot corrupt a path captured by the wrapper.
+The bash/zsh wrapper calls `command gw` to avoid recursion. `gw go` writes only the destination path to stdout without a trailing shell message; after a successful command the wrapper changes directory when that path exists, otherwise it prints the captured output. For `gw create`, the wrapper sets `GROVE_CD_FILE`; Grove writes the committed workspace path to that file and the wrapper changes directory after success. The Nushell wrapper implements the same `go` and `create` protocol using Nushell environment semantics. Hook output, navigation-time deletion messages, and diagnostics belong on stderr so they cannot corrupt `cd "$(gw go NAME)"` or another captured path.
 
-## Automation: prune JSON contract
+Commands that support query output accept `--output` values `table`, `json`, `jsonl`, `tsv`, `name`, and `path` (and legacy `--json` maps to `json`; combining it with another output is an error):
 
-Automation consuming candidate output should use `gw prune --json`. It emits an array of objects with `name`, `branch`, `created_at`, `age_days`, and `missing` fields. Candidates are workspaces at least `--min-age` old, **or whose workspace path is missing regardless of age**. In particular, `missing: true` means the path no longer exists on disk and makes the record eligible even when `age_days` is below the requested threshold.
+| Format | stdout contract |
+|---|---|
+| `table` | Human-readable headings and rows; paths may abbreviate the home directory as `~`. Empty results may print a human message. |
+| `json` | One indented JSON value, normally an array for list commands or an object for a single workspace. |
+| `jsonl` | One compact JSON value per line; list commands emit one record per line, including no lines for an empty list. |
+| `tsv` | Tab-separated rows with a header. Values use CSV/TSV escaping. |
+| `name` | One workspace or repository name per line. |
+| `path` | One workspace or repository path per line, suitable for shell pipelines. |
 
-Preview does not delete anything. Add `--yes` to attempt every emitted candidate through the lifecycle-aware cleanup used by `gw delete`; the command does not stop at the first failure. JSON remains an array after deletion: a failed deletion adds an `error` string to that candidate, while successful candidates have no deletion-status field. In table output, failure details appear in the `Note` column as `FAILED: ...`; human-readable deletion output also emits a summary warning with deleted and failed counts. The individual errors are joined and returned after output, producing a non-zero command result whenever any deletion fails. `--min-age` accepts hours, days, or weeks (`12h`, `7d`, `2w`), and a bare number means days.
+Machine consumers should select a machine format explicitly and treat stderr as diagnostics. `gw ws show`, workspace listing, status, and repository listing share these formats, but their JSON fields are the command's model-specific contract. For prune automation, `gw prune --json` emits an array; a failed deletion adds an `error` field to that candidate and the command returns non-zero after attempting all candidates.
 
-## Troubleshooting and safe extension
+## Git subprocess boundary and traces
 
-- If a plugin is not found, verify the exact `gw-<name>` filename, executable bit, `~/.grove/plugins/`, and `$PATH`; built-in command names cannot be overridden by plugins.
-- If a registry install name is rejected, use `gw plugin search`; to install an unlisted project, pass its `OWNER/REPOSITORY` reference rather than its bare name.
-- If a GitHub installation fails, check the repository identifier, latest release, compatible OS/architecture archive, HTTPS asset URL, and optional `GITHUB_TOKEN` for API access.
-- If a hook does not fire, check `~/.grove/config.toml`, whether `--no-hooks` was supplied, and run with `--verbose`. For a failing quiet hook, inspect the prefixed stderr output; use `stream` for live progress and `timeout` for bounded external work.
-- Keep plugin-specific state outside Grove's state ownership boundary, use the supplied environment paths, quote or accept placeholders as documented, and test against real Git worktrees.
+Grove invokes the `git` executable with an explicit working directory, a process-wide environment captured at package initialization, and stdin connected to the OS null device. It always adds `GIT_TERMINAL_PROMPT=0`. Unless the caller already set `GIT_SSH_COMMAND`, it adds `GIT_SSH_COMMAND=ssh -o BatchMode=yes`. Fetch, branch, worktree, status, rebase, and registration-repair operations therefore fail rather than prompting for credentials in a non-interactive command.
 
-Focused coverage includes plugin discovery, argument forwarding, environment propagation, and removal in `e2e/plugin_test.go`; lifecycle placeholder quoting, stream/capture behavior, timeout process-group handling, and failure policy in `internal/lifecycle/lifecycle_test.go`; source-placeholder and `--no-hooks` behavior in `e2e/lifecycle_test.go`; Git command/config parsing in `internal/gitops/gitops_test.go`; and prune age boundaries, missing-path eligibility, all-candidate deletion attempts, and JSON behavior in `cmd/prune_test.go`. When changing prune output, preserve the array shape and per-candidate failure reporting, then verify the command's exit status as well as stdout/stderr placement.
+Git's combined output is trimmed and returned through a structured `GitError` containing the command and output. Authentication-shaped failures add a credentials hint, but Grove does not print or persist credentials as a normal feature. With `--verbose`, Git calls are written to `~/.grove/grove.log` as debug traces containing the working directory, redacted command, elapsed time, success/failure, and truncated failure output. Credential-like URL userinfo (`scheme://user:pass@host`) is replaced with `***@` before trace truncation; this redaction deliberately masks usernames too. The log is a rotating 1 MB file with three backups. Info, warning, and error records are written regardless of `--verbose`; debug Git traces require it.
+
+## Extension and change guidance
+
+- Keep provider-specific parsing and API calls in a plugin or caller. Grove's `WorkspaceSource` is opaque provenance.
+- Use the supplied plugin variables and Grove commands rather than writing `state.json` or inventing a plugin override of a built-in command.
+- Preserve stdout for paths and machine formats. Put hook progress, human diagnostics, and deletion warnings on stderr.
+- Treat `resolve_branch` as a precondition and `post_add_repo` as a postcondition: the former must be safe before destructive `--replace`, while the latter fires only after an actual repository addition.
+- When changing Git invocation or trace code, maintain non-interactive credentials behavior and redact before truncating trace output.
+
+Focused tests cover plugin discovery, argument forwarding, environment propagation, and removal in `e2e/plugin_test.go`; resolver output, `--track`, source placeholders, `post_add_repo`, and `--no-hooks` in lifecycle and operation tests; output formats in `cmd/query_output_test.go`; shell path behavior in `cmd/go_cmd_test.go` and workspace create tests; and Git non-interactive settings, trace gating, redaction, and truncation in `internal/gitops` tests. These tests are the safety net for changing a public integration contract.
