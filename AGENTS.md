@@ -2,17 +2,6 @@
 
 This file provides vendor-neutral guidance to coding agents working in this repository.
 
-## OpenWiki
-
-This repository has documentation located in the /openwiki directory.
-
-Start here:
-- [OpenWiki quickstart](openwiki/quickstart.md)
-
-OpenWiki includes repository overview, architecture notes, workflows, domain concepts, operations, integrations, testing guidance, and source maps.
-
-When working in this repository, read the OpenWiki quickstart first, then follow its links to the relevant architecture, workflow, domain, operation, and testing notes.
-
 ## What is Grove?
 
 Git Worktree Workspace Orchestrator — CLI tool invoked as `gw`. Manages multi-repo worktree-based workspaces so developers can spin up isolated branches across several repos at once.
@@ -56,9 +45,11 @@ Tool-specific integrations (coding agents, terminal multiplexers, archives, and 
 - **internal/console/** — Colored output helpers and table rendering.
 - **internal/discover/** — Finds git repos in configured directories. Caches remote URLs on disk.
 - **internal/gitops/** — Thin wrappers around `git` subprocess calls. Includes `ReadGroveConfig()`.
-- **internal/lifecycle/** — Runs global lifecycle hooks (`post_create`, `pre_delete`, `on_close`) defined in `[hooks]`. Hooks may be bare command strings or tables with metadata (`stream`, `timeout`, `on_failure`); the global `--no-hooks`/`-n` flag skips them all. Plugins register here.
+- **internal/lifecycle/** — Runs global lifecycle hooks (`resolve_branch`, `post_create`, `post_add_repo`, `pre_delete`, `on_close`) defined in `[hooks]`. `resolve_branch` is the only hook whose stdout Grove uses (it picks the branch for `gw create`). Hooks may be bare command strings or tables with metadata (`stream`, `timeout`, `on_failure`); the global `--no-hooks`/`-n` flag skips them all. Plugins register here.
 - **internal/logging/** — Structured logging.
 - **internal/models/** — Data structs with JSON serialization.
+- **internal/operations/** — User-facing operation ordering (create, add-repo, delete): resolves branches, runs lifecycle hooks around the `workspace` primitives.
+- **internal/output/** — Stable output formats shared by commands.
 - **internal/picker/** — Interactive terminal menus.
 - **internal/plugin/** — Plugin install/upgrade/remove from GitHub releases.
 - **internal/state/** — Workspace state persisted to `~/.grove/state.json`. Uses atomic writes.
@@ -71,11 +62,11 @@ Tool-specific integrations (coding agents, terminal multiplexers, archives, and 
 
 ## OpenWiki
 
-This repository has a generated `openwiki/` evidence index. It is optional just-in-time context, not required startup reading.
+This repository has a generated `openwiki/` evidence index ([quickstart](openwiki/quickstart.md)). It is optional just-in-time context, not required startup reading.
 
 - Treat source code and tests as authoritative. A brief's unknowns and review items are verification gaps, not automatic requirements.
 - Prefer the narrowest quiet validation that proves the changed behavior. Preserve complete failure output.
 
-The scheduled OpenWiki GitHub Actions workflow refreshes the repository wiki. Do not hand-edit generated OpenWiki pages unless explicitly asked; prefer updating source code/docs and letting OpenWiki regenerate.
+No workflow refreshes the wiki; regenerate it manually with `openwiki code --update` and ship that as its own docs-only PR, never mixed into code changes. Do not hand-edit generated OpenWiki pages unless explicitly asked; update source code/docs and regenerate.
 
 <!-- OPENWIKI:END -->
