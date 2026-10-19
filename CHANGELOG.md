@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Fixes
+
+- New workspace branches (`gw create`, `gw add-repo`, presets) no longer track the base branch. git's `branch.autoSetupMerge` made a branch started from `origin/<base>` track it, so with `push.default=upstream` a plain `git push` pushed to `main`. `gw create --track` still tracks `origin/<branch>`.
+
 ## v1.1.20
 
 ### Features

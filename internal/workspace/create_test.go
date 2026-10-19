@@ -3,6 +3,7 @@ package workspace
 import (
 	"bytes"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -188,6 +189,31 @@ func TestCreateAutoCreatesBranch(t *testing.T) {
 	branch := env.run(filepath.Join(env.wsDir, "auto-branch", "api"), "git", "branch", "--show-current")
 	if branch != "feat/new-branch" {
 		t.Errorf("expected feat/new-branch, got %s", branch)
+	}
+}
+
+// A branch started from origin/<base> must not track the base: with
+// push.default=upstream a plain `git push` would otherwise push to main.
+func TestNewBranchesDoNotTrackBase(t *testing.T) {
+	env := setupTestEnv(t)
+	for _, name := range []string{"api", "web"} {
+		repo := env.createRepoWithRemote(name)
+		env.run(repo, "git", "config", "branch.autoSetupMerge", "always")
+	}
+
+	if err := env.createWorkspace("notrack", "feat/notrack", []string{"api"}); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if _, err := env.svc.AddRepos("notrack", []string{"web"}, env.repoMap); err != nil {
+		t.Fatalf("add-repo: %v", err)
+	}
+
+	for _, name := range []string{"api", "web"} {
+		cmd := exec.Command("git", "rev-parse", "--abbrev-ref", "@{u}")
+		cmd.Dir = filepath.Join(env.wsDir, "notrack", name)
+		if out, err := cmd.CombinedOutput(); err == nil {
+			t.Errorf("%s: expected no upstream, got %q", name, out)
+		}
 	}
 }
 

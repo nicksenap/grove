@@ -186,9 +186,12 @@ func BranchExists(repo, branch string) bool {
 	return err == nil
 }
 
-// CreateBranch creates a new branch at the given start point.
+// CreateBranch creates a new branch at the given start point with no
+// upstream. Without --no-track, git's branch.autoSetupMerge makes a branch
+// started from origin/<base> track it, so with push.default=upstream a plain
+// `git push` would push to the base branch.
 func CreateBranch(repo, branch, startPoint string) error {
-	args := []string{"branch", branch}
+	args := []string{"branch", "--no-track", branch}
 	if startPoint != "" {
 		args = append(args, startPoint)
 	}

@@ -119,6 +119,21 @@ func TestCreateBranchWithStartPoint(t *testing.T) {
 	}
 }
 
+func TestCreateBranchFromRemoteRefHasNoUpstream(t *testing.T) {
+	repo := initTestRepo(t)
+	// Force tracking on so the test fails without --no-track regardless of
+	// the machine's git config.
+	run(t, repo, "git", "config", "branch.autoSetupMerge", "always")
+	base := "origin/" + run(t, repo, "git", "branch", "--show-current")
+
+	if err := CreateBranch(repo, "feat/from-base", base); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if out, err := runGit(repo, "rev-parse", "--abbrev-ref", "feat/from-base@{u}"); err == nil {
+		t.Errorf("expected no upstream for feat/from-base, got %q", out)
+	}
+}
+
 func TestWorktreeAddAndRemove(t *testing.T) {
 	repo := initTestRepo(t)
 
