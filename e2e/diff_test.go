@@ -94,3 +94,37 @@ func TestDiff(t *testing.T) {
 		t.Fatalf("--no-pager still ran the pager (%d runs)", got)
 	}
 }
+
+// Quitting the pager early (here: head -1) is silent and not a failure, like
+// git; a real git error in an earlier repo still sets the exit code.
+func TestDiffPagerQuitEarly(t *testing.T) {
+	env := newEnv(t)
+	for _, name := range []string{"svc-a-gone", "svc-big", "svc-small"} {
+		repo := env.createRepo(name)
+		env.writeFile(filepath.Join(repo, "main.txt"), "one\n")
+		env.git(repo, "add", ".")
+		env.git(repo, "commit", "-q", "-m", "add main.txt")
+	}
+	env.init()
+	env.mustGW("create", "quit-ws", "--branch", "feat/quit", "--repos", "svc-a-gone,svc-big,svc-small")
+	wsPath := env.workspacePath("quit-ws")
+	// Bigger than a pipe buffer, so git is still writing when the pager exits.
+	env.writeFile(filepath.Join(env.worktree("quit-ws", "svc-big"), "main.txt"),
+		strings.Repeat("a long line of changed content\n", 20000))
+	env.writeFile(filepath.Join(env.worktree("quit-ws", "svc-small"), "main.txt"), "two\n")
+	pagerEnv := []string{"GIT_PAGER=head -1", "GROVE_FORCE_PAGER=1"}
+
+	res := env.runGWWithEnv(wsPath, pagerEnv, "diff")
+	res.must(t)
+	if res.stderr != "" {
+		t.Fatalf("quitting the pager should be silent, got stderr:\n%s", res.stderr)
+	}
+	if strings.Count(res.stdout, "\n") != 1 {
+		t.Fatalf("want exactly the pager's one line, got:\n%s", res.stdout)
+	}
+
+	if err := os.RemoveAll(env.worktree("quit-ws", "svc-a-gone")); err != nil {
+		t.Fatal(err)
+	}
+	env.runGWWithEnv(wsPath, pagerEnv, "diff").mustFail(t)
+}
