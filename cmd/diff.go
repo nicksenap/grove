@@ -4,9 +4,11 @@ import (
 	"errors"
 	"os"
 	"os/exec"
+	"os/signal"
 	"strings"
 
 	"github.com/nicksenap/grove/internal/console"
+	"github.com/nicksenap/grove/internal/logging"
 	"github.com/nicksenap/grove/internal/models"
 	"github.com/nicksenap/grove/internal/workspace"
 	"github.com/spf13/cobra"
@@ -42,6 +44,13 @@ Known limitations:
 		if err != nil {
 			exitError(err.Error())
 		}
+		// Global flags (gw --verbose diff) arrive here unparsed; apply them.
+		if len(opts.rootFlags) > 0 {
+			if err := rootCmd.PersistentFlags().Parse(opts.rootFlags); err != nil {
+				exitError(err.Error())
+			}
+			logging.Setup(verbose)
+		}
 		if opts.help {
 			cmd.Help()
 			return
@@ -58,11 +67,13 @@ type diffOptions struct {
 	workspace string
 	noPager   bool
 	help      bool
+	rootFlags []string
 	gitArgs   []string
 }
 
-// parseDiffArgs extracts gw's own flags (--workspace, --no-pager, -h/--help)
-// from the arguments before any `--`; everything else is passed to git diff.
+// parseDiffArgs extracts gw's own flags (--workspace, --no-pager, -h/--help,
+// and global boolean flags such as --verbose and -n) from the arguments before
+// any `--`; everything else is passed to git diff.
 func parseDiffArgs(args []string) (diffOptions, error) {
 	var opts diffOptions
 	for i := 0; i < len(args); i++ {
@@ -83,6 +94,8 @@ func parseDiffArgs(args []string) (diffOptions, error) {
 			opts.workspace = args[i]
 		case strings.HasPrefix(arg, "--workspace="):
 			opts.workspace = strings.TrimPrefix(arg, "--workspace=")
+		case isRootBoolFlag(arg):
+			opts.rootFlags = append(opts.rootFlags, arg)
 		default:
 			opts.gitArgs = append(opts.gitArgs, arg)
 		}
@@ -90,15 +103,56 @@ func parseDiffArgs(args []string) (diffOptions, error) {
 	return opts, nil
 }
 
+// isRootBoolFlag reports whether arg is one of gw's global boolean flags
+// (--name, --name=value, or -x).
+func isRootBoolFlag(arg string) bool {
+	fs := rootCmd.PersistentFlags()
+	var name string
+	if long, ok := strings.CutPrefix(arg, "--"); ok {
+		name, _, _ = strings.Cut(long, "=")
+	} else if len(arg) == 2 && arg[0] == '-' {
+		if f := fs.ShorthandLookup(arg[1:]); f != nil {
+			name = f.Name
+		}
+	}
+	f := fs.Lookup(name)
+	return f != nil && f.Value.Type() == "bool"
+}
+
+// exitStatusOnly reports whether args ask git diff for an exit status
+// (--exit-code, --quiet); git does not start a pager then.
+func exitStatusOnly(args []string) bool {
+	for _, a := range args {
+		if a == "--" {
+			return false
+		}
+		if a == "--exit-code" || a == "--quiet" {
+			return true
+		}
+	}
+	return false
+}
+
+// pagerDir returns the first repo worktree that exists, for resolving the
+// pager from repo config, or "" if none does.
+func pagerDir(ws *models.Workspace) string {
+	for _, r := range workspace.SortedRepos(ws) {
+		if info, err := os.Stat(r.WorktreePath); err == nil && info.IsDir() {
+			return r.WorktreePath
+		}
+	}
+	return ""
+}
+
 // runDiff writes the combined diff to stdout, through one pager when stdout
 // is a terminal, and returns the exit code.
 func runDiff(ws *models.Workspace, args []string, noPager bool) int {
-	repos := workspace.SortedRepos(ws)
-	if noPager || len(repos) == 0 ||
+	dir := pagerDir(ws)
+	if noPager || dir == "" || exitStatusOnly(args) ||
 		(!console.IsTerminal(os.Stdout) && os.Getenv(forcePagerEnv) == "") {
 		return workspace.Diff(ws, args, os.Stdout, os.Stderr)
 	}
-	pager := gitPager(repos[0].WorktreePath)
+	pager := gitPager(dir)
 	if pager == "" {
 		return workspace.Diff(ws, args, os.Stdout, os.Stderr)
 	}
@@ -118,6 +172,12 @@ func runDiff(ws *models.Workspace, args []string, noPager bool) int {
 		return workspace.Diff(ws, args, os.Stdout, os.Stderr)
 	}
 	r.Close()
+	// Like git, Ctrl-C must not kill gw while the pager owns the terminal: catch
+	// SIGINT and keep waiting. Catching (not ignoring) leaves it at the default
+	// for the git children, which still stop on Ctrl-C.
+	sigint := make(chan os.Signal, 1)
+	signal.Notify(sigint, os.Interrupt)
+	defer signal.Stop(sigint)
 	// Like git: color when paging. User args come after, so they win.
 	code := workspace.Diff(ws, append([]string{"--color=always"}, args...), w, os.Stderr)
 	w.Close()

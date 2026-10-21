@@ -2,9 +2,11 @@ package e2e
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestDiff(t *testing.T) {
@@ -123,8 +125,130 @@ func TestDiffPagerQuitEarly(t *testing.T) {
 		t.Fatalf("want exactly the pager's one line, got:\n%s", res.stdout)
 	}
 
+	// A repo that fails before the pager quits still sets the exit code.
 	if err := os.RemoveAll(env.worktree("quit-ws", "svc-a-gone")); err != nil {
 		t.Fatal(err)
 	}
-	env.runGWWithEnv(wsPath, pagerEnv, "diff").mustFail(t)
+	res = env.runGWWithEnv(wsPath, pagerEnv, "diff")
+	if res.code != 128 {
+		t.Fatalf("want exit 128 from the missing repo, got %d\n%s", res.code, res.combined())
+	}
+	if strings.Count(res.stdout, "\n") != 1 {
+		t.Fatalf("want the pager's one line, got:\n%s", res.stdout)
+	}
+}
+
+// writeCapturePager writes a GIT_PAGER script that records each run in
+// <capture>.runs and the paged input in <capture>, then runs extra.
+func (e *env) writeCapturePager(extra string) (script, capture string) {
+	e.t.Helper()
+	capture = filepath.Join(e.home, "pager-capture")
+	script = filepath.Join(e.home, "pager.sh")
+	e.writeFile(script, "#!/bin/sh\necho run >> "+capture+".runs\ncat > "+capture+"\n"+extra)
+	if err := os.Chmod(script, 0o755); err != nil {
+		e.t.Fatal(err)
+	}
+	return script, capture
+}
+
+func pagerRuns(t *testing.T, capture string) int {
+	t.Helper()
+	runs, _ := os.ReadFile(capture + ".runs")
+	return strings.Count(string(runs), "run")
+}
+
+// newDiffWorkspace creates workspace diff-ws over repos, each with a changed main.txt.
+func (e *env) newDiffWorkspace(repos ...string) string {
+	e.t.Helper()
+	for _, name := range repos {
+		repo := e.createRepo(name)
+		e.writeFile(filepath.Join(repo, "main.txt"), "one\n")
+		e.git(repo, "add", ".")
+		e.git(repo, "commit", "-q", "-m", "add main.txt")
+	}
+	e.init()
+	e.mustGW("create", "diff-ws", "--branch", "feat/diff", "--repos", strings.Join(repos, ","))
+	for _, name := range repos {
+		e.writeFile(filepath.Join(e.worktree("diff-ws", name), "main.txt"), "two\n")
+	}
+	return e.workspacePath("diff-ws")
+}
+
+// The pager is resolved from the first repo that exists, so a missing first
+// repo still pages, and its failure still sets the exit code.
+func TestDiffPagerWithMissingFirstRepo(t *testing.T) {
+	env := newEnv(t)
+	wsPath := env.newDiffWorkspace("svc-a-gone", "svc-b")
+	if err := os.RemoveAll(env.worktree("diff-ws", "svc-a-gone")); err != nil {
+		t.Fatal(err)
+	}
+	script, capture := env.writeCapturePager("")
+	res := env.runGWWithEnv(wsPath, []string{"GIT_PAGER=" + script, "GROVE_FORCE_PAGER=1"}, "diff")
+	if res.code != 128 {
+		t.Fatalf("want exit 128, got %d\n%s", res.code, res.combined())
+	}
+	if got := pagerRuns(t, capture); got != 1 {
+		t.Fatalf("pager ran %d times, want 1", got)
+	}
+	paged, _ := os.ReadFile(capture)
+	env.requireContains(string(paged), "a/svc-b/main.txt", "paged output")
+}
+
+// Like git, --exit-code and --quiet never start a pager.
+func TestDiffExitCodeSkipsPager(t *testing.T) {
+	env := newEnv(t)
+	wsPath := env.newDiffWorkspace("svc-a")
+	script, capture := env.writeCapturePager("")
+	pagerEnv := []string{"GIT_PAGER=" + script, "GROVE_FORCE_PAGER=1"}
+	for _, flag := range []string{"--exit-code", "--quiet"} {
+		if res := env.runGWWithEnv(wsPath, pagerEnv, "diff", flag); res.code != 1 {
+			t.Fatalf("%s: want exit 1, got %d\n%s", flag, res.code, res.combined())
+		}
+	}
+	if got := pagerRuns(t, capture); got != 0 {
+		t.Fatalf("pager ran %d times, want 0", got)
+	}
+}
+
+// Global flags before `diff` are gw's, not git's.
+func TestDiffGlobalFlags(t *testing.T) {
+	env := newEnv(t)
+	wsPath := env.newDiffWorkspace("svc-a")
+	env.requireContains(env.mustGWIn(wsPath, "--verbose", "diff").stdout, "a/svc-a/main.txt", "--verbose diff")
+	env.requireContains(env.mustGWIn(wsPath, "-n", "diff", "--stat").stdout, "1 file changed", "-n diff --stat")
+}
+
+// Ctrl-C while paging must not kill gw: it keeps waiting for the pager.
+func TestDiffSIGINTWaitsForPager(t *testing.T) {
+	env := newEnv(t)
+	wsPath := env.newDiffWorkspace("svc-a")
+	done := filepath.Join(env.home, "pager-done")
+	script, capture := env.writeCapturePager("sleep 1\ntouch " + done + "\n")
+
+	cmd := exec.Command(gwBin, "diff")
+	cmd.Dir = wsPath
+	cmd.Env = append(env.cmdEnv(), "GIT_PAGER="+script, "GROVE_FORCE_PAGER=1")
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	// Wait until the pager has consumed the diff, so gw is waiting on it.
+	deadline := time.Now().Add(10 * time.Second)
+	for pagerRuns(t, capture) == 0 || !fileHas(capture, "svc-a") {
+		if time.Now().After(deadline) {
+			t.Fatal("pager never received the diff")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if err := cmd.Process.Signal(os.Interrupt); err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.Wait(); err != nil {
+		t.Fatalf("gw should exit cleanly after the pager, got %v", err)
+	}
+	env.requireExists(done)
+}
+
+func fileHas(path, s string) bool {
+	b, _ := os.ReadFile(path)
+	return strings.Contains(string(b), s)
 }

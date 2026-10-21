@@ -52,9 +52,10 @@ func diffExitCode(repo string, err error, stderr io.Writer) int {
 	if errors.As(err, &exitErr) && exitErr.ExitCode() > 0 {
 		return exitErr.ExitCode()
 	}
-	// Not started, or killed by a signal other than SIGPIPE.
+	// Not started, or killed by a signal other than SIGPIPE. Use git's fatal
+	// code: 1 must only mean "has differences".
 	fmt.Fprintf(stderr, "gw diff: %s: %v\n", repo, err)
-	return 1
+	return 128
 }
 
 // brokenPipe reports whether git was killed by SIGPIPE, i.e. stdout's reader exited.

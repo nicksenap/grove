@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -16,6 +17,8 @@ func TestParseDiffArgs(t *testing.T) {
 		{[]string{"--workspace", "ws", "--no-pager", "--stat"},
 			diffOptions{workspace: "ws", noPager: true, gitArgs: []string{"--stat"}}},
 		{[]string{"--workspace=ws", "-h"}, diffOptions{workspace: "ws", help: true}},
+		{[]string{"--verbose", "-n", "--no-hooks=false", "--stat"},
+			diffOptions{rootFlags: []string{"--verbose", "-n", "--no-hooks=false"}, gitArgs: []string{"--stat"}}},
 		{[]string{"HEAD", "--", "--no-pager"},
 			diffOptions{gitArgs: []string{"HEAD", "--", "--no-pager"}}},
 	}
@@ -30,5 +33,19 @@ func TestParseDiffArgs(t *testing.T) {
 	}
 	if _, err := parseDiffArgs([]string{"--workspace"}); err == nil {
 		t.Error("--workspace without a value should fail")
+	}
+}
+
+func TestExitStatusOnly(t *testing.T) {
+	for args, want := range map[string]bool{
+		"":                    false,
+		"--stat":              false,
+		"--exit-code":         true,
+		"HEAD --quiet":        true,
+		"HEAD -- --exit-code": false,
+	} {
+		if got := exitStatusOnly(strings.Fields(args)); got != want {
+			t.Errorf("exitStatusOnly(%q) = %v, want %v", args, got, want)
+		}
 	}
 }
