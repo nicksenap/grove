@@ -13,6 +13,7 @@ Global flags: `--verbose` (debug log to `~/.grove/grove.log`), `-n`/`--no-hooks`
 | `gw ws show` | `gw ws show NAME -o json\|path` | — | No |
 | `gw list` / `gw ws list` | `gw list -o jsonl [-s]` (`-s` adds git status) | — | No |
 | `gw status` | `gw status [NAME] -o jsonl [-P]` (`-P` adds PR status via gh/glab) | — | No |
+| `gw diff` | `gw diff [--workspace NAME] [--no-pager] [<git diff args>...]` | — (pages when stdout is a TTY) | No |
 | `gw go` | `gw go NAME` (prints path, no newline) | >1 workspace → picker | `-d` deletes the workspace after navigating away |
 | `gw add-repo` | `gw add-repo [NAME] -r a,b` (names or git URLs; URLs clone into the first repo dir) | `-r` → picker | No |
 | `gw remove-repo` | `gw remove-repo [NAME] -r a -f`, or `echo y \| gw remove-repo [NAME] -r a` to keep the dirty-worktree check | `-r` → picker; always prompts without `-f` | **Yes**: removes the worktree and its branch; `-f` also skips the dirty check |
@@ -22,6 +23,8 @@ Global flags: `--verbose` (debug log to `~/.grove/grove.log`), `-n`/`--no-hooks`
 | `gw delete` / `gw ws delete` | `gw delete NAME...`; or `... \| gw delete --stdin --yes` | no names → picker | **Yes, no prompt**: force-removes worktrees and `git branch -D` (branches that existed before the workspace are kept) |
 | `gw prune` | `gw prune [--min-age 7d] --json` to list; add `--yes` to delete | — | `--yes`: deletes every listed workspace like `gw delete` |
 | `gw prune branches` | `gw prune branches [--fetch] [--gone] --json`; `--yes` deletes | — | `--yes` deletes merged branches in source clones; `--gone` force-deletes, may drop unmerged commits |
+
+`gw diff` runs `git diff` in every repo (sorted by name) and concatenates the output with paths prefixed `a/<repo>/` and `b/<repo>/`, so it pipes into delta or `git apply` like one monorepo diff. Exit code is non-zero if any repo fails, and with `--exit-code`/`--quiet` if any repo has differences. Limitations: `--stat`/`--shortstat` print one block per repo; `--name-only`, `--name-status`, `--numstat` and `--raw` paths lack the repo prefix; pathspecs go to every repo; no cross-repo rename detection, and SHAs resolve only in their own repo; external diff tools (`GIT_EXTERNAL_DIFF`) label files without the prefix.
 
 `NAME` in brackets is detected from the current directory when you are inside a workspace.
 
