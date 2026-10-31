@@ -161,6 +161,7 @@ Presets, plugins, hooks, and the full command reference are covered in [Workflow
 ### Integrations
 
 - [grove-herdr](https://github.com/nicksenap/grove-herdr) — [Herdr](https://herdr.dev) plugin: `prefix+shift+g` prompts for a name, runs `gw create`, and opens the workspace in Herdr; hooks close it on `gw delete`.
+- [grove-rex](https://github.com/nicksenap/grove-rex) — [Rex](https://www.superlogical.com/rex) popup: `cmd+g` asks for a name, a preset or repos, and a branch, runs `gw create`, and opens the workspace as a Rex session; a `pre_delete` hook closes it on `gw delete`.
 - Plugins such as [gw-dispatch](https://github.com/nicksenap/gw-dispatch), [gw-run](https://github.com/nicksenap/gw-run), and [gw-recipe](https://github.com/nicksenap/gw-recipe) — see [docs/plugins.md](docs/plugins.md).
 
 ## Upgrading
