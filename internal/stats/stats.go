@@ -99,6 +99,33 @@ func (t *Tracker) RecordDeleted(ws models.Workspace) error {
 	return t.saveEvents(events)
 }
 
+// RecentRepos returns the repo names of created workspaces, most recently
+// used first, without duplicates. limit <= 0 means no limit.
+func (t *Tracker) RecentRepos(limit int) ([]string, error) {
+	events, err := t.loadEvents()
+	if err != nil {
+		return nil, err
+	}
+	var out []string
+	seen := make(map[string]bool)
+	for i := len(events) - 1; i >= 0; i-- {
+		if events[i].Event != "workspace_created" {
+			continue
+		}
+		for _, name := range events[i].RepoNames {
+			if seen[name] {
+				continue
+			}
+			seen[name] = true
+			out = append(out, name)
+			if limit > 0 && len(out) == limit {
+				return out, nil
+			}
+		}
+	}
+	return out, nil
+}
+
 // activityByDate counts workspace_created events per date (YYYY-MM-DD).
 func activityByDate(events []models.StatsEvent) map[string]int {
 	counts := make(map[string]int)

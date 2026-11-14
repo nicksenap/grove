@@ -139,7 +139,7 @@ gw list -o name | grep '^old-' | gw delete --stdin --yes
 
 The output formats are available on `gw list`, `gw repos`, `gw status`, and `gw ws show`. Data is written to stdout; progress and diagnostics are written to stderr. ANSI styling is disabled when output is redirected or `NO_COLOR` is set.
 
-Interactive menus support **type-to-search** filtering, arrow-key navigation (single-select), or arrow + tab (multi-select) with an `(all)` shortcut.
+Interactive menus support search (press `/`, then type), arrow-key or `j`/`k` navigation (single-select), or arrow + tab (multi-select) with an `(all)` shortcut.
 
 Repos can carry a `.grove.toml` so every new worktree is ready to work in:
 
