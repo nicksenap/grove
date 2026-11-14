@@ -133,7 +133,7 @@ gw repos -o json                        # discovered repos
 gw preset list --json                   # presets
 ```
 
-The JSON these commands print is the supported interface: fields may be added, but existing fields are not renamed or removed. `-o name`, `-o path`, `-o tsv`, and `-o jsonl` are available on the same commands.
+The JSON these commands print is the supported interface: fields may be added, but existing fields are not renamed or removed. `-o name`, `-o path`, `-o tsv`, and `-o jsonl` are available on all of these except `gw preset list`, which only has `--json`.
 
 `state.json` is a private file. Its format can change in any release without notice, so do not read or write it. `GROVE_STATE` is deprecated for this reason: it is still set for now and will be removed in a later release. Change workspaces only through `gw` commands (`gw create`, `gw add-repo`, `gw delete`, ...).
 
