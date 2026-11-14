@@ -1,5 +1,28 @@
 # Changelog
 
+## v1.1.21
+
+### Features
+
+- `gw create` without repo flags now opens one picker with three tabs: **Presets**, **Latest** (up to 10 repos from your most recently created workspaces), and **All repos**. Switch tabs with `←`/`→` or `h`/`l`. Repos checked on Latest stay checked on All repos, and Enter with nothing checked picks the highlighted row.
+- `gw ws show` no longer needs a name inside a workspace: it shows the workspace containing the current directory.
+
+### Changed
+
+- All interactive pickers now open search with `/` instead of filtering as you type, so `h`, `j`, `k` and `l` navigate and can also be typed into a search. In single-select pickers Enter confirms the highlighted match; in multi-select pickers Enter keeps the filter so you can check rows. Esc clears a search or filter first, then cancels.
+
+### Deprecated
+
+- `state.json` is a private file and its format may change in any release. Plugins and scripts should read workspaces with `gw list -o json` and `gw ws show -o json`, whose JSON shape is now kept stable separately from the state file (the output itself is unchanged). The `GROVE_STATE` plugin environment variable is deprecated: it is still set for now and will be removed in a later release. See `docs/plugins.md`.
+
+### Fixes
+
+- `gw doctor --fix` now cleans a workspace whose directory is missing the same way `gw delete` and `gw prune` do: it also prunes the git worktree registrations and deletes the workspace branch, instead of only dropping the state entry.
+
+### Maintenance
+
+- Bumped `golang.org/x/sys` (0.49.0 → 0.50.0) and `golang.org/x/term` (0.46.0 → 0.48.0).
+
 ## v1.1.20
 
 ### Features
