@@ -3,6 +3,8 @@ package cmd
 import (
 	"os"
 
+	"github.com/nicksenap/grove/internal/models"
+
 	"github.com/nicksenap/grove/internal/console"
 	"github.com/nicksenap/grove/internal/output"
 	"github.com/nicksenap/grove/internal/state"
@@ -34,13 +36,17 @@ var wsListCmd = &cobra.Command{
 	},
 }
 
-// wsShowCmd is "gw ws show <name>".
+// wsShowCmd is "gw ws show [name]".
 var wsShowCmd = &cobra.Command{
-	Use:   "show NAME",
-	Short: "Show details for a workspace",
-	Args:  cobra.ExactArgs(1),
+	Use:   "show [NAME]",
+	Short: "Show details for a workspace (default: the workspace containing the current directory)",
+	Args:  cobra.MaximumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
-		doShowOne(args[0])
+		name := ""
+		if len(args) > 0 {
+			name = args[0]
+		}
+		doShowOne(name)
 	},
 	ValidArgsFunction: completeWorkspaceNames,
 }
@@ -114,14 +120,36 @@ func doShowOne(name string) {
 		exitError(err.Error())
 	}
 
-	ws, err := state.GetWorkspace(name)
+	ws := lookupWorkspaceForShow(name)
+	if err := writeWorkspaceShow(os.Stdout, ws, format); err != nil {
+		exitError(err.Error())
+	}
+}
+
+// lookupWorkspaceForShow returns the named workspace, or with an empty name
+// the workspace that contains the current directory. It exits on failure.
+func lookupWorkspaceForShow(name string) *models.Workspace {
+	if name != "" {
+		ws, err := state.GetWorkspace(name)
+		if err != nil {
+			exitError(err.Error())
+		}
+		if ws == nil {
+			exitError("Workspace not found: " + name)
+		}
+		return ws
+	}
+
+	cwd, err := os.Getwd()
+	if err != nil {
+		exitError("cannot determine working directory: " + err.Error())
+	}
+	ws, err := state.FindWorkspaceByPath(cwd)
 	if err != nil {
 		exitError(err.Error())
 	}
 	if ws == nil {
-		exitError("Workspace not found: " + name)
+		exitError("Not inside a workspace. Pass a workspace name: gw ws show NAME")
 	}
-	if err := writeWorkspaceShow(os.Stdout, ws, format); err != nil {
-		exitError(err.Error())
-	}
+	return ws
 }

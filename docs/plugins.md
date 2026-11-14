@@ -62,7 +62,7 @@ The plugin receives control of the terminal and these environment variables:
 |---|---|
 | `GROVE_DIR` | Path to `~/.grove` |
 | `GROVE_CONFIG` | Path to `config.toml` |
-| `GROVE_STATE` | Path to `state.json` |
+| `GROVE_STATE` | **Deprecated**, will be removed. Path to `state.json`, a private file; see [Reading Grove data](#reading-grove-data) |
 | `GROVE_WORKSPACE` | Current workspace name, when cwd is inside one |
 
 ## Example plugins
@@ -120,6 +120,21 @@ printf 'Hello from workspace %s\n' "${GROVE_WORKSPACE:-none}"
 
 For released plugins, publish binaries using the conventional `gw-<name>` executable name and release archives supported by `gw plugin install`.
 
-### Reading Grove state
+### Reading Grove data
 
-Plugins can read `GROVE_STATE` for workspace data and `GROVE_CONFIG` for configuration. Treat these files as Grove-owned: use Grove commands for mutations rather than editing state directly.
+Read workspace data through `gw` commands, not from files in `~/.grove`:
+
+```bash
+gw ws show -o json                      # the workspace containing the current directory
+gw ws show "$GROVE_WORKSPACE" -o json   # the same, by name
+gw list -o json                         # all workspaces
+gw status NAME -o json                  # git status per repo
+gw repos -o json                        # discovered repos
+gw preset list --json                   # presets
+```
+
+The JSON these commands print is the supported interface: fields may be added, but existing fields are not renamed or removed. `-o name`, `-o path`, `-o tsv`, and `-o jsonl` are available on the same commands.
+
+`state.json` is a private file. Its format can change in any release without notice, so do not read or write it. `GROVE_STATE` is deprecated for this reason: it is still set for now and will be removed in a later release. Change workspaces only through `gw` commands (`gw create`, `gw add-repo`, `gw delete`, ...).
+
+If a plugin needs to store its own data, keep it in a file the plugin owns, for example `$GROVE_DIR/<plugin-name>.json`.

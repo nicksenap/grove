@@ -36,9 +36,9 @@ func abbreviateHome(path, home string) string {
 func writeWorkspaceList(w io.Writer, workspaces []models.Workspace, format output.Format) error {
 	switch format {
 	case output.JSON:
-		return output.WriteJSON(w, workspaces)
+		return output.WriteJSON(w, output.FromWorkspaces(workspaces))
 	case output.JSONLines:
-		return output.WriteJSONLines(w, workspaces)
+		return output.WriteJSONLines(w, output.FromWorkspaces(workspaces))
 	case output.Name:
 		for _, ws := range workspaces {
 			fmt.Fprintln(w, ws.Name)
@@ -109,9 +109,9 @@ func writeWorkspaceSummaries(w io.Writer, summaries []workspace.WorkspaceSummary
 func writeWorkspaceShow(w io.Writer, ws *models.Workspace, format output.Format) error {
 	switch format {
 	case output.JSON:
-		return output.WriteJSON(w, ws)
+		return output.WriteJSON(w, output.FromWorkspace(*ws))
 	case output.JSONLines:
-		return output.WriteJSONLine(w, ws)
+		return output.WriteJSONLine(w, output.FromWorkspace(*ws))
 	case output.Name:
 		_, err := fmt.Fprintln(w, ws.Name)
 		return err
