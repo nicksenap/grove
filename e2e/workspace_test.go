@@ -57,6 +57,14 @@ func TestWsListAndShow(t *testing.T) {
 		t.Fatalf("gw ws show --json name = %q", shown.Name)
 	}
 	env.gw("ws", "show", "nonexistent-ws").mustFail(t)
+
+	// Without a name, ws show uses the workspace containing the cwd.
+	sub := env.worktree("test-ws", "svc-auth")
+	fromCwd := decodeJSON[workspaceJSON](t, env.mustGWIn(sub, "ws", "show", "--json").stdout)
+	if fromCwd.Name != "test-ws" {
+		t.Fatalf("gw ws show (no name) from %s: name = %q", sub, fromCwd.Name)
+	}
+	env.gw("ws", "show").mustFail(t)
 }
 
 func TestDuplicateWorkspaceRejected(t *testing.T) {

@@ -61,7 +61,7 @@ func formatSourceLine(src *models.WorkspaceSource) string {
 type statusOutput struct {
 	Workspace string                  `json:"workspace"`
 	Path      string                  `json:"path"`
-	Source    *models.WorkspaceSource `json:"source,omitempty"`
+	Source    *output.WorkspaceSource `json:"source,omitempty"`
 	Repos     []repoStatusResult      `json:"repos"`
 }
 
@@ -102,7 +102,7 @@ func statusLines(ws *models.Workspace, results []repoStatusResult) []statusLine 
 func writeStatus(w io.Writer, ws *models.Workspace, results []repoStatusResult, format output.Format, opts StatusOptions) error {
 	switch format {
 	case output.JSON:
-		return output.WriteJSON(w, statusOutput{Workspace: ws.Name, Path: ws.Path, Source: ws.Source, Repos: results})
+		return output.WriteJSON(w, statusOutput{Workspace: ws.Name, Path: ws.Path, Source: output.FromWorkspaceSource(ws.Source), Repos: results})
 	case output.JSONLines:
 		return output.WriteJSONLines(w, statusLines(ws, results))
 	case output.Name:

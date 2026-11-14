@@ -10,7 +10,7 @@ Global flags: `--verbose` (debug log to `~/.grove/grove.log`), `-n`/`--no-hooks`
 |---|---|---|---|
 | `gw create` | `gw create [NAME] -b BRANCH (-r a,b \| -p PRESET \| --all)` | `-r/-p/--all` → picker; `-b` → error | No |
 | `gw create --replace` | `gw create NEW -b B -r a --replace -f` (run inside the workspace to replace) | prompt without `-f` | **Yes**: deletes the current workspace first, even if the create then fails |
-| `gw ws show` | `gw ws show NAME -o json\|path` | — | No |
+| `gw ws show` | `gw ws show [NAME] -o json\|path` | — (outside a workspace without NAME → error) | No |
 | `gw list` / `gw ws list` | `gw list -o jsonl [-s]` (`-s` adds git status) | — | No |
 | `gw status` | `gw status [NAME] -o jsonl [-P]` (`-P` adds PR status via gh/glab) | — | No |
 | `gw go` | `gw go NAME` (prints path, no newline) | >1 workspace → picker | `-d` deletes the workspace after navigating away |
