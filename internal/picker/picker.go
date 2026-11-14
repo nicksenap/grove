@@ -14,7 +14,7 @@ import (
 // ErrCancelled is returned when the user cancels a picker with Escape or Ctrl+C.
 var ErrCancelled = errors.New("selection cancelled")
 
-// PickOne shows a single-select picker with type-to-search.
+// PickOne shows a single-select picker; "/" opens search.
 // Returns the selected item or error if cancelled.
 func PickOne(prompt string, choices []string) (string, error) {
 	if len(choices) == 0 {
@@ -39,7 +39,7 @@ func PickOne(prompt string, choices []string) (string, error) {
 	return m.selected[0], nil
 }
 
-// PickMany shows a multi-select picker with type-to-search.
+// PickMany shows a multi-select picker; "/" opens search.
 // Prepends an "(all)" option for quick select-all.
 // Returns the selected items or error if cancelled.
 func PickMany(prompt string, choices []string) ([]string, error) {
@@ -94,6 +94,8 @@ const (
 	KeyHome                     // Home
 	KeyEnd                      // End
 	KeySpace                    // Space bar
+	KeyLeft                     // ←
+	KeyRight                    // →
 	KeyUnknown                  // unrecognised sequence
 )
 
@@ -116,6 +118,8 @@ var keyNames = map[KeyType]string{
 	KeyHome:      "home",
 	KeyEnd:       "end",
 	KeySpace:     " ",
+	KeyLeft:      "left",
+	KeyRight:     "right",
 }
 
 // String returns a human-readable name, matching the strings the model switches on.
@@ -149,6 +153,7 @@ type selectModel struct {
 	checked   map[int]bool // for multi-select
 	multi     bool
 	filter    string
+	searching bool // true while "/" search input is open; keys then edit the filter
 	selected  []string
 	cancelled bool
 
@@ -189,7 +194,7 @@ func (m selectModel) Update(msg Msg) (selectModel, bool) {
 func (m *selectModel) applyWindowSize(msg WindowSizeMsg) {
 	m.termHeight = msg.Height
 	overhead := 6
-	if m.filter != "" {
+	if m.filter != "" || m.searching {
 		overhead++
 	}
 	available := msg.Height - overhead
@@ -200,10 +205,23 @@ func (m *selectModel) applyWindowSize(msg WindowSizeMsg) {
 }
 
 func (m selectModel) handleKey(msg KeyMsg) (selectModel, bool) {
+	if m.searching && m.handleSearchKey(msg) {
+		return m, false
+	}
 	switch msg.String() {
-	case "ctrl+c", "esc":
+	case "ctrl+c":
 		m.cancelled = true
 		return m, true
+	case "esc":
+		// Esc first drops an applied filter; a second Esc cancels.
+		if m.filter == "" {
+			m.cancelled = true
+			return m, true
+		}
+		m.filter = ""
+		m.updateFilter()
+	case "/":
+		m.searching = true
 	case "up", "k":
 		m.moveUp()
 	case "down", "j":
@@ -225,13 +243,52 @@ func (m selectModel) handleKey(msg KeyMsg) (selectModel, bool) {
 		return m, true
 	case "backspace":
 		m.deleteFilterChar()
-	default:
-		if len(msg.String()) == 1 {
-			m.filter += msg.String()
-			m.updateFilter()
-		}
 	}
 	return m, false
+}
+
+// handleSearchKey handles a key while the search input is open and reports
+// whether it used the key. Navigation and Tab fall through to the normal keys.
+func (m *selectModel) handleSearchKey(msg KeyMsg) bool {
+	switch msg.Type {
+	case KeyRunes, KeySpace:
+		m.filter += msg.String()
+		m.updateFilter()
+	case KeyBackspace:
+		if m.filter == "" {
+			m.searching = false
+		} else {
+			m.deleteFilterChar()
+		}
+	case KeyEnter:
+		m.searching = false
+		// Single-select: Enter confirms the highlighted match straight away.
+		// Multi-select keeps the filter so rows can still be checked.
+		if !m.multi && len(m.filtered) > 0 {
+			return false
+		}
+	case KeyEsc:
+		m.searching = false
+		m.filter = ""
+		m.updateFilter()
+	default:
+		return false
+	}
+	return true
+}
+
+// keyHelp returns the key hint line for the current mode.
+func (m selectModel) keyHelp() string {
+	if m.searching && m.multi {
+		return "type to search · ↑/↓ navigate · tab select · enter keep filter · esc clear"
+	}
+	if m.searching {
+		return "type to search · ↑/↓ navigate · enter confirm · esc clear"
+	}
+	if m.multi {
+		return "↑/↓ navigate · tab select · / search · enter confirm"
+	}
+	return "↑/↓ navigate · / search · enter confirm"
 }
 
 func (m *selectModel) moveUp() {
@@ -328,19 +385,26 @@ func (m selectModel) View() string {
 	var b strings.Builder
 
 	b.WriteString("\n" + m.prompt + "\n")
-	if m.multi {
-		b.WriteString("  ↑/↓ navigate · tab select · type to search · enter confirm\n\n")
-	} else {
-		b.WriteString("  ↑/↓ navigate · type to search · enter confirm\n\n")
-	}
+	b.WriteString("  " + m.keyHelp() + "\n\n")
 
-	if m.filter != "" {
+	b.WriteString(m.body(len(m.checked)))
+	return b.String()
+}
+
+// body renders everything below the prompt and key help: the filter, the
+// selected count, and the visible rows.
+func (m selectModel) body(selectedCount int) string {
+	var b strings.Builder
+
+	if m.searching {
+		fmt.Fprintf(&b, "  /%s█\n\n", m.filter)
+	} else if m.filter != "" {
 		fmt.Fprintf(&b, "  filter: %s\n\n", m.filter)
 	}
 
 	// Count selected for multi-select
-	if m.multi && len(m.checked) > 0 {
-		fmt.Fprintf(&b, "  %d selected\n\n", len(m.checked))
+	if m.multi && selectedCount > 0 {
+		fmt.Fprintf(&b, "  %d selected\n\n", selectedCount)
 	}
 
 	total := len(m.filtered)
@@ -392,7 +456,10 @@ func (m selectModel) View() string {
 // runPicker runs the interactive picker using raw terminal I/O.
 // Uses blocking reads with no goroutines — this avoids goroutine leaks
 // that steal keypresses when pickers are called sequentially (e.g. gw go → back → pick dir).
-func runPicker(m selectModel) (selectModel, error) {
+func runPicker[M interface {
+	Update(Msg) (M, bool)
+	View() string
+}](m M) (M, error) {
 	fd := int(os.Stdin.Fd())
 	oldState, err := term.MakeRaw(fd)
 	if err != nil {
@@ -493,6 +560,8 @@ func parseSingleKey(b byte) KeyMsg {
 var csiSingles = map[byte]KeyType{
 	'A': KeyUp,
 	'B': KeyDown,
+	'C': KeyRight,
+	'D': KeyLeft,
 	'H': KeyHome,
 	'F': KeyEnd,
 }

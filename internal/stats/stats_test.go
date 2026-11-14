@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -376,5 +377,30 @@ func TestRepoNamesRecorded(t *testing.T) {
 	events, _ := tr.loadEvents()
 	if len(events[0].RepoNames) != 3 {
 		t.Errorf("expected 3 repo names, got %d", len(events[0].RepoNames))
+	}
+}
+
+func TestRecentReposNewestFirstWithoutDuplicates(t *testing.T) {
+	tr := testTracker(t)
+	ws := func(name string, repos ...string) models.Workspace {
+		w := models.NewWorkspace(name, "/tmp/"+name, "b")
+		for _, r := range repos {
+			w.Repos = append(w.Repos, models.RepoWorktree{RepoName: r})
+		}
+		return w
+	}
+	tr.RecordCreated(ws("one", "api", "web"))
+	tr.RecordCreated(ws("two", "docs", "api"))
+	tr.RecordDeleted(ws("gone", "deleted-only"))
+
+	got, err := tr.RecentRepos(0)
+	if err != nil {
+		t.Fatalf("RecentRepos: %v", err)
+	}
+	if want := []string{"docs", "api", "web"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("RecentRepos(0) = %v, want %v", got, want)
+	}
+	if got, _ := tr.RecentRepos(2); len(got) != 2 {
+		t.Errorf("RecentRepos(2) = %v, want 2 entries", got)
 	}
 }

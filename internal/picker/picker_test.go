@@ -77,9 +77,11 @@ func TestPickOneUsesStderrNotStdout(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 // update is a helper that sends a message and returns the updated model.
-func update(m selectModel, msg Msg) selectModel {
-	result, _ := m.Update(msg)
-	return result
+func update(m selectModel, msgs ...Msg) selectModel {
+	for _, msg := range msgs {
+		m, _ = m.Update(msg)
+	}
+	return m
 }
 
 func key(k KeyType) KeyMsg          { return KeyMsg{Type: k} }
@@ -87,7 +89,7 @@ func rune_(r rune) KeyMsg           { return KeyMsg{Type: KeyRunes, Runes: []run
 func resize(w, h int) WindowSizeMsg { return WindowSizeMsg{Width: w, Height: h} }
 
 func TestModelFilterReducesList(t *testing.T) {
-	m := update(newSelectModel("Pick:", []string{"apple", "banana", "avocado"}, false), rune_('v'))
+	m := update(newSelectModel("Pick:", []string{"apple", "banana", "avocado"}, false), rune_('/'), rune_('v'))
 
 	if len(m.filtered) != 1 {
 		t.Errorf("expected 1 match for 'v', got %d", len(m.filtered))
@@ -98,7 +100,7 @@ func TestModelFilterReducesList(t *testing.T) {
 }
 
 func TestModelFilterNoMatches(t *testing.T) {
-	m := update(newSelectModel("Pick:", []string{"apple", "banana"}, false), rune_('z'))
+	m := update(newSelectModel("Pick:", []string{"apple", "banana"}, false), rune_('/'), rune_('z'))
 
 	if len(m.filtered) != 0 {
 		t.Errorf("expected 0 matches for 'z', got %d", len(m.filtered))
@@ -109,7 +111,7 @@ func TestModelFilterNoMatches(t *testing.T) {
 }
 
 func TestModelBackspaceRemovesFilter(t *testing.T) {
-	m := update(newSelectModel("Pick:", []string{"apple", "banana"}, false), rune_('z'))
+	m := update(newSelectModel("Pick:", []string{"apple", "banana"}, false), rune_('/'), rune_('z'))
 	if len(m.filtered) != 0 {
 		t.Fatal("precondition: 'z' should match nothing")
 	}
@@ -313,5 +315,56 @@ func TestModelHomeEnd(t *testing.T) {
 	}
 	if !strings.Contains(m.View(), "item-00") {
 		t.Error("first item should be visible after home")
+	}
+}
+
+func TestModelLettersOnlyFilterWhileSearching(t *testing.T) {
+	m := update(newSelectModel("Pick:", []string{"apple", "kiwi", "jam"}, true), rune_('j'), rune_('x'))
+	if m.filter != "" || m.cursor != 1 {
+		t.Fatalf("outside search: filter = %q cursor = %d, want no filter and j moving down", m.filter, m.cursor)
+	}
+
+	m = update(m, rune_('/'), rune_('j'), rune_('k'))
+	if m.filter != "jk" {
+		t.Errorf("searching: filter = %q, want jk", m.filter)
+	}
+
+	// Multi-select: Enter keeps the filter and closes the search input; it does not confirm.
+	m = update(update(m, key(KeyBackspace)), key(KeyEnter))
+	if m.searching || m.filter != "j" || len(m.selected) != 0 {
+		t.Errorf("after enter: searching=%v filter=%q selected=%v", m.searching, m.filter, m.selected)
+	}
+}
+
+func TestModelEscClearsFilterBeforeCancelling(t *testing.T) {
+	m := update(newSelectModel("Pick:", []string{"apple", "banana"}, true), rune_('/'), rune_('b'), key(KeyEsc))
+	if m.cancelled || m.searching || m.filter != "" || len(m.filtered) != 2 {
+		t.Fatalf("esc while searching should only clear the search: %+v", m)
+	}
+	m = update(m, rune_('/'), rune_('b'), key(KeyEnter), key(KeyEsc))
+	if m.cancelled || m.filter != "" {
+		t.Fatalf("esc with an applied filter should only clear it: %+v", m)
+	}
+	if m = update(m, key(KeyEsc)); !m.cancelled {
+		t.Error("esc with no filter should cancel")
+	}
+}
+
+func TestModelSingleSelectEnterWhileSearchingConfirms(t *testing.T) {
+	m, quit := newSelectModel("Pick:", []string{"apple", "banana"}, false), false
+	for _, msg := range []Msg{rune_('/'), rune_('b'), key(KeyEnter)} {
+		m, quit = m.Update(msg)
+	}
+	if !quit || len(m.selected) != 1 || m.selected[0] != "banana" {
+		t.Fatalf("quit=%v selected=%v, want banana confirmed by one enter", quit, m.selected)
+	}
+
+	// No match: Enter only closes the search input.
+	m, quit = newSelectModel("Pick:", []string{"apple", "banana"}, false), false
+	for _, msg := range []Msg{rune_('/'), rune_('z'), key(KeyEnter)} {
+		m, quit = m.Update(msg)
+	}
+	if quit || m.searching {
+		t.Errorf("no match: quit=%v searching=%v, want picker open with search closed", quit, m.searching)
 	}
 }

@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"os"
+	"sort"
 	"strings"
 
 	"github.com/nicksenap/grove/internal/config"
@@ -12,6 +13,7 @@ import (
 	"github.com/nicksenap/grove/internal/operations"
 	"github.com/nicksenap/grove/internal/picker"
 	"github.com/nicksenap/grove/internal/state"
+	"github.com/nicksenap/grove/internal/stats"
 	"github.com/nicksenap/grove/internal/workspace"
 	"github.com/spf13/cobra"
 )
@@ -79,67 +81,7 @@ var createCmd = &cobra.Command{
 				console.Successf("Cloned %s into %s", repoName, clonedPath)
 			}
 		} else {
-			// Interactive
-			repoChoices := make([]string, len(repos))
-			for i, r := range repos {
-				repoChoices[i] = r.Name
-			}
-
-			// If presets exist, offer them first with a "Pick manually..." escape hatch
-			if len(cfg.Presets) > 0 {
-				presetNames := make([]string, 0, len(cfg.Presets))
-				presetChoices := make([]string, 0, len(cfg.Presets))
-				for name, p := range cfg.Presets {
-					presetNames = append(presetNames, name)
-					presetChoices = append(presetChoices, name+"  ("+strings.Join(p.Repos, ", ")+")")
-				}
-				presetChoices = append(presetChoices, "Pick manually…")
-
-				choice, err := picker.PickOne("Select repos from:", presetChoices)
-				if err != nil {
-					exitOnPickerErr(err)
-				}
-
-				if choice != "Pick manually…" {
-					// Extract preset name (before the double space)
-					for i, display := range presetChoices {
-						if display == choice && i < len(presetNames) {
-							repoNames = cfg.Presets[presetNames[i]].Repos
-							break
-						}
-					}
-				} else {
-					selected, err := picker.PickMany("Select repos for workspace:", repoChoices)
-					if err != nil {
-						exitOnPickerErr(err)
-					}
-					repoNames = selected
-				}
-			} else {
-				selected, err := picker.PickMany("Select repos for workspace:", repoChoices)
-				if err != nil {
-					exitOnPickerErr(err)
-				}
-				repoNames = selected
-
-				// Offer to save as preset when none exist yet
-				if console.IsTerminal(os.Stdin) && len(selected) < len(repos) {
-					if console.Confirm("Save this selection as a preset?", false) {
-						presetName := console.Prompt("Preset name")
-						if presetName != "" {
-							if cfg.Presets == nil {
-								cfg.Presets = make(map[string]models.Preset)
-							}
-							cfg.Presets[presetName] = models.Preset{Repos: repoNames}
-							if err := config.Save(cfg); err != nil {
-								console.Warningf("Could not save preset: %s", err)
-							} else {
-								console.Successf("Saved preset %q", presetName)
-							}
-						}
-					}
-				}
-			}
+			repoNames = pickCreateRepos(cfg, repos)
 		}
 
 		// Validate repos exist
@@ -254,6 +196,99 @@ func init() {
 
 	createCmd.RegisterFlagCompletionFunc("repos", completeRepoNames)
 	createCmd.RegisterFlagCompletionFunc("preset", completePresetNames)
+}
+
+const (
+	presetsTabTitle = "Presets"
+	latestTabTitle  = "Latest"
+	allTabTitle     = "All repos"
+	allReposChoice  = "(all)"
+	// latestTabLimit caps the Latest tab so it stays shorter than All repos.
+	latestTabLimit = 10
+)
+
+// pickCreateRepos asks the user which repos the new workspace gets.
+func pickCreateRepos(cfg *models.Config, repos []discover.RepoInfo) []string {
+	all := repoNamesList(repos)
+	recent, _ := stats.NewTracker(config.GroveDir).RecentRepos(0)
+	tabs, presetByChoice := buildCreateTabs(cfg.Presets, recent, all)
+
+	tab, selected, err := picker.PickTabs("Select repos for workspace:", tabs)
+	if err != nil {
+		exitOnPickerErr(err)
+	}
+	if tabs[tab].Title == presetsTabTitle {
+		return cfg.Presets[presetByChoice[selected[0]]].Repos
+	}
+	for _, s := range selected {
+		if s == allReposChoice {
+			return all
+		}
+	}
+	if len(cfg.Presets) == 0 && len(selected) < len(all) {
+		offerSavePreset(cfg, selected)
+	}
+	return selected
+}
+
+// buildCreateTabs builds the tabs of the create picker: saved presets,
+// recently used repos (newest first), and every discovered repo. Empty tabs
+// are left out. presetByChoice maps a Presets row back to its preset name.
+func buildCreateTabs(presets map[string]models.Preset, recent, all []string) (tabs []picker.Tab, presetByChoice map[string]string) {
+	presetByChoice = make(map[string]string, len(presets))
+	if len(presets) > 0 {
+		names := make([]string, 0, len(presets))
+		for name := range presets {
+			names = append(names, name)
+		}
+		sort.Strings(names)
+		choices := make([]string, len(names))
+		for i, name := range names {
+			choices[i] = name + "  (" + strings.Join(presets[name].Repos, ", ") + ")"
+			presetByChoice[choices[i]] = name
+		}
+		tabs = append(tabs, picker.Tab{Title: presetsTabTitle, Choices: choices})
+	}
+
+	known := make(map[string]bool, len(all))
+	for _, name := range all {
+		known[name] = true
+	}
+	var latest []string
+	for _, name := range recent {
+		if known[name] && len(latest) < latestTabLimit {
+			latest = append(latest, name)
+		}
+	}
+	if len(latest) > 0 {
+		tabs = append(tabs, picker.Tab{Title: latestTabTitle, Choices: latest, Multi: true})
+	}
+
+	if len(all) > 0 {
+		choices := append([]string{allReposChoice}, all...)
+		tabs = append(tabs, picker.Tab{Title: allTabTitle, Choices: choices, Multi: true})
+	}
+	return tabs, presetByChoice
+}
+
+// offerSavePreset asks whether to save the picked repos as the first preset.
+func offerSavePreset(cfg *models.Config, repoNames []string) {
+	if !console.IsTerminal(os.Stdin) || !console.Confirm("Save this selection as a preset?", false) {
+		return
+	}
+	presetName := console.Prompt("Preset name")
+	if presetName == "" {
+		return
+	}
+	if cfg.Presets == nil {
+		cfg.Presets = make(map[string]models.Preset)
+	}
+	cfg.Presets[presetName] = models.Preset{Repos: repoNames}
+	if err := config.Save(cfg); err != nil {
+		console.Warningf("Could not save preset: %s", err)
+	} else {
+		console.Successf("Saved preset %q", presetName)
+	}
 }
 
 func deriveName(branch string) string {
