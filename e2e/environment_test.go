@@ -162,6 +162,12 @@ func (e *env) cmdEnv() []string {
 
 func (e *env) runGW(dir string, args ...string) cmdResult {
 	e.t.Helper()
+	return e.runGWWithEnv(dir, nil, args...)
+}
+
+// runGWWithEnv runs gw with extra KEY=VALUE environment entries.
+func (e *env) runGWWithEnv(dir string, extraEnv []string, args ...string) cmdResult {
+	e.t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), e.timeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, gwBin, args...)
@@ -170,7 +176,7 @@ func (e *env) runGW(dir string, args ...string) cmdResult {
 	} else {
 		cmd.Dir = e.home
 	}
-	cmd.Env = e.cmdEnv()
+	cmd.Env = append(e.cmdEnv(), extraEnv...)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr

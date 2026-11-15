@@ -82,6 +82,7 @@ func init() {
 		pruneCmd,
 		goCmd,
 		statusCmd,
+		diffCmd,
 		addRepoCmd,
 		removeRepoCmd,
 		reposCmd,

@@ -56,9 +56,11 @@ cd "$(gw ws show fix-auth -o path)"        # workspace root; each repo is a subd
 gw status fix-auth -o jsonl                # one object per repo: branch, changed, ahead, behind
 gw add-repo fix-auth -r shared-lib         # add repos later; also accepts git URLs
 gw sync fix-auth                           # rebase every repo onto its base branch
+gw diff --workspace fix-auth --no-pager    # one git diff across all repos, paths prefixed <repo>/
 ```
 
 - Inside a workspace directory, `NAME` can be omitted for `status`, `sync`, `reset`, `add-repo`, and `remove-repo`. Passing it is still safer.
+- `gw diff` passes every other argument to `git diff` (e.g. `--staged`, `main...HEAD`, `-U10`), so pass the workspace as `--workspace NAME`, not positionally. Use `--no-pager` when reading the output yourself. `--stat` and `--name-only` style output is per repo and unprefixed.
 - `gw sync` skips dirty repos and aborts a failed rebase. It rewrites local branch history, so warn the user first if the branch is shared or already pushed.
 - `gw go NAME` also prints the path, but without a trailing newline and meant for the user's shell function. Prefer `gw ws show NAME -o path`.
 
